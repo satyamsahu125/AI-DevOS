@@ -1,0 +1,9 @@
+llm:
+  provider: ollama
+  model: qwen2.5-coder:7b
+  temperature: 0.0
+  max_tokens: 256
+runtime:
+  workspace: backend/temp-workspace
+  retry_limit: 3
+  log_level: INFO

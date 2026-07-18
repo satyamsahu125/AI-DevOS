@@ -1,0 +1,32 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# VS Code
+.vscode/
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Environment
+.env
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (if present)
+node_modules/
+
+# AI / cache
+.cache/
