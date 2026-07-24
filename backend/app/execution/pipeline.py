@@ -28,10 +28,17 @@ class ExecutionPipeline:
         agent_factory: AgentFactory | None = None,
         safety_policy: SafetyPolicy | None = None,
     ) -> None:
-        """Wire the artifact manager, agent factory, and safety policy used to run a stage."""
+        """Wire the artifact manager, agent factory, and safety policy used to run a stage.
+
+        When safety_policy isn't given explicitly, it's rooted at the artifact manager's own
+        WorkspaceManager root rather than SafetyPolicy's bare default -- otherwise an isolated
+        ArtifactManager (e.g. one rooted at a temp dir in tests) would have every one of its
+        writes classified as "outside the workspace" now that new-file writes are correctly
+        checked against the workspace boundary too (see safety_policy.py).
+        """
         self.artifact_manager = artifact_manager or ArtifactManager()
         self.agent_factory = agent_factory or AgentFactory()
-        self.safety_policy = safety_policy or SafetyPolicy()
+        self.safety_policy = safety_policy or SafetyPolicy(workspace_root=self.artifact_manager.workspace_manager.root)
 
     def run(self, project_id: str, stage_name: str, content: str, attempt: int = 1) -> ExecutionResult:
         """Execute stage_name's agent against content, safety-check the write, then persist the artifact

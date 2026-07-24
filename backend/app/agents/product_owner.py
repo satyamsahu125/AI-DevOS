@@ -1,22 +1,31 @@
 from __future__ import annotations
 
+import logging
+
+from ..actions.base_action import BaseAction
+from ..actions.write_requirements import WriteRequirementsAction
+from ..llm.manager import LLMManager
 from ..prompt.product_owner_builder import ProductOwnerPromptBuilder
-from ..shared.models.stage_artifact import StageArtifact
 from .base_agent import BaseAgent
+
+logger = logging.getLogger(__name__)
 
 
 class ProductOwnerAgent(BaseAgent):
-    """Simple product-owner-style agent used by the documented workflow."""
+    """Product Owner agent: turns raw input into a structured requirements artifact via WriteRequirementsAction."""
 
-    def __init__(self, prompt_builder: ProductOwnerPromptBuilder | None = None) -> None:
-        self.prompt_builder = prompt_builder or ProductOwnerPromptBuilder()
+    artifact_name = "product-owner-output"
 
-    def execute(self, context: object) -> StageArtifact:
-        content = getattr(context, "content", "") if context is not None else ""
-        prompt = self.prompt_builder.build(content)
-        return StageArtifact(
-            artifact_id="",
-            name="product-owner-output",
-            content=prompt,
-            status="Generated",
-        )
+    def __init__(
+        self,
+        prompt_builder: ProductOwnerPromptBuilder | None = None,
+        llm_manager: LLMManager | None = None,
+        primary_action: BaseAction | None = None,
+    ) -> None:
+        """Wire this agent's prompt builder and (via BaseAgent) its LLMManager and primary_action."""
+        self._prompt_builder = prompt_builder
+        super().__init__(llm_manager, primary_action)
+
+    def _build_default_action(self) -> BaseAction:
+        """Build this agent's default action: WriteRequirementsAction."""
+        return WriteRequirementsAction(self._prompt_builder)

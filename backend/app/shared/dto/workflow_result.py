@@ -8,3 +8,4 @@ class WorkflowResult:
     workflow: Workflow
     success: bool
     message: str
+    stopped: bool = False

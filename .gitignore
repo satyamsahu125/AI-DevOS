@@ -30,3 +30,7 @@ node_modules/
 
 # AI / cache
 .cache/
+
+# AI DevOS runtime data
+backend/data/*.sqlite
+backend/data/*.hnsw

@@ -8,8 +8,8 @@ from app.agents.base_agent import BaseAgent
 from app.agents.product_owner import ProductOwnerAgent
 from app.artifact.manager import ArtifactManager
 from app.execution.execution_result import ExecutionResult
-from app.llm.provider import BaseLLMProvider
-from app.llm.providers.ollama import OllamaProvider
+from app.llm.providers.base_provider import LLMProvider
+from app.llm.providers.ollama_provider import OllamaProvider
 from app.llm.request import LLMRequest
 from app.llm.response import LLMResponse
 from app.prompt.builder import PromptBuilder
@@ -22,7 +22,7 @@ from app.workflow.transition import WorkflowTransition
 class DocumentedArchitectureTests(unittest.TestCase):
     def test_documented_runtime_components_are_importable(self) -> None:
         self.assertTrue(issubclass(ProductOwnerAgent, BaseAgent))
-        self.assertTrue(issubclass(OllamaProvider, BaseLLMProvider))
+        self.assertTrue(issubclass(OllamaProvider, LLMProvider))
 
         request = LLMRequest(system_prompt="sys", user_prompt="user", model="test", temperature=0.0, max_tokens=16, stream=False)
         response = LLMResponse(content="ok", model="test", finish_reason="stop", input_tokens=1, output_tokens=1, total_tokens=2)

@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.artifacts.manager import ArtifactManager as UnifiedArtifactManager
+from app.artifact.manager import ArtifactManager as UnifiedArtifactManager
 from app.context.context import ContextBuilder
 from app.core.exceptions import ConfigurationException, DependencyException
 from app.llm.manager import LLMManager

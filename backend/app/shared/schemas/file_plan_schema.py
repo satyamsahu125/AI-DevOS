@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PlannedFile(BaseModel):
@@ -10,6 +10,20 @@ class PlannedFile(BaseModel):
     module: str = ""
     purpose: str = ""
     responsible_stage: str = ""
+
+    @field_validator("path")
+    @classmethod
+    def _normalize_path(cls, value: str) -> str:
+        """Strip any leading "/" (or "\\") the model added.
+
+        A leading slash makes this look like an API route rather than a
+        source file path -- and Path("area") / "/x/y" is an ABSOLUTE path in
+        pathlib, silently discarding "area" and writing outside the project
+        directory. Normalizing here means every consumer of this schema gets
+        a safe, already-relative path, not just whichever write path happens
+        to sanitize it downstream.
+        """
+        return value.replace("\\", "/").lstrip("/")
 
 
 class FilePlanArtifact(BaseModel):

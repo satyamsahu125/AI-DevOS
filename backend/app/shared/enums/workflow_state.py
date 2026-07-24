@@ -7,3 +7,4 @@ class WorkflowState(str, Enum):
     WaitingForReview = "WaitingForReview"
     Approved = "Approved"
     Completed = "Completed"
+    Failed = "Failed"

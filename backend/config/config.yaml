@@ -1,8 +1,9 @@
 llm:
   provider: ollama
   model: qwen2.5-coder:7b
-  temperature: 0.0
-  max_tokens: 256
+  base_url: http://localhost:11434
+  temperature: 0.1
+  max_tokens: 4096
 runtime:
   workspace: backend/temp-workspace
   retry_limit: 3

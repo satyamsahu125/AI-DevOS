@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.artifact.manager import ArtifactManager
 from app.review.manager import ReviewManager
+from app.shared.enums.stage import Stage
 from app.workspace.manager import WorkspaceManager
 
 
@@ -19,9 +20,9 @@ class Phase1FlowTests(unittest.TestCase):
         self.assertTrue((workspace / "artifacts").exists())
 
     def test_artifact_and_review_flow(self) -> None:
-        manager = ArtifactManager(storage_dir=Path(__file__).resolve().parents[1] / "artifacts-test")
-        artifact = manager.create_artifact("requirements", "Collect user requirements")
-        saved = manager.save_artifact(artifact)
+        workspace_manager = WorkspaceManager(Path(__file__).resolve().parents[1] / "temp-workspace")
+        manager = ArtifactManager(storage_dir=Path(__file__).resolve().parents[1] / "artifacts-test", workspace_manager=workspace_manager)
+        saved = manager.save_artifact("phase1-flow-test", Stage.ProductOwner, "Collect user requirements")
         self.assertEqual(saved.status, "Stored")
         review = ReviewManager().review(saved)
         self.assertTrue(review.approved)

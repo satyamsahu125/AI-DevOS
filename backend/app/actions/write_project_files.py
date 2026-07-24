@@ -9,7 +9,14 @@ from ..artifact.manager import ArtifactManager
 from ..shared.enums.stage import Stage
 from ..shared.schemas.architecture_schema import ArchitectureArtifact
 from ..shared.schemas.file_plan_schema import FilePlanArtifact, PlannedFile
+from ..workspace.dependency_detector import (
+    build_package_json,
+    build_requirements_txt,
+    detect_node_dependencies,
+    detect_python_dependencies,
+)
 from ..workspace.project_files import ProjectFileManager
+from ..workspace.project_readme import summarize_area
 from .architecture_summary import summarize_architecture
 from .base_action import ActionOutput, BaseAction
 
@@ -61,13 +68,14 @@ class WriteProjectFilesAction(BaseAction):
         written: list[str] = []
         skipped: list[str] = []
         siblings: list[str] = []
+        file_contents: list[str] = []
         total_tokens = 0
         total_latency = 0.0
 
         for planned_file in assigned:
             prompt = self._build_file_prompt(planned_file, architecture, base_content, siblings)
             started = time.time()
-            response = llm.generate_text(prompt, system_prompt=self._system_prompt(), stage=self.name, agent=self.name)
+            response = llm.generate_text(prompt, system_prompt=self._system_prompt(), stage=self.name, agent=self.name, project_id=project_id)
             elapsed_ms = (time.time() - started) * 1000
             total_tokens += self._extract_tokens(response)
             total_latency += self._extract_latency_ms(response, elapsed_ms)
@@ -78,9 +86,14 @@ class WriteProjectFilesAction(BaseAction):
                 logger.warning("%s: skipped implausible content for %s", self.name, planned_file.path)
                 continue
 
-            self.project_file_manager.write_file(project_id, self.area, planned_file.path, file_content)
+            self.project_file_manager.write_file(project_id, self.area, self._relative_write_path(planned_file.path), file_content)
             written.append(planned_file.path)
+            file_contents.append(file_content)
             siblings.append(f"{planned_file.path}: {planned_file.purpose}")
+
+        manifest_path = self._write_dependency_manifest(project_id, written, file_contents)
+        if manifest_path:
+            written.append(manifest_path)
 
         manifest = self._build_manifest(project_id, assigned, written, skipped)
         structured = {
@@ -90,6 +103,51 @@ class WriteProjectFilesAction(BaseAction):
             "skipped_paths": skipped,
         }
         return ActionOutput(content=manifest, structured=structured, tokens_used=total_tokens, latency_ms=total_latency)
+
+    def _write_dependency_manifest(self, project_id: str, written: list[str], file_contents: list[str]) -> str | None:
+        """Detect this area's stack from what was actually written, scan those files' own import
+        statements for external packages, and write a starter package.json/requirements.txt --
+        so "how to run" isn't just advice, the file that makes `npm install`/`pip install -r
+        requirements.txt` actually do something is really there. Skipped if a manifest was
+        already planned/written for this area, or the stack isn't one this can generate for.
+        No-op (never a failure) if nothing was written at all.
+        """
+        if not written:
+            return None
+        summary = summarize_area(self.area, written)
+        if summary.has_manifest:
+            return None
+        if summary.detected_stack == "node":
+            dependencies = detect_node_dependencies(file_contents)
+            if not dependencies:
+                return None
+            content = build_package_json(project_id, dependencies, written)
+            self.project_file_manager.write_file(project_id, self.area, "package.json", content)
+            return "package.json"
+        if summary.detected_stack == "python":
+            dependencies = detect_python_dependencies(file_contents)
+            if not dependencies:
+                return None
+            content = build_requirements_txt(dependencies)
+            self.project_file_manager.write_file(project_id, self.area, "requirements.txt", content)
+            return "requirements.txt"
+        return None
+
+    def _relative_write_path(self, path: str) -> str:
+        """Strip a leading "{area}/" prefix from path if present.
+
+        ProjectFileManager.write_file() already scopes the write to self.area
+        (e.g. "backend"), but the File Plan's LLM-authored paths commonly
+        already include that same prefix (e.g. "backend/models/Task.js") --
+        without this, the two would combine into a doubled, wrong path like
+        project/backend/backend/models/Task.js. planned_file.path itself is
+        left untouched for the written/skipped manifest, which stays
+        readable either way.
+        """
+        prefix = f"{self.area}/"
+        if path.lower().startswith(prefix.lower()):
+            return path[len(prefix):]
+        return path
 
     def _assigned_files(self, plan: FilePlanArtifact) -> list[PlannedFile]:
         """Return the plan's files this stage owns (no responsible_stage falls back to this stage)."""

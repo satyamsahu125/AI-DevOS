@@ -11,6 +11,7 @@ from ..llm.cost_tracker import get_shared_cost_tracker
 from ..memory.learning_loop import LearningLoop, Trajectory
 from ..memory.lesson_store import Lesson, LessonStore, new_lesson_id
 from ..memory.manager import MemoryManager
+from ..memory.project_event_log import ProjectEventLog
 from ..review.reviewer import Reviewer
 from ..session.checkpoint import CheckpointManager, SessionCheckpoint
 from ..session.manager import SessionManager
@@ -23,6 +24,7 @@ from ..shared.models.workflow import Workflow
 from ..shared.schemas.message import AgentMessage
 from ..workspace.manager import WorkspaceManager
 from .dependency import WorkflowDependency
+from .execution_state import ExecutionStateRegistry
 from .retry_policy import RetryPolicy
 from .state_machine import WorkflowStateMachine
 from .transition import WorkflowTransition
@@ -87,6 +89,8 @@ class WorkflowEngine:
         workspace_manager: WorkspaceManager | None = None,
         reviewer: Reviewer | None = None,
         retry_policy: RetryPolicy | None = None,
+        event_log: ProjectEventLog | None = None,
+        execution_state: ExecutionStateRegistry | None = None,
     ) -> None:
         """Wire up the collaborators needed to run a single workflow stage."""
         self.dependency = WorkflowDependency("ProductOwner")
@@ -102,6 +106,8 @@ class WorkflowEngine:
         self.reviewer = reviewer or Reviewer(learning_loop=self.learning_loop)
         self.checkpoint_manager = checkpoint_manager or CheckpointManager()
         self.lesson_store = lesson_store or LessonStore()
+        self.event_log = event_log or ProjectEventLog()
+        self.execution_state = execution_state or ExecutionStateRegistry()
         self._llm_model = ConfigurationManager().load().llm.model
         self._report_incomplete_sessions()
 
@@ -130,6 +136,7 @@ class WorkflowEngine:
         and saved as its own numbered artifact attempt (never overwritten).
         """
         logger.info("workflow run started: project_id=%s stage=%s", project_id, stage_name)
+        self.event_log.record(project_id, stage_name, f"{stage_name} started")
         self.state_machine.start()
         session = self.session_manager.create_session(stage_name)
 
@@ -145,7 +152,13 @@ class WorkflowEngine:
         failed_approaches: list[str] = []
         last_artifact_summary = ""
         while self.retry_policy.should_retry(attempt):
+            if self.execution_state.is_stop_requested(project_id):
+                logger.info("workflow stage stopped by user: stage=%s attempt=%s", stage_name, attempt)
+                self.event_log.record(project_id, stage_name, f"{stage_name} stopped by user before attempt {attempt + 1}", level="warning")
+                self.session_manager.close_session(session)
+                return WorkflowResult(workflow=workflow, success=False, message="Stopped by user", stopped=True)
             logger.info("workflow stage attempt: stage=%s attempt=%s", stage_name, attempt)
+            self.event_log.record(project_id, stage_name, f"Attempt {attempt + 1}: generating with the AI model...")
             effective_content = base_content if attempt == 0 else self._build_retry_content(base_content, reviewer_feedback, attempt)
             self._save_checkpoint(session.session_id, stage_name, project_id, attempt, failed_approaches, last_artifact_summary)
             execution_result = self.execution_manager.execute_stage(project_id, stage_name, effective_content, attempt=attempt + 1)
@@ -157,6 +170,7 @@ class WorkflowEngine:
 
             if review_result.approved:
                 logger.info("workflow stage approved: stage=%s attempt=%s", stage_name, attempt)
+                self.event_log.record(project_id, stage_name, f"{stage_name} approved on attempt {attempt + 1}")
                 workflow.state = self.transition.transition(WorkflowState.Approved)
                 self.state_machine.approve()
                 self.state_machine.complete()
@@ -174,12 +188,14 @@ class WorkflowEngine:
                 "workflow stage rejected: stage=%s attempt=%s feedback=%s",
                 stage_name, attempt, reviewer_feedback,
             )
+            self.event_log.record(project_id, stage_name, f"Attempt {attempt + 1} rejected: {review_result.overall_feedback}", level="warning")
             failed_approaches.append(reviewer_feedback)
             session.state = SessionState.Rejected
             self.session_manager.increment_retry(session)
             attempt += 1
 
         logger.error("workflow stage exhausted retries: stage=%s attempts=%s", stage_name, attempt)
+        self.event_log.record(project_id, stage_name, f"{stage_name} failed after {attempt} attempt(s)", level="error")
         workflow.state = self.transition.transition(WorkflowState.Failed)
         self.state_machine.fail()
         self.session_manager.close_session(session)

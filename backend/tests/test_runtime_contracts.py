@@ -30,6 +30,22 @@ from app.workflow.retry_policy import RetryPolicy
 from app.workflow.state_machine import WorkflowStateMachine
 
 
+class _StubLLMManager:
+    """Fake LLMManager used so agent execution in this test never depends on a live Ollama server."""
+
+    def generate_text(self, prompt: str, system_prompt: str = "", model: str | None = None, **kwargs):
+        from app.llm.response import LLMResponse
+
+        return LLMResponse(
+            content=prompt,
+            model="stub-model",
+            finish_reason="stop",
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+        )
+
+
 class RuntimeContractsTests(unittest.TestCase):
     def test_prompt_and_review_runtime_contracts(self) -> None:
         template = PromptTemplate(name="test", system_template="Hello {name}", user_template="{topic}")
@@ -86,10 +102,11 @@ class RuntimeContractsTests(unittest.TestCase):
         factory = LLMFactory()
         self.assertEqual(factory.create_provider("ollama").__class__.__name__, "OllamaProvider")
 
-        backend_agent = BackendDeveloperAgent()
-        frontend_agent = FrontendDeveloperAgent()
-        qa_agent = QAAgent()
-        devops_agent = DevOpsAgent()
+        stub_llm = _StubLLMManager()
+        backend_agent = BackendDeveloperAgent(llm_manager=stub_llm)
+        frontend_agent = FrontendDeveloperAgent(llm_manager=stub_llm)
+        qa_agent = QAAgent(llm_manager=stub_llm)
+        devops_agent = DevOpsAgent(llm_manager=stub_llm)
         self.assertEqual(backend_agent.execute(context).name, "backend")
         self.assertEqual(frontend_agent.execute(context).name, "frontend")
         self.assertEqual(qa_agent.execute(context).name, "qa")

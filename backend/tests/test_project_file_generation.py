@@ -1,3 +1,4 @@
+import json
 import shutil
 import sys
 import tempfile
@@ -105,6 +106,28 @@ class ProjectFileManagerTests(unittest.TestCase):
 
         self.assertEqual(self.manager.list_written("proj1", "backend"), ["main.py"])
         self.assertEqual(self.manager.list_written("proj1", "frontend"), ["main.py"])
+
+    def test_leading_slash_path_stays_inside_project_area(self) -> None:
+        """Regression test: Path("area") / "/x/y" is ABSOLUTE in pathlib and silently discards
+        "area" -- this used to write real "recipe box" project files outside the project
+        directory entirely (confirmed live: FileStructurePlanner emitted "/api/users/register"
+        style paths and GET /projects/{id}/files came back empty despite a "written: 5/5" manifest)."""
+        written = self.manager.write_file("proj1", "backend", "/api/users/register", "handler code")
+
+        expected = self.workspace_manager.get_workspace_path("proj1") / "project" / "backend" / "api" / "users" / "register"
+        self.assertEqual(written.absolute_path, expected)
+        self.assertEqual(written.path, "api/users/register")
+        self.assertEqual(self.manager.list_written("proj1", "backend"), ["api/users/register"])
+
+    def test_backslash_path_is_normalized_to_forward_slashes(self) -> None:
+        written = self.manager.write_file("proj1", "backend", "routers\\tasks.py", "x")
+        self.assertEqual(written.path, "routers/tasks.py")
+
+    def test_path_traversal_is_rejected(self) -> None:
+        from app.execution.safety_policy import SafetyException
+
+        with self.assertRaises(SafetyException):
+            self.manager.write_file("proj1", "backend", "../../etc/passwd", "malicious")
         self.assertNotEqual(
             self.manager.area_dir("proj1", "backend") / "main.py",
             self.manager.area_dir("proj1", "frontend") / "main.py",
@@ -126,6 +149,30 @@ class BackendFrontendFileGenerationTests(unittest.TestCase):
             self.assertEqual(rig.project_file_manager.list_written("proj1", "frontend"), [])
             self.assertEqual(artifact.structured_content["written_paths"], ["main.py", "models.py"])
             self.assertEqual(artifact.structured_content["skipped_paths"], [])
+        finally:
+            rig.cleanup()
+
+    def test_plan_path_already_prefixed_with_area_is_not_doubled(self) -> None:
+        rig = _Rig()
+        try:
+            rig.workspace_manager.create_workspace("proj-prefixed")
+            rig.artifact_manager.save_artifact("proj-prefixed", Stage.Architect, "arch", structured_content=_ARCHITECTURE, attempt=1)
+            rig.artifact_manager.save_artifact(
+                "proj-prefixed", Stage.FileStructurePlanner, "plan", attempt=1,
+                structured_content={"files": [
+                    {"path": "backend/models/Task.js", "module": "api", "purpose": "task model", "responsible_stage": "backend"},
+                ]},
+            )
+            llm = _ScriptedLLMManager(["const Task = {};\nmodule.exports = Task;"])
+            agent = BackendDeveloperAgent(llm_manager=llm, artifact_manager=rig.artifact_manager, project_file_manager=rig.project_file_manager)
+
+            agent.execute(SimpleNamespace(content="build a todo app", project_id="proj-prefixed"))
+
+            written = rig.project_file_manager.list_written("proj-prefixed", "backend")
+            self.assertEqual(written, ["models/Task.js"])
+            expected_path = rig.project_file_manager.area_dir("proj-prefixed", "backend") / "models" / "Task.js"
+            self.assertTrue(expected_path.exists())
+            self.assertFalse((rig.project_file_manager.area_dir("proj-prefixed", "backend") / "backend").exists())
         finally:
             rig.cleanup()
 
@@ -166,6 +213,45 @@ class BackendFrontendFileGenerationTests(unittest.TestCase):
 
             self.assertEqual(rig.project_file_manager.list_written("proj1", "backend"), ["models.py"])
             self.assertEqual(artifact.structured_content["skipped_paths"], ["main.py"])
+        finally:
+            rig.cleanup()
+
+    def test_backend_auto_generates_package_json_from_real_imports(self) -> None:
+        """The whole point of run-instructions/download being useful: `npm install` needs a real
+        package.json, so this shouldn't just be advice in a README -- the file has to actually
+        exist, listing whatever the generated files really import."""
+        rig = _Rig()
+        try:
+            rig.workspace_manager.create_workspace("proj-node")
+            rig.artifact_manager.save_artifact("proj-node", Stage.Architect, "arch", structured_content=_ARCHITECTURE, attempt=1)
+            rig.artifact_manager.save_artifact(
+                "proj-node", Stage.FileStructurePlanner, "plan", attempt=1,
+                structured_content={"files": [
+                    {"path": "routes/tasks.js", "module": "api", "purpose": "task routes", "responsible_stage": "backend"},
+                ]},
+            )
+            llm = _ScriptedLLMManager(["const express = require('express');\nmodule.exports = express.Router();"])
+            agent = BackendDeveloperAgent(llm_manager=llm, artifact_manager=rig.artifact_manager, project_file_manager=rig.project_file_manager)
+
+            agent.execute(SimpleNamespace(content="build a todo app", project_id="proj-node"))
+
+            written = rig.project_file_manager.list_written("proj-node", "backend")
+            self.assertIn("package.json", written)
+            package_json_path = rig.project_file_manager.area_dir("proj-node", "backend") / "package.json"
+            payload = json.loads(package_json_path.read_text(encoding="utf-8"))
+            self.assertIn("express", payload["dependencies"])
+        finally:
+            rig.cleanup()
+
+    def test_no_manifest_generated_when_no_external_imports_found(self) -> None:
+        rig = _Rig()
+        try:
+            llm = _ScriptedLLMManager(["def main() -> None:\n    print('main')", "class Task: pass  # model"])
+            agent = BackendDeveloperAgent(llm_manager=llm, artifact_manager=rig.artifact_manager, project_file_manager=rig.project_file_manager)
+
+            agent.execute(SimpleNamespace(content="build a todo app", project_id="proj1"))
+
+            self.assertNotIn("requirements.txt", rig.project_file_manager.list_written("proj1", "backend"))
         finally:
             rig.cleanup()
 

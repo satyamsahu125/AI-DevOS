@@ -51,13 +51,32 @@ class ProjectFileManager:
 
     def write_file(self, project_id: str, area: str, relative_path: str, content: str, *, attempt: int = 1) -> WrittenFile:
         """Write content to project_id's real project/{area}/{relative_path}, after a SafetyPolicy check."""
-        target = self.area_dir(project_id, area) / relative_path
+        safe_relative_path = self._sanitize_relative_path(relative_path)
+        target = self.area_dir(project_id, area) / safe_relative_path
         decision = self.safety_policy.check(OperationType.FILE_OVERWRITE, str(target), attempt=attempt)
         if decision.decision == SafetyDecision.BLOCK:
             raise SafetyException(decision.reason)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        return WrittenFile(path=relative_path, absolute_path=target, bytes_written=len(content.encode("utf-8")))
+        return WrittenFile(path=safe_relative_path, absolute_path=target, bytes_written=len(content.encode("utf-8")))
+
+    @staticmethod
+    def _sanitize_relative_path(relative_path: str) -> str:
+        """Normalize an LLM-authored path so it can never escape area_dir.
+
+        A leading "/" (or "\\") is the actual root cause of a real bug: Path("area") / "/x/y"
+        is an ABSOLUTE path in pathlib, so the "/" operator silently discards the "area" prefix
+        entirely and the write lands outside the project directory instead of raising -- this
+        stripped every leading separator, so "/api/users/register" becomes "api/users/register"
+        and joins normally. ".." components are rejected outright as path traversal.
+        """
+        normalized = relative_path.replace("\\", "/").lstrip("/")
+        parts = [part for part in normalized.split("/") if part not in ("", ".")]
+        if any(part == ".." for part in parts):
+            raise SafetyException(f"path traversal is not permitted: {relative_path}")
+        if not parts:
+            raise SafetyException(f"empty file path is not permitted: {relative_path!r}")
+        return "/".join(parts)
 
     def list_written(self, project_id: str, area: str) -> list[str]:
         """Return every file path (relative to area_dir, forward-slashed) written so far for project_id/area."""

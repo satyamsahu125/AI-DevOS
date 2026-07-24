@@ -18,10 +18,25 @@ Quality criteria:
 - Every frontend page and component in the design spec maps to at least one planned file.
 - Paths are relative, conventional for the stated tech stack, and never escape the project root.
 
+"path" is a SOURCE FILE PATH, never a URL or API route. This trips up backend planning
+specifically, because the architecture lists API endpoints (like "POST /api/auth/login") and it
+is tempting to copy that route straight into "path". Do not do this -- translate the endpoint
+into the source file that would implement it, the same way you already do for frontend pages.
+
+    WRONG (this is a URL, not a file):        "path": "/api/auth/login"
+    RIGHT (this is the file that handles it):  "path": "backend/routes/auth.js"
+
+    WRONG:  "path": "/search"
+    RIGHT:  "path": "backend/controllers/search_controller.py"
+
+Never start "path" with "/" -- every path is relative to the project root (e.g.
+"backend/models/user.py", "frontend/src/pages/LoginPage.jsx"), never an absolute or URL-style path.
+
 Common mistakes to avoid:
 - Planning zero files for a stage that clearly has work to do.
 - Vague purposes like "handles stuff" instead of naming the actual responsibility.
-- Duplicate paths, or paths that don't match the module they belong to."""
+- Duplicate paths, or paths that don't match the module they belong to.
+- Copying an API route or URL into "path" instead of naming the file that implements it."""
 
 
 class FilePlanPromptBuilder(PromptBuilder):
