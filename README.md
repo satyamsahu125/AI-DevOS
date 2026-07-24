@@ -1,56 +1,66 @@
 # AI DevOS
 
-## Run the application locally
+A multi-agent software engineering pipeline: describe an application in plain English, and 12
+specialized AI agents — each backed by an LLM call, a structured-output schema, and an automated
+reviewer — carry it from idea to a real, downloaded, runnable codebase.
 
-### 1. Create and activate the virtual environment
+Unlike asking an LLM to write an app in one shot, every stage's output is validated against a
+schema and passed through a three-tier reviewer before the next stage sees it, and only two stages
+(Backend/Frontend Developer) ever write to the actual generated project — everything else produces
+a reviewable document the next stage reads as context.
 
-From the project root:
+For the full architecture, the 12-stage pipeline, how modules connect, and how the memory system
+works, see **[docs/CURRENT-STATE.md](docs/CURRENT-STATE.md)**. For the roadmap, see
+**[docs/future/README.md](docs/future/README.md)**.
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
+## Quick start
 
-If PowerShell blocks script execution, run:
+Prerequisites: Python 3.12+, Node 18+, and either [Ollama](https://ollama.com) (local, default) or
+an AWS Bedrock API key (switchable at runtime from the Settings page).
 
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
+```bash
+# 1. Local LLM (skip if you're using Bedrock instead)
+ollama serve
+ollama pull qwen2.5-coder:7b
 
-### 2. Install dependencies
-
-```powershell
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-### 3. Start the API
-
-The FastAPI app is rooted in the backend package, so start it from the backend folder:
-
-```powershell
+# 2. Backend
 cd backend
-..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m venv .venv
+.venv\Scripts\activate        # Windows -- source .venv/bin/activate on macOS/Linux
+pip install -r requirements.txt
+uvicorn app.main:app --reload  # http://localhost:8000
+
+# 3. Frontend (separate terminal)
+cd frontend
+npm install
+npm run dev                    # http://localhost:5173
 ```
 
-### 4. Check the app
+Open `http://localhost:5173`, create a project, describe what you want built, and press Start
+Build. The full command reference (tests, one-off API calls, provider switching) is in
+**[docs/COMMANDS.md](docs/COMMANDS.md)**.
 
-Open the health endpoint in your browser or use curl:
+## What you get
 
-```powershell
-curl http://127.0.0.1:8000/health
+- A live pipeline view of all 12 stages, with real build logs as they happen.
+- Real generated source files (not just documents) for the backend and frontend, with an
+  auto-generated `package.json`/`requirements.txt` built from the imports the generated code
+  actually uses.
+- A "How to Run" guide and a one-click zip download of the generated project.
+- Stop/Resume — an interrupted build (crash, restart) resumes from the last completed stage instead
+  of starting over.
+
+## Repository layout
+
+```
+backend/    FastAPI app -- the 12-agent pipeline, memory subsystems, LLM providers
+frontend/   Vite + React + TypeScript -- Dashboard, Projects, and the build workspace
+docs/       Architecture (CURRENT-STATE.md), commands (COMMANDS.md), roadmap (future/)
 ```
 
-Expected response:
+## Tests
 
-```json
-{"status": "healthy"}
-```
-
-### 5. Run the tests
-
-From the project root:
-
-```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s backend/tests -p "test_*.py"
+```bash
+cd backend && python -m pytest tests/ -q
+cd frontend && npx tsc -b --noEmit && npm run build
 ```
