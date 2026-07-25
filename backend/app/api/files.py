@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from ..project.manager import ProjectManager
 from ..workspace.project_files import ProjectFileManager
 from ..workspace.project_readme import build_run_instructions
-from .dependencies import get_project_file_manager, get_project_manager
+from .dependencies import get_project_file_manager, get_project_manager, get_workspace_manager
+from ..workspace.manager import WorkspaceManager
 
 router = APIRouter()
 
@@ -59,31 +60,37 @@ def get_run_instructions(
 def download_project(
     project_id: str,
     project_manager: ProjectManager = Depends(get_project_manager),
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
     project_file_manager: ProjectFileManager = Depends(get_project_file_manager),
 ) -> Response:
-    """Zip and return every real generated file (backend + frontend) for project_id, plus a
-    generated RUN_INSTRUCTIONS.md at the archive root."""
+    """Zip and return every real generated file in the project directory for project_id, plus RUN_INSTRUCTIONS.md."""
     project = project_manager.repository.load(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    project_dir = workspace_manager.get_workspace_path(project_id) / "project"
     backend_files = project_file_manager.list_written(project_id, "backend")
     frontend_files = project_file_manager.list_written(project_id, "frontend")
-    if not backend_files and not frontend_files:
-        raise HTTPException(status_code=404, detail="No generated files yet -- run the Backend/Frontend Developer stages first")
+
+    if not project_dir.exists() or not any(p.is_file() for p in project_dir.rglob("*")):
+        raise HTTPException(status_code=404, detail="No generated files yet -- run the dev team stages first")
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for area, files in (("backend", backend_files), ("frontend", frontend_files)):
-            area_root = project_file_manager.area_dir(project_id, area)
-            for relative_path in files:
-                archive.write(area_root / relative_path, arcname=f"{area}/{relative_path}")
-        archive.writestr(
-            "RUN_INSTRUCTIONS.md",
-            build_run_instructions(project.name, project.description, backend_files, frontend_files),
-        )
+        for file_path in sorted(project_dir.rglob("*")):
+            if file_path.is_file():
+                if ".attempt-" in file_path.name or "__pycache__" in str(file_path):
+                    continue
+                arcname = str(file_path.relative_to(project_dir)).replace("\\", "/")
+                archive.write(file_path, arcname=arcname)
 
-    safe_name = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in project.name) or project_id
+        if "RUN_INSTRUCTIONS.md" not in archive.namelist():
+            archive.writestr(
+                "RUN_INSTRUCTIONS.md",
+                build_run_instructions(project.name, project.description, backend_files, frontend_files),
+            )
+
+    safe_name = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in project.name.lower().replace(" ", "-")) or project_id
     return Response(
         content=buffer.getvalue(),
         media_type="application/zip",

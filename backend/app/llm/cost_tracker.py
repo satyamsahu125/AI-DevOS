@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -9,7 +10,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "memory" / "memory.db"
+_DEFAULT_DB_PATH = Path(os.getenv("MEMORY_DB_PATH", "backend/app/memory/memory.db"))
 
 _shared_tracker: "CostTracker | None" = None
 

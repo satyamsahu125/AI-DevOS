@@ -21,11 +21,12 @@ class DependencyGraph:
         "designer",
         "security",
         "file_planner",
+        "sprint_planner",
         "backend",
         "frontend",
         "qa",
-        "document",
         "devops",
+        "document",
         "retro",
     ]
 
@@ -36,12 +37,13 @@ class DependencyGraph:
         Stage.Designer: [Stage.Architect],
         Stage.Security: [Stage.Designer],
         Stage.FileStructurePlanner: [Stage.Security],
-        Stage.BackendDeveloper: [Stage.Security, Stage.FileStructurePlanner],
-        Stage.FrontendDeveloper: [Stage.Security, Stage.Designer, Stage.FileStructurePlanner],
+        Stage.SprintPlanning: [Stage.FileStructurePlanner],
+        Stage.BackendDeveloper: [Stage.Security, Stage.FileStructurePlanner, Stage.SprintPlanning],
+        Stage.FrontendDeveloper: [Stage.Security, Stage.Designer, Stage.FileStructurePlanner, Stage.SprintPlanning],
         Stage.QA: [Stage.BackendDeveloper, Stage.FrontendDeveloper],
-        Stage.Document: [Stage.QA],
-        Stage.DevOps: [Stage.Document],
-        Stage.Retro: [Stage.DevOps],
+        Stage.DevOps: [Stage.QA],
+        Stage.Document: [Stage.DevOps],
+        Stage.Retro: [Stage.Document],
     }
 
     def has_dependency(self, stage: str) -> bool:

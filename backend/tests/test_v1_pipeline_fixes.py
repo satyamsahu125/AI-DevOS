@@ -35,6 +35,7 @@ from app.project.initializer import ProjectInitializer
 from app.project.manager import ProjectManager
 from app.project.repository import ProjectRepository
 from app.shared.dto.project_request import ProjectRequest
+from app.shared.enums.project_state import ProjectState
 from app.shared.enums.stage import Stage
 from app.shared.models.stage_artifact import StageArtifact
 from app.workflow.dependency_graph import DependencyGraph
@@ -132,6 +133,10 @@ class Fix002MultiStagePipelineTests(unittest.TestCase):
             manager, workspace_manager, _ = _build_pipeline_manager(tmp_dir)
             workspace_manager.create_workspace("proj-pipeline")
             result = manager.run("proj-pipeline", "Build a todo app")
+            if getattr(result, "requires_user_action", False):
+                workspace_manager.update_design_review("proj-pipeline", "approved", "Auto-approved for test")
+                workspace_manager.update_state("proj-pipeline", ProjectState.DESIGN_APPROVED)
+                result = manager.run("proj-pipeline", "Build a todo app")
 
             expected = [s.value for s in DependencyGraph.ordered_stages()]
             self.assertEqual(result.completed_stages, expected)
@@ -271,9 +276,18 @@ class Fix007NewEndpointsTests(unittest.TestCase):
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def _create_project(self, name: str, description: str) -> str:
+        """Create a project and run its first stage.
+
+        POST /projects deliberately no longer runs a pipeline stage (creation
+        must not depend on a reachable LLM), so the ProductOwner artifact these
+        endpoint tests inspect has to be produced by an explicit stage run --
+        the same thing a real caller now does via POST /workflow/start.
+        """
         response = self.client.post("/projects", json={"name": name, "description": description})
-        self.assertEqual(response.status_code, 200)
-        return response.json()["project"]["project_id"]
+        self.assertEqual(response.status_code, 201)
+        project_id = response.json()["project"]["project_id"]
+        self.workflow_manager.run_stage(project_id, "ProductOwner", f"Build: {description}\n(Project name: {name})")
+        return project_id
 
     def test_list_and_get_artifact_endpoints(self) -> None:
         project_id = self._create_project("Artifacts Test", "Build a widget")
@@ -300,7 +314,7 @@ class Fix007NewEndpointsTests(unittest.TestCase):
         response = self.client.get("/agents")
         self.assertEqual(response.status_code, 200)
         agents = response.json()
-        self.assertEqual(len(agents), 12)
+        self.assertEqual(len(agents), 14)
         self.assertTrue(all(agent["llm_backed"] for agent in agents))
 
     def test_memory_endpoint_returns_project_records(self) -> None:

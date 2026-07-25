@@ -1,98 +1,261 @@
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel
 
+from ..artifact.manager import ArtifactManager
 from ..project.manager import ProjectManager
 from ..shared.dto.stage_request import StageRequest
 from ..shared.dto.workflow_request import WorkflowRequest
 from ..shared.dto.workflow_result import WorkflowResult
+from ..shared.enums.project_state import ProjectState
+from ..shared.enums.stage import Stage
 from ..workflow.dependency_graph import DependencyGraph
 from ..workflow.manager import WorkflowManager
 from ..workflow.stage_lookup import resolve_stage_name
 from ..workspace.manager import WorkspaceManager
-from .dependencies import get_project_manager, get_workflow_manager, get_workspace_manager
+from .dependencies import get_artifact_manager, get_project_manager, get_workflow_manager, get_workspace_manager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class DesignApprovalRequest(BaseModel):
+    feedback: str | None = None
+    approved: bool = True
+    modified_design: dict | None = None
 
 
 @router.post("/workflow/start")
 def start_workflow(
     request: WorkflowRequest,
+    background_tasks: BackgroundTasks,
     manager: WorkflowManager = Depends(get_workflow_manager),
     project_manager: ProjectManager = Depends(get_project_manager),
 ) -> dict:
-    """Run the complete multi-stage pipeline for request.project_id, using request.request as the original task."""
+    """Run the complete multi-stage pipeline for request.project_id asynchronously."""
     if not project_manager.repository.exists(request.project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     content = request.request or f"Initialize project {request.project_id}"
-    result = manager.run(request.project_id, content)
+    
+    if manager.execution_state.is_running(request.project_id):
+        state = manager.workspace_manager.get_state(request.project_id)
+        return {
+            "project_id": request.project_id,
+            "state": state.value if hasattr(state, "value") else str(state),
+            "success": True,
+            "requires_user_action": False,
+            "message": "Workflow is already running in background",
+        }
+
+    background_tasks.add_task(manager.run, request.project_id, content)
+    state = manager.workspace_manager.get_state(request.project_id)
     return {
-        "project_id": result.project_id,
-        "success": result.success,
-        "completed_stages": result.completed_stages,
-        "failed_stage": result.failed_stage,
-        "message": result.message,
+        "project_id": request.project_id,
+        "state": state.value if hasattr(state, "value") else str(state),
+        "success": True,
+        "requires_user_action": False,
+        "action_needed": None,
+        "completed_stages": [],
+        "message": "Workflow pipeline started in background",
     }
 
 
+@router.get("/workflow/{project_id}/design-review")
+def get_design_review(
+    project_id: str,
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+    artifact_manager: ArtifactManager = Depends(get_artifact_manager),
+) -> dict:
+    """Return the DesignArtifact formatted for UI preview rendering."""
+    workspace_state = workspace_manager.load_project_json(project_id)
+    if workspace_state is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    state = workspace_manager.get_state(project_id)
+    dr_data = workspace_state.get("design_review") or {}
+    review_iteration = dr_data.get("iteration", 1)
+
+    design_content = workspace_manager.load_approved_design(project_id)
+    if not design_content:
+        artifact = artifact_manager.get_artifact(project_id, Stage.Designer)
+        if artifact and artifact.structured_content:
+            design_content = artifact.structured_content
+        elif artifact and artifact.content:
+            from ..actions.base_action import BaseAction
+            design_content = BaseAction.extract_json(artifact.content)
+
+    if not design_content:
+        from ..shared.schemas.design_schema import DesignArtifact
+        design_content = DesignArtifact(project_id=project_id, project_name=workspace_state.get("name", "")).model_dump(mode="json")
+
+    return {
+        "project_id": project_id,
+        "state": state.value if hasattr(state, "value") else str(state),
+        "review_iteration": review_iteration,
+        "design": design_content,
+        "instructions": "Review the design above. Approve to begin coding, or provide specific feedback for changes.",
+    }
+
+
+@router.post("/workflow/{project_id}/design-review")
+@router.post("/workflow/{project_id}/approve-design")
+def post_design_review(
+    project_id: str,
+    request: DesignApprovalRequest,
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+    artifact_manager: ArtifactManager = Depends(get_artifact_manager),
+) -> dict:
+    """Approve or request revision for the project design."""
+    workspace_state = workspace_manager.load_project_json(project_id)
+    if workspace_state is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if request.approved:
+        if request.modified_design:
+            workspace_manager.save_approved_design(project_id, request.modified_design)
+            try:
+                import json
+                artifact_manager.save_artifact(
+                    project_id=project_id,
+                    stage=Stage.Designer,
+                    content=json.dumps(request.modified_design, indent=2),
+                    structured_content=request.modified_design,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[post_design_review] Non-critical failure saving modified design artifact: %s",
+                    str(e),
+                    exc_info=True,
+                )
+        workspace_manager.update_design_review(project_id, "approved", request.feedback)
+        workspace_manager.update_state(project_id, ProjectState.DESIGN_APPROVED)
+        return {
+            "state": "design_approved",
+            "message": "Design approved",
+            "next": "Sprint planning will begin",
+        }
+    else:
+        workspace_manager.update_design_review(project_id, "revision_requested", request.feedback)
+        workspace_manager.update_state(project_id, ProjectState.DESIGN_READY)
+        updated_data = workspace_manager.load_project_json(project_id) or {}
+        new_iteration = updated_data.get("design_review", {}).get("iteration", 2)
+        return {
+            "state": "design_revision",
+            "iteration": new_iteration,
+            "message": "Design revision requested. Call /workflow/{id}/continue to regenerate.",
+        }
+
+
+@router.post("/workflow/{project_id}/continue")
+def continue_workflow(
+    project_id: str,
+    background_tasks: BackgroundTasks,
+    manager: WorkflowManager = Depends(get_workflow_manager),
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+) -> dict:
+    """Resume pipeline from current state asynchronously."""
+    workspace_state = workspace_manager.load_project_json(project_id)
+    if workspace_state is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    original_request = (
+        workspace_state.get("original_request")
+        or workspace_state.get("description")
+        or f"Resume project {project_id}"
+    )
+
+    if manager.execution_state.is_running(project_id):
+        state = workspace_manager.get_state(project_id)
+        return {
+            "project_id": project_id,
+            "state": state.value if hasattr(state, "value") else str(state),
+            "success": True,
+            "message": "Workflow is already running in background",
+        }
+
+    background_tasks.add_task(manager.run, project_id, original_request)
+    state = workspace_manager.get_state(project_id)
+    return {
+        "project_id": project_id,
+        "state": state.value if hasattr(state, "value") else str(state),
+        "success": True,
+        "requires_user_action": False,
+        "action_needed": None,
+        "message": "Workflow pipeline resumed in background",
+    }
+
+
+@router.get("/workflow/{project_id}/status")
 @router.get("/workflow/{project_id}")
 def workflow_status(
     project_id: str,
     workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
     manager: WorkflowManager = Depends(get_workflow_manager),
 ) -> dict:
-    """Report project_id's real pipeline progress, read from its workspace project.json (404 if never initialized).
-
-    "running" means a stage is genuinely executing in this process right now (see
-    ExecutionStateRegistry) -- not just "fewer stages are done than total". A project that's
-    partway through the pipeline but has nothing actually in flight (e.g. after a backend
-    restart, or simply not yet resumed) reports "paused", so the UI never shows a live spinner
-    for work that isn't actually happening.
-    """
+    """Report project_id's status and state machine progress."""
     workspace_state = workspace_manager.load_project_json(project_id)
     if workspace_state is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    state = workspace_manager.get_state(project_id)
     completed_stages = list(workspace_state.get("stages_completed", []))
-    failed_stage = workspace_state.get("failed_stage")
+    failed_stage = workspace_state.get("failed_at_stage") or workspace_state.get("failed_stage")
     was_stopped = bool(workspace_state.get("stopped"))
     total_stages = len(DependencyGraph.STAGE_ORDER)
     progress_percent = round(100 * len(completed_stages) / total_stages) if total_stages else 0
-    is_running = manager.execution_state.is_running(project_id)
 
+    current_sprint = workspace_state.get("current_sprint_number", 0)
+    total_sprints = workspace_state.get("total_sprints", 0)
+    curr_sprint_dict = workspace_state.get("current_sprint") or {}
+    sprint_name = curr_sprint_dict.get("name") or (f"Sprint {current_sprint}" if current_sprint else "No active sprint")
+
+    completed_sprints = workspace_state.get("completed_sprints", [])
+    sprint_progress = f"{len(completed_sprints)}/{total_sprints} sprints complete"
+    remaining_sprints = max(0, total_sprints - len(completed_sprints))
+    estimated_completion = f"{remaining_sprints} sprints remaining"
+
+    is_running = manager.execution_state.is_running(project_id)
     if is_running:
-        status = "running"
-    elif failed_stage:
-        status = "failed"
-    elif not completed_stages:
-        status = "not_started"
-    elif len(completed_stages) >= total_stages:
-        status = "complete"
+        status_str = "running"
+    elif state == ProjectState.FAILED:
+        status_str = "failed"
+    elif state == ProjectState.EMPTY:
+        status_str = "not_started"
+    elif state in [ProjectState.DEPLOYABLE, ProjectState.DONE]:
+        status_str = "complete"
     elif was_stopped:
-        status = "stopped"
+        status_str = "stopped"
     else:
-        status = "paused"
+        status_str = "paused"
 
     return {
         "project_id": project_id,
+        "state": state.value if hasattr(state, "value") else str(state),
+        "status": status_str,
+        "requires_user_action": state == ProjectState.DESIGN_REVIEW_PENDING,
+        "current_sprint": current_sprint,
+        "total_sprints": total_sprints,
+        "sprint_name": sprint_name,
+        "sprint_progress": sprint_progress,
+        "estimated_completion": estimated_completion,
         "current_stage": workspace_state.get("current_stage"),
         "completed_stages": completed_stages,
         "failed_stage": failed_stage,
         "total_stages": total_stages,
         "progress_percent": progress_percent,
-        "status": status,
     }
 
 
 @router.post("/workflow/{project_id}/stop")
 def stop_workflow(project_id: str, manager: WorkflowManager = Depends(get_workflow_manager)) -> dict:
-    """Flag project_id's in-flight pipeline/stage run to stop at its next checkpoint (between
-    retry attempts, or between stages) -- it cannot interrupt a single LLM call already in
-    flight, since that's a blocking HTTP request to the model provider."""
+    """Flag project_id's in-flight pipeline/stage run to stop at its next checkpoint."""
     stopped = manager.execution_state.request_stop(project_id)
     return {"project_id": project_id, "stop_requested": stopped}
 
 
 @router.post("/workflow/stage", response_model=WorkflowResult)
 def run_single_stage(request: StageRequest, manager: WorkflowManager = Depends(get_workflow_manager)) -> WorkflowResult:
-    """Run exactly one named stage (for debugging) -- accepts either "ProductOwner" or "product_owner" form."""
+    """Run exactly one named stage (for debugging)."""
     stage_name = resolve_stage_name(request.stage)
     return manager.run_stage(request.project_id, stage_name, request.request)

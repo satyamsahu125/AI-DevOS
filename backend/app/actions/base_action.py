@@ -125,11 +125,18 @@ class LLMAction(BaseAction):
         raw = self.extract_json(text)
         if not raw:
             return {}
+        normalized = {}
+        for k, v in raw.items():
+            snake_k = re.sub(r'(?<!^)(?=[A-Z])', '_', k).lower()
+            normalized[snake_k] = v
         try:
-            return self.schema_model.model_validate(raw).model_dump(mode="json")
-        except Exception as exc:
-            logger.debug("%s structured output failed schema validation: %s", self.name, exc)
-            return {}
+            return self.schema_model.model_validate(normalized).model_dump(mode="json")
+        except Exception:
+            try:
+                return self.schema_model.model_validate(raw).model_dump(mode="json")
+            except Exception as exc:
+                logger.debug("%s structured output failed schema validation: %s", self.name, exc)
+                return {}
 
     def _extract_tokens(self, response: object) -> int:
         total = getattr(response, "total_tokens", None)

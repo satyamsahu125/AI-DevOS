@@ -1,7 +1,6 @@
-from __future__ import annotations
-
 import json
 import logging
+import os
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -9,7 +8,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "memory" / "memory.db"
+_DEFAULT_DB_PATH = Path(os.getenv("MEMORY_DB_PATH", "backend/app/memory/memory.db"))
 
 
 @dataclass(slots=True)
@@ -120,6 +119,27 @@ class CheckpointManager:
         logger.info("deleting checkpoint: session_id=%s", session_id)
         self._conn.execute("DELETE FROM session_checkpoints WHERE session_id = ?", (session_id,))
         self._conn.commit()
+
+    def cleanup_old_checkpoints(self, days: int = 7) -> int:
+        """
+        Delete checkpoints older than `days` days.
+        Returns count of deleted records.
+        Called at kernel startup.
+        """
+        from datetime import timedelta
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        cursor = self._conn.execute(
+            "DELETE FROM session_checkpoints WHERE saved_at < ?",
+            (cutoff.isoformat(),)
+        )
+        self._conn.commit()
+        deleted = cursor.rowcount
+        if deleted > 0:
+            logger.info(
+                "CheckpointManager: cleaned up %d stale checkpoints "
+                "older than %d days", deleted, days
+            )
+        return deleted
 
     def list_incomplete(self) -> list[SessionCheckpoint]:
         """Return every saved checkpoint -- each one is, by definition, an incomplete session."""

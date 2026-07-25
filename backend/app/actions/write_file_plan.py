@@ -45,8 +45,22 @@ class WriteFilePlanAction(LLMAction):
         project_id = getattr(context, "project_id", "") or ""
         base_content = getattr(context, "content", "") or ""
         architecture = self._load_architecture(project_id)
-        enriched = f"{base_content}\n\n### Architecture Summary\n{summarize_architecture(architecture)}" if architecture else base_content
+        approved_design = self._load_approved_design(project_id)
+        parts = [base_content]
+        if architecture:
+            parts.append(f"### Architecture Summary\n{summarize_architecture(architecture)}")
+        if approved_design:
+            import json
+            parts.append(f"### Approved Design Spec (User Modified via Puck)\n```json\n{json.dumps(approved_design, indent=2)}\n```")
+        enriched = "\n\n".join(parts)
         return super().run(SimpleNamespace(content=enriched), llm)
+
+    def _load_approved_design(self, project_id: str) -> dict | None:
+        if not project_id:
+            return None
+        from ..workspace.manager import WorkspaceManager
+        ws_mgr = WorkspaceManager()
+        return ws_mgr.load_approved_design(project_id)
 
     def _load_architecture(self, project_id: str) -> ArchitectureArtifact | None:
         if not project_id:

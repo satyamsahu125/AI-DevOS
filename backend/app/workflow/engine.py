@@ -151,6 +151,7 @@ class WorkflowEngine:
         reviewer_feedback = ""
         failed_approaches: list[str] = []
         last_artifact_summary = ""
+        last_error = ""
         while self.retry_policy.should_retry(attempt):
             if self.execution_state.is_stop_requested(project_id):
                 logger.info("workflow stage stopped by user: stage=%s attempt=%s", stage_name, attempt)
@@ -161,12 +162,35 @@ class WorkflowEngine:
             self.event_log.record(project_id, stage_name, f"Attempt {attempt + 1}: generating with the AI model...")
             effective_content = base_content if attempt == 0 else self._build_retry_content(base_content, reviewer_feedback, attempt)
             self._save_checkpoint(session.session_id, stage_name, project_id, attempt, failed_approaches, last_artifact_summary)
-            execution_result = self.execution_manager.execute_stage(project_id, stage_name, effective_content, attempt=attempt + 1)
-            artifact = execution_result.artifact
-            previous_content = last_artifact_summary or None
-            last_artifact_summary = (artifact.content or "")[:300]
-            review_result = self.reviewer.review(artifact, previous_content=previous_content)
-            self._record_trajectory(stage_name, content, artifact, attempt, review_result, project_id)
+            try:
+                execution_result = self.execution_manager.execute_stage(project_id, stage_name, effective_content, attempt=attempt + 1)
+                artifact = execution_result.artifact
+                previous_content = last_artifact_summary or None
+                last_artifact_summary = (artifact.content or "")[:300]
+                review_result = self.reviewer.review(artifact, previous_content=previous_content)
+                self._record_trajectory(stage_name, content, artifact, attempt, review_result, project_id)
+            except Exception as exc:
+                # An agent/provider failure (unreachable or misconfigured LLM, a
+                # timeout, a bad model id) used to propagate straight out of this
+                # loop. That skipped every remaining step: no retry despite
+                # RetryPolicy, no failure recorded to project.json, the session
+                # never closed and its checkpoint never deleted, and -- worst for
+                # the operator -- no event logged, so the live log simply stopped
+                # after "generating with the AI model..." with no reason given.
+                # Treat it as a failed attempt instead: log why, then let
+                # RetryPolicy decide whether to try again.
+                last_error = f"{type(exc).__name__}: {exc}"
+                logger.exception("workflow stage attempt raised: stage=%s attempt=%s", stage_name, attempt)
+                self.event_log.record(
+                    project_id, stage_name,
+                    f"Attempt {attempt + 1} failed: {last_error}",
+                    level="error",
+                )
+                failed_approaches.append(last_error)
+                session.state = SessionState.Rejected
+                self.session_manager.increment_retry(session)
+                attempt += 1
+                continue
 
             if review_result.approved:
                 logger.info("workflow stage approved: stage=%s attempt=%s", stage_name, attempt)
@@ -177,6 +201,7 @@ class WorkflowEngine:
                 self.session_manager.close_session(session)
                 self._record_message(project_id, stage, artifact)
                 self._record_design(project_id, stage, artifact)
+                self._record_sprint_plan(project_id, stage, artifact)
                 self._record_lesson(stage_name, project_id, artifact, attempt, review_result, failed_approaches)
                 self.checkpoint_manager.delete(session.session_id)
                 self.artifact_manager.mark_approved(project_id, stage, attempt + 1)
@@ -199,7 +224,18 @@ class WorkflowEngine:
         workflow.state = self.transition.transition(WorkflowState.Failed)
         self.state_machine.fail()
         self.session_manager.close_session(session)
-        message = review_result.overall_feedback if review_result else "no execution attempted"
+        # Close out the checkpoint on the failure path too. Previously only the
+        # approval path deleted it, so every failed stage left one behind and
+        # list_incomplete() filled up with stale sessions from old runs.
+        self.checkpoint_manager.delete(session.session_id)
+        if review_result is not None:
+            message = review_result.overall_feedback
+        elif last_error:
+            # Every attempt raised before producing an artifact -- report the
+            # actual cause rather than the misleading "no execution attempted".
+            message = f"{stage_name} could not run: {last_error}"
+        else:
+            message = "no execution attempted"
         self._update_project_failure(project_id, stage)
         return WorkflowResult(workflow=workflow, success=False, message=message)
 
@@ -338,6 +374,34 @@ class WorkflowEngine:
             return
         self.memory_manager.store(project_id, _DESIGN_MEMORY_KEY, artifact.content)
         logger.debug("design artifact recorded: project_id=%s key=%s", project_id, _DESIGN_MEMORY_KEY)
+
+    def _record_sprint_plan(self, project_id: str, stage: Stage, artifact: StageArtifact) -> None:
+        """Persist an approved SprintPlan artifact to workspace project.json and artifacts/sprint_plan.json."""
+        if stage != Stage.SprintPlanning and stage.value not in ("SprintPlanning", "SprintPlanner", "Planner"):
+            return
+        if not project_id or not artifact:
+            return
+        structured = getattr(artifact, "structured_content", None) or {}
+        raw_content = artifact.content or "{}"
+        from ..actions.base_action import BaseAction
+        sprint_plan_data = structured if structured else BaseAction.extract_json(raw_content)
+
+        if sprint_plan_data:
+            try:
+                if "project_id" not in sprint_plan_data or not sprint_plan_data["project_id"]:
+                    sprint_plan_data["project_id"] = project_id
+                if "created_at" not in sprint_plan_data or not sprint_plan_data["created_at"]:
+                    sprint_plan_data["created_at"] = datetime.now(timezone.utc).isoformat()
+                from ..shared.models.sprint import SprintPlan
+                plan_model = SprintPlan.model_validate(sprint_plan_data)
+                self.workspace_manager.update_sprint_plan(project_id, plan_model)
+                sprint_plan_file = self.workspace_manager.get_workspace_path(project_id) / "artifacts" / "sprint_plan.json"
+                sprint_plan_file.parent.mkdir(parents=True, exist_ok=True)
+                import json
+                sprint_plan_file.write_text(json.dumps(plan_model.model_dump(mode="json"), indent=2), encoding="utf-8")
+                logger.info("sprint plan recorded: project_id=%s total_sprints=%s", project_id, plan_model.total_sprints)
+            except Exception as exc:
+                logger.warning("failed to parse or save sprint plan: %s", exc)
 
     def _with_predecessor_message(self, project_id: str, content: str) -> str:
         """Prepend project_id's previous stage AgentMessage (if any) so this stage sees structured predecessor output."""

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -12,8 +13,8 @@ from .exceptions import ExecutionException
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "memory" / "memory.db"
-_DEFAULT_WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_DB_PATH = Path(os.getenv("MEMORY_DB_PATH", "backend/app/memory/memory.db"))
+_DEFAULT_WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "temp-workspace"))
 
 
 class OperationType(str, Enum):

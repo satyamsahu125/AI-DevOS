@@ -69,7 +69,7 @@ class APISmokeTests(unittest.TestCase):
             "/projects",
             json={"name": "API Smoke", "description": "Smoke test project"},
         )
-        self.assertEqual(project_response.status_code, 200)
+        self.assertEqual(project_response.status_code, 201)
         self.assertIn("project", project_response.json())
         self.assertTrue(project_response.json()["success"])
 

@@ -6,6 +6,7 @@ from ..shared.exceptions import DependencyException
 from .architect import ArchitectAgent
 from .backend import BackendDeveloperAgent
 from .base_agent import BaseAgent
+from .clarification import ClarificationAgent
 from .designer import DesignerAgent
 from .devops import DevOpsAgent
 from .document import DocumentAgent
@@ -17,6 +18,7 @@ from .registry import AgentRegistry
 from .resolver import AgentResolver
 from .retro import RetroAgent
 from .security import SecurityAgent
+from .sprint_planner import SprintPlannerAgent
 from .strategic_review import StrategicReviewAgent
 from .validation import AgentValidation
 
@@ -51,6 +53,8 @@ class AgentFactory:
         self.registry.register("file_planner", FileStructurePlannerAgent)
         self.registry.register("document", DocumentAgent)
         self.registry.register("retro", RetroAgent)
+        self.registry.register("clarification", ClarificationAgent)
+        self.registry.register("sprint_planner", SprintPlannerAgent)
 
     def create(self, stage_name: str) -> BaseAgent:
         """Resolve stage_name to a registered agent and construct a new instance of it."""

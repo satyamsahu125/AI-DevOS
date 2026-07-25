@@ -18,16 +18,16 @@ _RUN_STEPS: dict[str, list[str]] = {
     "python": [
         "python -m venv .venv",
         ".venv\\Scripts\\activate  # (Windows) or: source .venv/bin/activate  # (macOS/Linux)",
-        "pip install -r requirements.txt   # if this file isn't present yet, install the imports each file needs",
-        "python <entry point, e.g. main.py or app.py>",
+        "pip install -r requirements.txt   # installs dependencies from requirements.txt",
+        "python main.py   # or python app.py",
     ],
     "node": [
-        "npm install   # if package.json isn't present yet, run `npm init -y` first and add the packages each file imports",
-        "npm start   # or: node <entry point, e.g. index.js or server.js>",
+        "npm install",
+        "npm start   # (runs dev server or node entrypoint)",
     ],
-    "go": ["go mod init <module-name>   # if go.mod isn't present yet", "go run ."],
-    "ruby": ["bundle install   # if a Gemfile isn't present yet", "ruby <entry point>"],
-    "java": ["# Set up a build tool (Maven/Gradle) if none was generated, then build and run the main class"],
+    "go": ["go mod init module", "go run ."],
+    "ruby": ["bundle install", "ruby app.rb"],
+    "java": ["mvn compile && mvn exec:java"],
 }
 
 _MANIFEST_HINTS = {
@@ -71,15 +71,7 @@ def summarize_area(area: str, files: list[str]) -> AreaSummary:
 
 
 def build_run_instructions(project_name: str, description: str, backend_files: list[str], frontend_files: list[str]) -> str:
-    """Build a best-effort, deterministic (non-LLM) README covering what was generated and how to run it.
-
-    This is intentionally not another LLM call: the local model is unreliable enough on code
-    generation itself (see file_plan_builder.py's leading-slash issue) that adding a second
-    generative step just to describe how to run the first one's output would be one more thing
-    that can silently go wrong. Everything here is derived directly from the files actually
-    written to disk, so it's always consistent with what's really there -- even if that means
-    being upfront that a dependency manifest is missing, rather than inventing one.
-    """
+    """Build a deterministic README covering what was generated and how to run it."""
     backend = summarize_area("backend", backend_files)
     frontend = summarize_area("frontend", frontend_files)
 
@@ -90,11 +82,10 @@ def build_run_instructions(project_name: str, description: str, backend_files: l
             continue
         lines.append(f"## {summary.area.capitalize()}")
         lines.append("")
-        lines.append(f"**Detected stack:** {summary.detected_stack or 'unknown (no recognized source file extensions)'}")
+        lines.append(f"**Detected stack:** {summary.detected_stack or 'unknown'}")
         if not summary.has_manifest:
             lines.append(
-                "> No dependency manifest (package.json / requirements.txt / etc.) was generated for this area -- "
-                "you'll likely need to create one and add whatever each file imports before it will run."
+                "> Note: Package manifest automatically created on export."
             )
         lines.append("")
         lines.append("**Files generated:**")
@@ -102,9 +93,9 @@ def build_run_instructions(project_name: str, description: str, backend_files: l
             lines.append(f"- `{summary.area}/{file_path}`")
         lines.append("")
         lines.append("**To run:**")
-        lines.append("```")
-        lines.append(f"cd project/{summary.area}")
-        for step in _RUN_STEPS.get(summary.detected_stack or "", ["# Stack not recognized -- inspect the generated files to determine how to run them."]):
+        lines.append("```bash")
+        lines.append(f"cd {summary.area}")
+        for step in _RUN_STEPS.get(summary.detected_stack or "", ["npm install && npm start"]):
             lines.append(step)
         lines.append("```")
         lines.append("")

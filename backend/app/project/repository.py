@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from ..shared.enums.project_state import ProjectState
 from ..shared.enums.stage import Stage
 from ..shared.models.project import Project
 
@@ -19,6 +20,7 @@ class ProjectRepository:
         payload = project.__dict__.copy()
         payload["created_at"] = project.created_at.isoformat()
         payload["current_stage"] = project.current_stage.value
+        payload["state"] = project.state.value
         path.write_text(json.dumps(payload), encoding="utf-8")
         return project
 
@@ -30,6 +32,8 @@ class ProjectRepository:
         data["created_at"] = datetime.fromisoformat(data["created_at"])
         data["current_stage"] = Stage(data["current_stage"])
         data.setdefault("status", "active")
+        # Records written before `state` existed default to EMPTY.
+        data["state"] = ProjectState(data.get("state") or ProjectState.EMPTY.value)
         return Project(**data)
 
     def exists(self, project_id: str) -> bool:

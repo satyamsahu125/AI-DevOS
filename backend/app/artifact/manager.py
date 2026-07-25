@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,7 +12,7 @@ from ..shared.enums.stage import Stage
 from ..shared.models.stage_artifact import StageArtifact
 from ..workspace.manager import WorkspaceManager
 
-_DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "memory" / "memory.db"
+_DEFAULT_DB_PATH = Path(os.getenv("MEMORY_DB_PATH", "memory/memory.db"))
 
 
 class ArtifactManager:

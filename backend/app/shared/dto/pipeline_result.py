@@ -1,18 +1,22 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pydantic import BaseModel, Field
+
+from ..enums.project_state import ProjectState
 
 
-@dataclass(slots=True)
-class PipelineResult:
-    """Result of running the full multi-stage pipeline for one project (WorkflowManager.run())."""
-
+class PipelineResult(BaseModel):
     project_id: str
-    completed_stages: list[str]
-    failed_stage: str | None
-    success: bool
-    message: str
-    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    state: ProjectState
+    success: bool = False
+    message: str = ""
+    requires_user_action: bool = False
+    action_needed: str | None = None
+    completed_stages: list[str] = Field(default_factory=list)
+    current_sprint: int | None = None
+    total_sprints: int | None = None
+    failed_stage: str | None = None
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: datetime | None = None
     stopped: bool = False

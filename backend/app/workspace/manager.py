@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..shared.enums.project_state import ProjectState
+from ..shared.models.sprint import SprintPlan, SprintStatus
 from .layout import WorkspaceLayout
 from .repository import WorkspaceRepository
+
+logger = logging.getLogger(__name__)
 
 
 class WorkspaceManager:
@@ -20,8 +26,7 @@ class WorkspaceManager:
     """
 
     def __init__(self, root: Path | None = None) -> None:
-        backend_root = Path(__file__).resolve().parents[2]
-        self.root = root or backend_root / "temp-workspace"
+        self.root = root or Path(os.getenv("WORKSPACE_ROOT", "temp-workspace"))
         self.layout = WorkspaceLayout(self.root)
         self.repository = WorkspaceRepository(self.root)
 
@@ -34,13 +39,34 @@ class WorkspaceManager:
 
         project_json_path = workspace_root / "project.json"
         if not project_json_path.exists():
+            now = datetime.now(timezone.utc).isoformat()
             payload = {
                 "project_id": project_id,
                 "name": name,
                 "description": description,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "original_request": "",
+                "state": ProjectState.EMPTY.value,
+                "created_at": now,
+                "updated_at": now,
+                "clarification": {
+                    "questions_asked": [],
+                    "answers_received": [],
+                    "complete": False,
+                },
+                "sprint_plan": None,
+                "current_sprint": None,
+                "current_sprint_number": 0,
+                "total_sprints": 0,
+                "completed_sprints": [],
                 "stages_completed": [],
                 "current_stage": None,
+                "failed_at_stage": None,
+                "failure_reason": None,
+                "design_review": {
+                    "status": "pending",
+                    "user_feedback": None,
+                    "iteration": 0,
+                },
                 "status": "active",
             }
             project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -78,5 +104,129 @@ class WorkspaceManager:
         path = self.get_workspace_path(project_id) / "project.json"
         data = self.load_project_json(project_id) or {"project_id": project_id}
         data.update(updates)
+        data["updated_at"] = datetime.now(timezone.utc).isoformat()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    def update_state(self, project_id: str, new_state: ProjectState) -> None:
+        """Persist state change immediately."""
+        state_val = new_state.value if isinstance(new_state, ProjectState) else str(new_state)
+        self.update_project_json(project_id, {"state": state_val})
+
+    def get_state(self, project_id: str) -> ProjectState:
+        """Read project_id's current state, defaulting to ProjectState.EMPTY if absent."""
+        data = self.load_project_json(project_id)
+        if not data or "state" not in data or not data["state"]:
+            return ProjectState.EMPTY
+        try:
+            return ProjectState(data["state"])
+        except ValueError:
+            return ProjectState.EMPTY
+
+    def update_sprint_plan(self, project_id: str, sprint_plan: SprintPlan) -> None:
+        """Persist sprint plan to project.json."""
+        plan_dict = sprint_plan.model_dump(mode="json")
+        self.update_project_json(
+            project_id,
+            {
+                "sprint_plan": plan_dict,
+                "total_sprints": sprint_plan.total_sprints,
+            },
+        )
+
+    def get_sprint_plan(self, project_id: str) -> SprintPlan | None:
+        """Retrieve SprintPlan from project.json if present."""
+        data = self.load_project_json(project_id)
+        if not data or not data.get("sprint_plan"):
+            return None
+        return SprintPlan.model_validate(data["sprint_plan"])
+
+    def set_current_sprint(self, project_id: str, sprint_number: int) -> None:
+        """Set current sprint number and update sprint status in sprint_plan."""
+        data = self.load_project_json(project_id) or {}
+        plan_data = data.get("sprint_plan")
+        current_sprint_dict = None
+        if plan_data and "sprints" in plan_data:
+            for s in plan_data["sprints"]:
+                if s.get("sprint_number") == sprint_number:
+                    s["status"] = SprintStatus.IN_PROGRESS.value
+                    if not s.get("started_at"):
+                        s["started_at"] = datetime.now(timezone.utc).isoformat()
+                    current_sprint_dict = s
+                    break
+        self.update_project_json(
+            project_id,
+            {
+                "current_sprint_number": sprint_number,
+                "current_sprint": current_sprint_dict,
+                "sprint_plan": plan_data,
+            },
+        )
+
+    def mark_sprint_complete(self, project_id: str, sprint_number: int) -> None:
+        """Mark sprint as complete in completed_sprints and sprint_plan."""
+        data = self.load_project_json(project_id) or {}
+        completed = list(data.get("completed_sprints", []))
+        if sprint_number not in completed:
+            completed.append(sprint_number)
+        plan_data = data.get("sprint_plan")
+        if plan_data and "sprints" in plan_data:
+            for s in plan_data["sprints"]:
+                if s.get("sprint_number") == sprint_number:
+                    s["status"] = SprintStatus.COMPLETE.value
+                    s["completed_at"] = datetime.now(timezone.utc).isoformat()
+                    break
+        self.update_project_json(
+            project_id,
+            {
+                "completed_sprints": completed,
+                "sprint_plan": plan_data,
+            },
+        )
+
+    def update_design_review(self, project_id: str, status: str, feedback: str | None = None) -> None:
+        """Update design review status and feedback."""
+        data = self.load_project_json(project_id) or {}
+        dr = dict(data.get("design_review") or {})
+        current_iter = dr.get("iteration")
+        if not current_iter or current_iter < 1:
+            current_iter = 1
+        dr["status"] = status
+        dr["user_feedback"] = feedback
+        if status == "revision_requested":
+            dr["iteration"] = current_iter + 1
+        else:
+            dr["iteration"] = current_iter
+        self.update_project_json(project_id, {"design_review": dr})
+
+    def save_approved_design(self, project_id: str, design: dict) -> None:
+        """Save approved design to artifacts/design_approved.json and update project.json."""
+        workspace_root = self.get_workspace_path(project_id)
+        artifacts_dir = workspace_root / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        design_file = artifacts_dir / "design_approved.json"
+        design_file.write_text(json.dumps(design, indent=2), encoding="utf-8")
+        self.update_project_json(project_id, {
+            "approved_design": design,
+            "design_approved": True,
+        })
+
+    def load_approved_design(self, project_id: str) -> dict | None:
+        """Load approved design from artifacts/design_approved.json or project.json."""
+        workspace_root = self.get_workspace_path(project_id)
+        design_file = workspace_root / "artifacts" / "design_approved.json"
+        if design_file.exists():
+            try:
+                return json.loads(design_file.read_text(encoding="utf-8"))
+            except Exception as e:
+                logger.warning(
+                    "[WorkspaceManager.load_approved_design] Non-critical failure parsing design_approved.json for %s: %s",
+                    project_id,
+                    str(e),
+                    exc_info=True,
+                )
+        project_data = self.load_project_json(project_id)
+        if project_data and "approved_design" in project_data:
+            return project_data["approved_design"]
+        return None
+

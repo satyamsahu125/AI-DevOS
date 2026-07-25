@@ -119,7 +119,10 @@ export interface CreateProjectResult {
 
 export interface PipelineStartResult {
   project_id: string
+  state: string
   success: boolean
+  requires_user_action: boolean
+  action_needed?: string
   completed_stages: string[]
   failed_stage: string | null
   message: string
@@ -127,12 +130,34 @@ export interface PipelineStartResult {
 
 export interface WorkflowStatus {
   project_id: string
+  state?: string
   current_stage: string | null
   completed_stages: string[]
   failed_stage: string | null
   total_stages: number
   progress_percent: number
   status: "not_started" | "running" | "paused" | "stopped" | "complete" | "failed"
+  requires_user_action?: boolean
+  current_sprint?: number
+  total_sprints?: number
+  sprint_name?: string
+  sprint_progress?: string
+  estimated_completion?: string
+}
+
+export interface DesignReviewData {
+  project_id: string
+  state: string
+  review_iteration: number
+  design: Record<string, unknown>
+  instructions: string
+}
+
+export interface DesignApprovalResponse {
+  state: string
+  iteration?: number
+  message: string
+  next?: string
 }
 
 export interface StageRunResult {
@@ -262,6 +287,16 @@ export const api = {
       body: JSON.stringify({ project_id: projectId, request: requestText }),
     }),
   getWorkflowStatus: (projectId: string) => request<WorkflowStatus>(`/workflow/${projectId}`),
+  
+  getDesignReview: (projectId: string) => request<DesignReviewData>(`/workflow/${projectId}/design-review`),
+  postDesignReview: (projectId: string, approved: boolean, feedback?: string, modified_design?: Record<string, unknown>) =>
+    request<DesignApprovalResponse>(`/workflow/${projectId}/design-review`, {
+      method: "POST",
+      body: JSON.stringify({ approved, feedback, modified_design }),
+    }),
+  continueWorkflow: (projectId: string) =>
+    request<PipelineStartResult>(`/workflow/${projectId}/continue`, { method: "POST" }),
+
   runStage: (projectId: string, stage: string, requestText: string) =>
     request<StageRunResult>("/workflow/stage", {
       method: "POST",
@@ -296,3 +331,4 @@ export const api = {
     request<LLMSettings>("/settings/llm", { method: "POST", body: JSON.stringify(update) }),
   listProviders: () => request<{ providers: ProviderInfo[] }>("/settings/providers"),
 }
+

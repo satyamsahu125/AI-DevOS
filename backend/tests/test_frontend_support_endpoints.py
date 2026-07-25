@@ -11,9 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
 
-from app.api.dependencies import get_event_log, get_project_file_manager, get_project_manager
+from app.api.dependencies import get_event_log, get_project_file_manager, get_project_manager, get_workspace_manager
 from app.main import app
 from app.memory.project_event_log import ProjectEventLog
+from app.project.manager import ProjectManager
 from app.project.repository import ProjectRepository
 from app.shared.models.project import Project
 from app.workspace.manager import WorkspaceManager
@@ -73,17 +74,19 @@ class FilesAndLogsEndpointTests(unittest.TestCase):
         self.project_repository.save(
             Project(project_id="proj1", name="Test Project", description="A test project.", workspace_path=str(self.tmp_dir))
         )
-        fake_project_manager = SimpleNamespace(repository=self.project_repository)
+        fake_project_manager = ProjectManager(repository=self.project_repository)
 
         app.dependency_overrides[get_project_file_manager] = lambda: self.project_file_manager
         app.dependency_overrides[get_event_log] = lambda: self.event_log
         app.dependency_overrides[get_project_manager] = lambda: fake_project_manager
+        app.dependency_overrides[get_workspace_manager] = lambda: self.workspace_manager
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
         app.dependency_overrides.pop(get_project_file_manager, None)
         app.dependency_overrides.pop(get_event_log, None)
         app.dependency_overrides.pop(get_project_manager, None)
+        app.dependency_overrides.pop(get_workspace_manager, None)
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def test_list_files_reflects_real_written_files(self) -> None:

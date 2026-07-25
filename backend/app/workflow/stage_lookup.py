@@ -17,7 +17,12 @@ _REGISTRY_KEY_TO_STAGE: dict[str, Stage] = {
     "retro": Stage.Retro,
     "strategic_review": Stage.StrategicReview,
     "reviewer": Stage.Reviewer,
-    "planner": Stage.Planner,
+    "planner": Stage.FileStructurePlanner,
+    "sprint_planner": Stage.SprintPlanning,
+    "sprintplanner": Stage.SprintPlanning,
+    "sprint_planning": Stage.SprintPlanning,
+    "sprintplanning": Stage.SprintPlanning,
+    "clarification": Stage.Clarification,
 }
 
 

@@ -26,5 +26,11 @@ class AgentResolver:
             "file_planner": "file_planner",
             "document": "document",
             "retro": "retro",
+            "clarification": "clarification",
+            "clarificationagent": "clarification",
+            "sprintplanner": "sprint_planner",
+            "sprint_planner": "sprint_planner",
+            "sprintplanning": "sprint_planner",
+            "sprint_planning": "sprint_planner",
         }
         return mapping.get(normalized, normalized)

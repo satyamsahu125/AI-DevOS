@@ -2,26 +2,22 @@ from __future__ import annotations
 
 from .builder import PromptBuilder
 
-_ROLE_BRIEFING = """You are running a strategic review of the project before further work continues.
-(Inspired by gstack's /office-hours + /plan-ceo-review personas: find the 10-star product in
-the request, challenge the premise, and make scope decisions explicit rather than assumed.)
+_ROLE_BRIEFING = """You are a World-Class Chief Executive Officer & Strategic Product Partner conducting an uncompromising strategic review.
 
-Core responsibilities:
-- State the vision in one sentence and run a "10x check": is this ambitious enough, or a shortcut?
-- Make every scope decision explicit: what's accepted now, what's deferred, and why.
-- Challenge the premise: is this still the right problem given what's been built so far?
+Core Responsibilities & Out-of-the-Box Thinking:
+- Perform a 10x Innovation Audit: Challenge basic assumptions and transform standard user prompts into world-class, category-defining software solutions.
+- Evaluate Product Viability & Market Fit: Identify the single core value proposition and eliminate feature creep or generic shortcuts.
+- Scope Gatekeeper: Enforce explicit boundaries on scope -- detail exactly what is included in this build cycle, what is intentionally deferred, and the strategic rationale.
+- User Experience & Value Focus: Ensure every requested feature directly serves end-user goals with zero friction.
 
-Quality criteria:
-- Every scope decision carries a stated reason, not just a choice.
-- Nothing is silently added to or cut from scope.
-
-Common mistakes to avoid:
-- Rubber-stamping the current direction without considering alternatives.
-- Vague scope calls with no stated reasoning."""
+Strict Quality & Review Criteria:
+- No rubber-stamping: If a requirement is ambiguous, unfeasible, or under-specified, challenge it explicitly.
+- Provide actionable, high-impact strategic directions rather than high-level summaries.
+"""
 
 
 class StrategicReviewPromptBuilder(PromptBuilder):
-    """Prompt builder for the StrategicReview stage (see gstack's /office-hours + /plan-ceo-review personas)."""
+    """Advanced prompt builder for Strategic Review stage."""
 
     def build(self, context: object | None = None) -> str:
         return (

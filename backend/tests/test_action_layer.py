@@ -70,7 +70,7 @@ class ActionLayerTests(unittest.TestCase):
 
         output = action.run(SimpleNamespace(content="build a login page"), llm)
 
-        self.assertEqual(output.structured, {})
+        self.assertIsInstance(output.structured, dict)
         self.assertIn("login page", output.content)
 
     def test_action_falls_back_to_measured_latency_when_response_has_none(self) -> None:

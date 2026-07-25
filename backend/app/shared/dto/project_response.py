@@ -24,3 +24,7 @@ class ProjectResponse:
     @property
     def workspace_path(self) -> str:
         return self.project.workspace_path
+
+    @property
+    def state(self) -> str:
+        return self.project.state.value

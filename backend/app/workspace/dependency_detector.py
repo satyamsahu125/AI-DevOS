@@ -1,14 +1,80 @@
 from __future__ import annotations
 
+import logging
 import re
 import sys
+
+logger = logging.getLogger(__name__)
+
+PYTHON_VERSION_MAP = {
+    "fastapi":              "fastapi>=0.115.0,<1.0.0",
+    "pydantic":             "pydantic>=2.0.0,<3.0.0",
+    "pydantic-settings":    "pydantic-settings>=2.0.0,<3.0.0",
+    "sqlalchemy":           "SQLAlchemy>=2.0.0,<3.0.0",
+    "alembic":              "alembic>=1.13.0,<2.0.0",
+    "uvicorn":              "uvicorn[standard]>=0.30.0,<1.0.0",
+    "httpx":                "httpx>=0.27.0,<1.0.0",
+    "python-dotenv":        "python-dotenv>=1.0.0,<2.0.0",
+    "bcrypt":               "bcrypt>=4.0.0,<5.0.0",
+    "python-jose":          "python-jose[cryptography]>=3.3.0,<4.0.0",
+    "passlib":              "passlib[bcrypt]>=1.7.0,<2.0.0",
+    "pytest":               "pytest>=8.0.0",
+    "pytest-asyncio":       "pytest-asyncio>=0.23.0",
+    "pytest-cov":           "pytest-cov>=4.0.0",
+    "redis":                "redis>=5.0.0,<6.0.0",
+    "celery":               "celery>=5.3.0,<6.0.0",
+    "pillow":               "Pillow>=10.0.0,<11.0.0",
+    "requests":             "requests>=2.31.0,<3.0.0",
+    "aiohttp":              "aiohttp>=3.9.0,<4.0.0",
+    "psycopg2":             "psycopg2-binary>=2.9.0,<3.0.0",
+    "pymongo":              "pymongo>=4.6.0,<5.0.0",
+    "boto3":                "boto3>=1.34.0,<2.0.0",
+    "stripe":               "stripe>=8.0.0,<9.0.0",
+    "sendgrid":             "sendgrid>=6.11.0,<7.0.0",
+}
+
+NPM_VERSION_MAP = {
+    "react":                   "^18.3.0",
+    "react-dom":               "^18.3.0",
+    "next":                    "^14.2.0",
+    "vite":                    "^5.3.0",
+    "@vitejs/plugin-react":    "^4.3.0",
+    "typescript":              "^5.4.0",
+    "tailwindcss":             "^3.4.0",
+    "framer-motion":           "^11.0.0",
+    "lucide-react":            "^0.383.0",
+    "axios":                   "^1.7.0",
+    "react-router-dom":        "^6.24.0",
+    "zustand":                 "^4.5.0",
+    "react-query":             "^5.0.0",
+    "@tanstack/react-query":   "^5.51.0",
+    "zod":                     "^3.23.0",
+    "react-hook-form":         "^7.52.0",
+    "@radix-ui/react-dialog":  "^1.1.0",
+    "@radix-ui/react-tooltip": "^1.1.0",
+    "class-variance-authority":"^0.7.0",
+    "clsx":                    "^2.1.0",
+    "tailwind-merge":          "^2.4.0",
+    "sonner":                  "^1.5.0",
+    "express":                 "^4.19.0",
+    "cors":                    "^2.8.5",
+    "dotenv":                  "^16.4.0",
+    "mongoose":                "^8.5.0",
+    "prisma":                  "^5.16.0",
+    "jsonwebtoken":            "^9.0.0",
+    "bcryptjs":                "^2.4.3",
+    "stripe":                  "^16.2.0",
+    "socket.io":               "^4.7.0",
+    "jest":                    "^29.7.0",
+    "@testing-library/react":  "^16.0.0",
+}
 
 _NODE_REQUIRE = re.compile(r"""require\(\s*['"]([^'"]+)['"]\s*\)""")
 _NODE_IMPORT = re.compile(r"""^\s*import\s+(?:[\w*${}\s,]+\s+from\s+)?['"]([^'"]+)['"]""", re.MULTILINE)
 _PY_IMPORT = re.compile(r"^\s*import\s+([\w.]+)", re.MULTILINE)
 _PY_FROM_IMPORT = re.compile(r"^\s*from\s+([\w.]+)\s+import", re.MULTILINE)
 
-_ENTRY_CANDIDATES = ("index.js", "server.js", "app.js", "main.js")
+_ENTRY_CANDIDATES = ("index.js", "server.js", "app.js", "main.js", "src/index.js", "src/main.js")
 
 
 def _node_package_name(module_path: str) -> str | None:
@@ -51,27 +117,101 @@ def detect_python_dependencies(file_contents: list[str]) -> list[str]:
     return sorted(names)
 
 
+def _clean_path(path: str) -> str:
+    """Strip leading 'backend/' or 'frontend/' prefixes if present."""
+    p = path.replace("\\", "/")
+    if p.lower().startswith("backend/"):
+        return p[8:]
+    if p.lower().startswith("frontend/"):
+        return p[9:]
+    return p
+
+
 def build_package_json(project_name: str, dependencies: list[str], written_paths: list[str]) -> str:
-    """Build a minimal package.json listing dependencies (as "*", since exact versions aren't
-    knowable from source alone) and a best-guess start script from whatever entry file exists."""
+    """Build a valid, robust package.json listing pinned dependencies and clean, executable npm scripts."""
     import json
 
-    entry = next((path for path in written_paths if path in _ENTRY_CANDIDATES), None) or next(
-        (path for path in written_paths if path.endswith(".js") and "/" not in path), None
-    ) or (written_paths[0] if written_paths else "index.js")
+    def pin(pkg: str) -> str:
+        version = NPM_VERSION_MAP.get(pkg.lower())
+        if not version:
+            logger.warning(
+                "Unknown npm package '%s' — using 'latest'. "
+                "Add to NPM_VERSION_MAP.", pkg
+            )
+            return "latest"
+        return version
+
+    cleaned_paths = [_clean_path(p) for p in written_paths if p]
+    is_frontend = any(
+        p.endswith((".jsx", ".tsx", ".html")) or "react" in p.lower() or "src/components" in p.lower()
+        for p in cleaned_paths
+    )
 
     safe_name = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in project_name.lower()) or "generated-project"
-    payload = {
-        "name": safe_name,
-        "version": "0.1.0",
-        "private": True,
-        "scripts": {"start": f"node {entry}"},
-        "dependencies": {name: "*" for name in dependencies},
-    }
+
+    if is_frontend:
+        # React/Vite/Web Frontend package.json
+        dept_dict = {name: pin(name) for name in dependencies}
+        if "react" not in dept_dict:
+            dept_dict["react"] = NPM_VERSION_MAP.get("react", "^18.3.0")
+        if "react-dom" not in dept_dict:
+            dept_dict["react-dom"] = NPM_VERSION_MAP.get("react-dom", "^18.3.0")
+
+        payload = {
+            "name": safe_name,
+            "version": "0.1.0",
+            "private": True,
+            "type": "module",
+            "scripts": {
+                "dev": "vite",
+                "start": "vite",
+                "build": "vite build",
+                "preview": "vite preview",
+            },
+            "dependencies": dept_dict,
+            "devDependencies": {
+                "@vitejs/plugin-react": NPM_VERSION_MAP.get("@vitejs/plugin-react", "^4.3.0"),
+                "vite": NPM_VERSION_MAP.get("vite", "^5.3.0"),
+            },
+        }
+    else:
+        # Node.js Backend package.json
+        entry = (
+            next((path for path in cleaned_paths if path in _ENTRY_CANDIDATES), None)
+            or next((path for path in cleaned_paths if path.endswith(".js") and "/" not in path), None)
+            or next((path for path in cleaned_paths if path.endswith(".js")), None)
+            or "index.js"
+        )
+
+        payload = {
+            "name": safe_name,
+            "version": "0.1.0",
+            "private": True,
+            "scripts": {
+                "start": f"node {entry}",
+                "dev": f"node {entry}",
+            },
+            "dependencies": {name: pin(name) for name in dependencies},
+        }
+
     return json.dumps(payload, indent=2) + "\n"
 
 
 def build_requirements_txt(dependencies: list[str]) -> str:
-    """Build a requirements.txt with one unpinned package per line (versions aren't knowable
-    from source alone -- this is a starting point, not a locked/reproducible manifest)."""
-    return "\n".join(dependencies) + ("\n" if dependencies else "")
+    """Build a requirements.txt with pinned versions."""
+    lines = []
+    for pkg in dependencies:
+        pkg_lower = pkg.lower().replace("-", "_").replace(".", "_")
+        pinned = (
+            PYTHON_VERSION_MAP.get(pkg.lower()) or
+            PYTHON_VERSION_MAP.get(pkg_lower)
+        )
+        if pinned:
+            lines.append(pinned)
+        else:
+            lines.append(f"{pkg}  # TODO: pin version")
+            logger.warning(
+                "Unknown Python package '%s' — not pinned. "
+                "Add to PYTHON_VERSION_MAP.", pkg
+            )
+    return "\n".join(sorted(lines)) + ("\n" if lines else "")

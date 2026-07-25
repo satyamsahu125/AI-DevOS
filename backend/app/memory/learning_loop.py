@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 import threading
 from dataclasses import dataclass, field
@@ -11,7 +12,7 @@ from .knowledge_memory import KnowledgeMemory
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "memory" / "learning.db"
+_DEFAULT_DB_PATH = Path(os.getenv("LEARNING_DB_PATH", "backend/app/memory/learning.db"))
 
 
 @dataclass(slots=True)
@@ -73,6 +74,7 @@ class LearningLoop:
             """
             CREATE TABLE IF NOT EXISTS trajectories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL DEFAULT '',
                 stage TEXT NOT NULL,
                 task_description TEXT NOT NULL,
                 artifact_summary TEXT NOT NULL,
@@ -86,23 +88,29 @@ class LearningLoop:
             )
             """
         )
+        cursor = self._conn.execute("PRAGMA table_info(trajectories)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "project_id" not in columns:
+            self._conn.execute("ALTER TABLE trajectories ADD COLUMN project_id TEXT NOT NULL DEFAULT ''")
         self._conn.commit()
 
-    def record_trajectory(self, trajectory: Trajectory) -> None:
+    def record_trajectory(self, trajectory: Trajectory, project_id: str = "") -> None:
         """Log trajectory to SQLite (always), and embed it into KnowledgeMemory only if approved."""
         with self._lock:
+            eff_project_id = project_id or getattr(trajectory, "project_id", "") or ""
             logger.info(
-                "recording trajectory: stage=%s approved=%s retries=%s",
-                trajectory.stage, trajectory.approved, trajectory.retry_count,
+                "recording trajectory: project_id=%s stage=%s approved=%s retries=%s",
+                eff_project_id, trajectory.stage, trajectory.approved, trajectory.retry_count,
             )
             cursor = self._conn.execute(
                 """
                 INSERT INTO trajectories
-                    (stage, task_description, artifact_summary, retry_count, approved,
+                    (project_id, stage, task_description, artifact_summary, retry_count, approved,
                      reviewer_feedback, agent_model, tokens_used, latency_ms, recorded_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    eff_project_id,
                     trajectory.stage,
                     trajectory.task_description,
                     trajectory.artifact_summary,
@@ -121,9 +129,52 @@ class LearningLoop:
             if trajectory.approved:
                 key = f"trajectory:{trajectory.stage}:{row_id}"
                 value = f"Task: {trajectory.task_description}\nOutcome: {trajectory.artifact_summary}"
-                category = self._category_for(trajectory.stage, trajectory.project_id)
+                category = self._category_for(trajectory.stage, eff_project_id)
                 self.knowledge_memory.store(key, value, category=category, source="learning_loop")
                 logger.debug("approved trajectory embedded into knowledge memory: key=%s category=%s", key, category)
+
+    def get_project_trajectories(self, project_id: str, stage: str | None = None) -> list[dict]:
+        """Query trajectories for a specific project."""
+        with self._lock:
+            if stage:
+                rows = self._conn.execute(
+                    """
+                    SELECT id, project_id, stage, task_description, artifact_summary,
+                           retry_count, approved, reviewer_feedback, agent_model,
+                           tokens_used, latency_ms, recorded_at
+                    FROM trajectories WHERE project_id = ? AND stage = ?
+                    ORDER BY id ASC
+                    """,
+                    (project_id, stage),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    """
+                    SELECT id, project_id, stage, task_description, artifact_summary,
+                           retry_count, approved, reviewer_feedback, agent_model,
+                           tokens_used, latency_ms, recorded_at
+                    FROM trajectories WHERE project_id = ?
+                    ORDER BY id ASC
+                    """,
+                    (project_id,),
+                ).fetchall()
+            return [
+                {
+                    "id": row[0],
+                    "project_id": row[1],
+                    "stage": row[2],
+                    "task_description": row[3],
+                    "artifact_summary": row[4],
+                    "retry_count": row[5],
+                    "approved": bool(row[6]),
+                    "reviewer_feedback": row[7],
+                    "agent_model": row[8],
+                    "tokens_used": row[9],
+                    "latency_ms": row[10],
+                    "recorded_at": row[11],
+                }
+                for row in rows
+            ]
 
     def get_relevant_patterns(self, task: str, stage: str, project_id: str = "", top_k: int = 3) -> list[str]:
         """Semantic-search past approved trajectories for stage, returning their text (used by ContextManager).

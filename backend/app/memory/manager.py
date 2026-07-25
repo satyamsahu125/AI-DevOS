@@ -1,6 +1,5 @@
-from __future__ import annotations
-
 import logging
+import os
 from pathlib import Path
 from uuid import UUID, uuid5
 
@@ -25,7 +24,7 @@ class MemoryManager:
 
     def __init__(self, root: Path | None = None, repository: MemoryRepository | None = None) -> None:
         """Wire the on-disk root and the MemoryRepository/SQLite backend used to persist entries."""
-        self.root = root or Path(__file__).resolve().parents[1] / "memory"
+        self.root = root or Path(os.getenv("MEMORY_DB_PATH", "backend/app/memory/memory.db")).parent
         self.root.mkdir(parents=True, exist_ok=True)
 
         if repository is not None:

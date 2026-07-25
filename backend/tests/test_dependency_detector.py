@@ -56,12 +56,12 @@ class BuildManifestTests(unittest.TestCase):
     def test_build_package_json_includes_dependencies_and_start_script(self) -> None:
         content = build_package_json("my project", ["express"], ["index.js", "routes/tasks.js"])
         payload = json.loads(content)
-        self.assertEqual(payload["dependencies"], {"express": "*"})
+        self.assertEqual(payload["dependencies"], {"express": "^4.19.0"})
         self.assertEqual(payload["scripts"]["start"], "node index.js")
         self.assertEqual(payload["name"], "my-project")
 
     def test_build_requirements_txt_one_per_line(self) -> None:
-        self.assertEqual(build_requirements_txt(["flask", "requests"]), "flask\nrequests\n")
+        self.assertEqual(build_requirements_txt(["fastapi", "requests"]), "fastapi>=0.115.0,<1.0.0\nrequests>=2.31.0,<3.0.0\n")
 
     def test_build_requirements_txt_empty(self) -> None:
         self.assertEqual(build_requirements_txt([]), "")

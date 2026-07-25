@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,8 +18,8 @@ _EMBEDDING_DIM = 384
 _MODEL_NAME = "all-MiniLM-L6-v2"
 _DEFAULT_MAX_ELEMENTS = 1000
 
-_DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "memory" / "knowledge.db"
-_DEFAULT_INDEX_PATH = Path(__file__).resolve().parents[1] / "memory" / "knowledge.hnsw"
+_DEFAULT_DB_PATH = Path(os.getenv("KNOWLEDGE_DB_PATH", "backend/app/memory/knowledge.db"))
+_DEFAULT_INDEX_PATH = Path(os.getenv("KNOWLEDGE_INDEX_PATH", "backend/app/memory/knowledge.hnsw"))
 
 # Shared across instances in this process: the sentence-transformers model is
 # expensive to load (seconds, real torch weights), so every KnowledgeMemory

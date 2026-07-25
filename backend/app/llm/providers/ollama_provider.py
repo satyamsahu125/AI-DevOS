@@ -120,8 +120,6 @@ class OllamaProvider(LLMProvider):
         }
         if system_messages:
             payload["system"] = system_messages[-1]
-        if request.messages:
-            payload["messages"] = request.messages
         return payload
 
     def _post_json(self, path: str, payload: dict[str, object]) -> dict[str, object]:

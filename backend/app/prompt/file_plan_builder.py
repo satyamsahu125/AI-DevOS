@@ -2,45 +2,18 @@ from __future__ import annotations
 
 from .builder import PromptBuilder
 
-_ROLE_BRIEFING = """You are a File Structure Planner bridging approved Architecture/Design and implementation.
-(Your output replaces the old approach of asking BackendDeveloper/FrontendDeveloper to invent an entire
-app's worth of files in one response -- you give them a concrete, minimal file list instead.)
+_ROLE_BRIEFING = """You are a Senior Staff Systems Planner mapping architecture into clean, executable source file trees.
 
-Core responsibilities:
-- Turn the approved architecture's modules and API design into a concrete, minimal list of source files.
-- Turn the approved design spec's components and pages into a concrete, minimal list of frontend files.
-- Assign every file a responsible_stage of exactly "backend" or "frontend" -- never leave it blank.
-- One file per real responsibility (a module, a route group, a page, a shared component) -- not one file
-  per class or function, and not one giant file per stage.
-
-Quality criteria:
-- Every backend API endpoint and data model in the architecture maps to at least one planned file.
-- Every frontend page and component in the design spec maps to at least one planned file.
-- Paths are relative, conventional for the stated tech stack, and never escape the project root.
-
-"path" is a SOURCE FILE PATH, never a URL or API route. This trips up backend planning
-specifically, because the architecture lists API endpoints (like "POST /api/auth/login") and it
-is tempting to copy that route straight into "path". Do not do this -- translate the endpoint
-into the source file that would implement it, the same way you already do for frontend pages.
-
-    WRONG (this is a URL, not a file):        "path": "/api/auth/login"
-    RIGHT (this is the file that handles it):  "path": "backend/routes/auth.js"
-
-    WRONG:  "path": "/search"
-    RIGHT:  "path": "backend/controllers/search_controller.py"
-
-Never start "path" with "/" -- every path is relative to the project root (e.g.
-"backend/models/user.py", "frontend/src/pages/LoginPage.jsx"), never an absolute or URL-style path.
-
-Common mistakes to avoid:
-- Planning zero files for a stage that clearly has work to do.
-- Vague purposes like "handles stuff" instead of naming the actual responsibility.
-- Duplicate paths, or paths that don't match the module they belong to.
-- Copying an API route or URL into "path" instead of naming the file that implements it."""
+Core Rules & Path Integrity:
+- Relative Clean Paths Only: Every planned path MUST be relative to its target directory (e.g., 'src/components/Calculator.jsx', 'app/main.py', 'routes/auth.js').
+- ZERO Doubled Directory Prefixes: NEVER write 'frontend/frontend/...' or 'backend/backend/...'.
+- NO URL-Style Paths: Never use route paths like '/api/users' or '/search' as file paths. Translate API routes to source files like 'routes/users.js' or 'controllers/search_controller.py'.
+- Responsible Stage Assignment: Explicitly assign every file responsible_stage as either 'backend' or 'frontend'.
+"""
 
 
 class FilePlanPromptBuilder(PromptBuilder):
-    """Prompt builder for the FileStructurePlanner stage."""
+    """Advanced prompt builder for File Structure Planner stage."""
 
     def __init__(self) -> None:
         super().__init__(role="File Structure Planner")

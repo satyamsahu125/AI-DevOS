@@ -1,6 +1,5 @@
-from __future__ import annotations
-
 import logging
+import os
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -9,7 +8,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "memory" / "lessons.db"
+_DEFAULT_DB_PATH = Path(os.getenv("LESSONS_DB_PATH", "backend/app/memory/lessons.db"))
 
 
 @dataclass(slots=True)

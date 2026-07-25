@@ -87,13 +87,27 @@ class _IsolatedRig:
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
 
+def _create_project_and_run_first_stage(rig: "_IsolatedRig", name: str, description: str) -> str:
+    """Create a project, then explicitly run its ProductOwner stage.
+
+    create_project() no longer runs any pipeline stage -- project creation
+    must not depend on a reachable LLM -- so a test that needs a
+    ProductOwner artifact has to ask for it, exactly as a real caller now
+    does via POST /workflow/start. The content mirrors what
+    ProjectInitializer used to send so name-in-artifact assertions still hold.
+    """
+    response = rig.project_manager.create_project(ProjectRequest(name=name, description=description))
+    project_id = response.project.project_id
+    rig.workflow_manager.run_stage(project_id, "ProductOwner", f"Build: {description}\n(Project name: {name})")
+    return project_id
+
+
 class ProjectIsolationTests(unittest.TestCase):
     def test_two_projects_dont_share_artifacts(self) -> None:
         rig = _IsolatedRig()
         try:
-            response_a = rig.project_manager.create_project(ProjectRequest(name="Project A", description="A"))
-            response_b = rig.project_manager.create_project(ProjectRequest(name="Project B", description="B"))
-            id_a, id_b = response_a.project.project_id, response_b.project.project_id
+            id_a = _create_project_and_run_first_stage(rig, "Project A", "A")
+            id_b = _create_project_and_run_first_stage(rig, "Project B", "B")
 
             path_a = rig.workspace_manager.get_artifact_path(id_a, Stage.ProductOwner.value)
             path_b = rig.workspace_manager.get_artifact_path(id_b, Stage.ProductOwner.value)
@@ -144,8 +158,7 @@ class ProjectIsolationTests(unittest.TestCase):
     def test_get_artifact(self) -> None:
         rig = _IsolatedRig()
         try:
-            response = rig.project_manager.create_project(ProjectRequest(name="Get Artifact Test", description="d"))
-            project_id = response.project.project_id
+            project_id = _create_project_and_run_first_stage(rig, "Get Artifact Test", "d")
 
             artifact = rig.artifact_manager.get_artifact(project_id, Stage.ProductOwner)
             self.assertIsNotNone(artifact)
@@ -164,8 +177,12 @@ class ProjectIsolationTests(unittest.TestCase):
             client = TestClient(app)
 
             create_response = client.post("/projects", json={"name": "Status Endpoint Test", "description": "d"})
-            self.assertEqual(create_response.status_code, 200)
+            self.assertEqual(create_response.status_code, 201)
             project_id = create_response.json()["project"]["project_id"]
+
+            # Creation no longer runs a stage, so drive the first stage explicitly
+            # before asserting on stage progress.
+            rig.workflow_manager.run_stage(project_id, "ProductOwner", "Build: d\n(Project name: Status Endpoint Test)")
 
             detail_response = client.get(f"/projects/{project_id}")
             self.assertEqual(detail_response.status_code, 200)

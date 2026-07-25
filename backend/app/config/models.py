@@ -24,3 +24,5 @@ class Settings(BaseModel):
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     knowledge_db: str = Field(default="data/knowledge.sqlite")
     learning_db: str = Field(default="data/learning.sqlite")
+    memory_db_path: str = Field(default="backend/app/memory/memory.db")
+    workspace_root: str = Field(default="temp-workspace")

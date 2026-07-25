@@ -15,8 +15,11 @@ from .repository_models import MemoryRecord
 from .repository_query import RepositoryQuery
 
 
-class MemoryManager:
-    """Runtime orchestrator for memory storage, index, cache, and cleanup."""
+class MemoryOrchestrator:
+    """MemoryOrchestrator coordinates all memory subsystems (repository, store, index, cache, cleanup, sync, statistics).
+
+    For simple key/value storage, use MemoryManager from manager.py.
+    """
 
     def __init__(self, repository: MemoryRepository | None = None, store: MemoryStore | None = None) -> None:
         self.repository = repository or MemoryRepository(storage=None)

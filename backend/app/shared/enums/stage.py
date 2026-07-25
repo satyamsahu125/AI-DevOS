@@ -16,3 +16,5 @@ class Stage(str, Enum):
     FileStructurePlanner = "FileStructurePlanner"
     Document = "Document"
     Retro = "Retro"
+    Clarification = "Clarification"
+    SprintPlanning = "SprintPlanning"

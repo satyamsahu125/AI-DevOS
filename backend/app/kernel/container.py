@@ -3,15 +3,25 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from ..agents.backend import BackendDeveloperAgent
+from ..agents.clarification import ClarificationAgent
+from ..agents.factory import AgentFactory
+from ..agents.file_planner import FilePlannerAgent
+from ..agents.frontend import FrontendDeveloperAgent
+from ..agents.sprint_planner import SprintPlannerAgent
 from ..artifact.manager import ArtifactManager
 from ..config.manager import ConfigurationManager
 from ..context.context import ContextManager
 from ..core.dependency_container import DependencyContainer
+from ..execution.file_validator import FileValidator
 from ..execution.manager import ExecutionManager
+from ..execution.project_reader import ProjectReader
+from ..execution.project_writer import ProjectWriter
 from ..llm.manager import LLMManager
 from ..memory.knowledge_memory import KnowledgeMemory
 from ..memory.learning_loop import LearningLoop
 from ..memory.manager import MemoryManager
+from ..memory.memory_manager import MemoryOrchestrator
 from ..memory.project_event_log import ProjectEventLog
 from ..project.initializer import ProjectInitializer
 from ..project.manager import ProjectManager
@@ -20,10 +30,10 @@ from ..session.manager import SessionManager
 from ..shared.interfaces.agent_interface import AgentInterface
 from ..workflow.engine import WorkflowEngine
 from ..workflow.execution_state import ExecutionStateRegistry
+from ..workflow.manager import WorkflowManager
 from ..workflow.retry_policy import RetryPolicy
 from ..workspace.manager import WorkspaceManager
 from ..workspace.project_files import ProjectFileManager
-from ..workflow.manager import WorkflowManager
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +43,7 @@ class Container:
 
     build() registers every top-level manager as a singleton with a
     DependencyContainer and resolves them from it, instead of instantiating
-    each manager directly -- sharing the already-loaded ConfigurationManager
-    into LLMManager, the built ArtifactManager into ExecutionManager, and the
-    shared KnowledgeMemory/LearningLoop into WorkflowEngine and
-    ContextManager, the same sharing the original hand-written wiring
-    performed for configuration/artifacts.
+    each manager directly.
     """
 
     def __init__(self) -> None:
@@ -58,6 +64,8 @@ class Container:
         self._learning_loop = None
         self._project_file_manager = None
         self._event_log = None
+        self._project_writer = None
+        self._file_validator = None
         self._registry = []
 
     def build(self) -> "Container":
@@ -68,6 +76,7 @@ class Container:
         self._dependencies.register_singleton("configuration_manager", lambda: self._configuration)
         self._dependencies.register_singleton("workspace_manager", WorkspaceManager)
         self._dependencies.register_singleton("memory_manager", MemoryManager)
+        self._dependencies.register_singleton("memory_orchestrator", MemoryOrchestrator)
         self._dependencies.register_singleton(
             "artifact_manager",
             lambda: ArtifactManager(workspace_manager=self._dependencies.resolve("workspace_manager")),
@@ -78,6 +87,15 @@ class Container:
             "project_file_manager",
             lambda: ProjectFileManager(self._dependencies.resolve("workspace_manager")),
         )
+        self._dependencies.register_singleton(
+            "project_writer",
+            lambda: ProjectWriter(self._dependencies.resolve("workspace_manager")),
+        )
+        self._dependencies.register_singleton(
+            "project_reader",
+            lambda: ProjectReader(self._dependencies.resolve("workspace_manager")),
+        )
+        self._dependencies.register_singleton("file_validator", FileValidator)
         self._dependencies.register_singleton("event_log", ProjectEventLog)
         self._dependencies.register_singleton(
             "knowledge_memory",
@@ -101,6 +119,39 @@ class Container:
             "llm_manager",
             lambda: LLMManager(config_manager=self._dependencies.resolve("configuration_manager")),
         )
+
+        # Singletons for Agents
+        self._dependencies.register_singleton(
+            "clarification_agent",
+            lambda: ClarificationAgent(llm_manager=self._dependencies.resolve("llm_manager")),
+        )
+        self._dependencies.register_singleton(
+            "sprint_planner_agent",
+            lambda: SprintPlannerAgent(llm_manager=self._dependencies.resolve("llm_manager")),
+        )
+        self._dependencies.register_singleton(
+            "file_planner_agent",
+            lambda: FilePlannerAgent(llm_manager=self._dependencies.resolve("llm_manager")),
+        )
+        self._dependencies.register_singleton(
+            "backend_developer_agent",
+            lambda: BackendDeveloperAgent(
+                llm_manager=self._dependencies.resolve("llm_manager"),
+                project_writer=self._dependencies.resolve("project_writer"),
+                validator=self._dependencies.resolve("file_validator"),
+                workspace_manager=self._dependencies.resolve("workspace_manager"),
+            ),
+        )
+        self._dependencies.register_singleton(
+            "frontend_developer_agent",
+            lambda: FrontendDeveloperAgent(
+                llm_manager=self._dependencies.resolve("llm_manager"),
+                project_writer=self._dependencies.resolve("project_writer"),
+                validator=self._dependencies.resolve("file_validator"),
+                workspace_manager=self._dependencies.resolve("workspace_manager"),
+            ),
+        )
+
         self._dependencies.register_singleton(
             "execution_manager",
             lambda: ExecutionManager(self._dependencies.resolve("artifact_manager")),
@@ -118,12 +169,14 @@ class Container:
                 execution_state=self._dependencies.resolve("execution_state"),
             ),
         )
+        self._dependencies.register_singleton("agent_factory", AgentFactory)
         self._dependencies.register_singleton(
             "workflow_manager",
             lambda: WorkflowManager(
                 engine=self._dependencies.resolve("workflow_engine"),
                 workspace_manager=self._dependencies.resolve("workspace_manager"),
                 execution_state=self._dependencies.resolve("execution_state"),
+                agent_factory=self._dependencies.resolve("agent_factory"),
             ),
         )
         self._dependencies.register_singleton(
@@ -143,6 +196,8 @@ class Container:
         self._knowledge_memory = self._dependencies.resolve("knowledge_memory")
         self._learning_loop = self._dependencies.resolve("learning_loop")
         self._project_file_manager = self._dependencies.resolve("project_file_manager")
+        self._project_writer = self._dependencies.resolve("project_writer")
+        self._file_validator = self._dependencies.resolve("file_validator")
         self._event_log = self._dependencies.resolve("event_log")
         self._context = self._dependencies.resolve("context_manager")
         self._llm = self._dependencies.resolve("llm_manager")
@@ -159,80 +214,76 @@ class Container:
 
     @property
     def configuration(self) -> ConfigurationManager:
-        """Return the shared ConfigurationManager."""
         return self._configuration
 
     @property
     def project_manager(self) -> ProjectManager:
-        """Return the resolved ProjectManager singleton."""
         return self._project
 
     @property
     def workflow_manager(self) -> WorkflowManager:
-        """Return the resolved WorkflowManager singleton."""
         return self._workflow
 
     @property
     def execution_manager(self) -> ExecutionManager:
-        """Return the resolved ExecutionManager singleton."""
         return self._execution
 
     @property
     def session_manager(self) -> SessionManager:
-        """Return the resolved SessionManager singleton."""
         return self._session
 
     @property
     def context_manager(self) -> ContextManager:
-        """Return the resolved ContextManager singleton."""
         return self._context
 
     @property
     def memory_manager(self) -> MemoryManager:
-        """Return the resolved MemoryManager singleton."""
         return self._memory
 
     @property
+    def memory_orchestrator(self) -> MemoryOrchestrator:
+        return self._dependencies.resolve("memory_orchestrator")
+
+    @property
     def review_manager(self) -> ReviewManager:
-        """Return the resolved ReviewManager singleton."""
         return self._review
 
     @property
     def artifact_manager(self) -> ArtifactManager:
-        """Return the resolved ArtifactManager singleton."""
         return self._artifact
 
     @property
     def workspace_manager(self) -> WorkspaceManager:
-        """Return the resolved WorkspaceManager singleton."""
         return self._workspace
 
     @property
     def llm_manager(self) -> LLMManager:
-        """Return the resolved LLMManager singleton."""
         return self._llm
 
     @property
     def knowledge_memory(self) -> KnowledgeMemory:
-        """Return the resolved KnowledgeMemory singleton."""
         return self._knowledge_memory
 
     @property
     def learning_loop(self) -> LearningLoop:
-        """Return the resolved LearningLoop singleton."""
         return self._learning_loop
 
     @property
     def project_file_manager(self) -> ProjectFileManager:
-        """Return the resolved ProjectFileManager singleton."""
         return self._project_file_manager
 
     @property
+    def project_writer(self) -> ProjectWriter:
+        return self._project_writer
+
+    @property
+    def file_validator(self) -> FileValidator:
+        return self._file_validator
+
+    @property
     def event_log(self) -> ProjectEventLog:
-        """Return the resolved ProjectEventLog singleton."""
         return self._event_log
 
     @property
     def registry(self) -> list[AgentInterface]:
-        """Return the list of top-level managers registered for this container."""
         return self._registry

@@ -6,12 +6,19 @@ from ..project.manager import ProjectManager
 from ..shared.dto.project_request import ProjectRequest
 from ..shared.dto.project_response import ProjectResponse
 from ..workspace.manager import WorkspaceManager
-from .dependencies import get_artifact_manager, get_memory_manager, get_project_manager, get_workspace_manager
+from ..workspace.project_files import ProjectFileManager
+from .dependencies import (
+    get_artifact_manager,
+    get_memory_manager,
+    get_project_file_manager,
+    get_project_manager,
+    get_workspace_manager,
+)
 
 router = APIRouter()
 
 
-@router.post("/projects", response_model=ProjectResponse)
+@router.post("/projects", response_model=ProjectResponse, status_code=201)
 def create_project(request: ProjectRequest, manager: ProjectManager = Depends(get_project_manager)) -> ProjectResponse:
     return manager.create_project(request)
 
@@ -64,6 +71,89 @@ def get_project(
         "stages_completed": workspace_state.get("stages_completed", []),
         "artifacts": artifacts,
         "workspace_path": project.workspace_path,
+    }
+
+
+@router.get("/projects/{project_id}/files")
+def list_project_files(
+    project_id: str,
+    project_file_manager: ProjectFileManager = Depends(get_project_file_manager),
+) -> dict:
+    """Lists all real generated files in project/ directory."""
+    project_dir = project_file_manager.project_root(project_id)
+    backend_files = project_file_manager.list_written(project_id, "backend")
+    frontend_files = project_file_manager.list_written(project_id, "frontend")
+
+    file_list = []
+    if project_dir.exists():
+        for p in project_dir.rglob("*"):
+            if p.is_file() and ".attempt-" not in p.name:
+                rel_path = str(p.relative_to(project_dir)).replace("\\", "/")
+                ext = p.suffix.lower()
+                lang_map = {
+                    ".py": "python",
+                    ".ts": "typescript",
+                    ".tsx": "typescript",
+                    ".js": "javascript",
+                    ".jsx": "javascript",
+                    ".yaml": "yaml",
+                    ".yml": "yaml",
+                    ".json": "json",
+                    ".md": "markdown",
+                    ".html": "html",
+                    ".css": "css",
+                }
+                file_list.append({
+                    "path": rel_path,
+                    "size_bytes": p.stat().st_size,
+                    "language": lang_map.get(ext, ext.lstrip(".")),
+                    "sprint": 1,
+                })
+
+    return {
+        "project_id": project_id,
+        "project_path": str(project_dir),
+        "total_files": len(file_list),
+        "files": file_list,
+        "backend": backend_files,
+        "frontend": frontend_files,
+    }
+
+
+@router.get("/projects/{project_id}/files/{file_path:path}")
+def get_project_file_content(
+    project_id: str,
+    file_path: str,
+    project_file_manager: ProjectFileManager = Depends(get_project_file_manager),
+) -> dict:
+    """Returns actual content of a generated file."""
+    if ".." in file_path:
+        raise HTTPException(status_code=400, detail="Path traversal rejected")
+
+    project_dir = project_file_manager.project_root(project_id)
+    full_path = project_dir / file_path
+    if not full_path.exists() or not full_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    content = full_path.read_text(encoding="utf-8")
+    ext = full_path.suffix.lower()
+    lang_map = {
+        ".py": "python",
+        ".ts": "typescript",
+        ".tsx": "typescript",
+        ".js": "javascript",
+        ".jsx": "javascript",
+        ".yaml": "yaml",
+        ".yml": "yaml",
+        ".json": "json",
+        ".md": "markdown",
+        ".html": "html",
+        ".css": "css",
+    }
+    return {
+        "content": content,
+        "language": lang_map.get(ext, ext.lstrip(".")),
+        "size": len(content),
     }
 
 
