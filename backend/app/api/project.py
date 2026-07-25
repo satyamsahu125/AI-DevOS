@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
 
 from ..artifact.manager import ArtifactManager
+from ..execution.project_validator import ProjectValidator
 from ..memory.manager import MemoryManager
 from ..project.manager import ProjectManager
 from ..shared.dto.project_request import ProjectRequest
@@ -12,6 +13,7 @@ from .dependencies import (
     get_memory_manager,
     get_project_file_manager,
     get_project_manager,
+    get_project_validator,
     get_workspace_manager,
 )
 
@@ -174,3 +176,29 @@ def delete_project(
     artifact_manager.delete_project_artifacts(project_id)
     memory_manager.delete_project(project_id)
     return Response(status_code=204)
+
+
+@router.get("/projects/{project_id}/validate")
+def validate_project(
+    project_id: str,
+    validator: ProjectValidator = Depends(get_project_validator),
+) -> dict:
+    """Run full validation suite on generated project."""
+    result = validator.validate(project_id)
+    return {
+        "project_id": result.project_id,
+        "passed": result.passed,
+        "error_summary": result.error_summary,
+        "steps": {
+            k: {
+                "step": v.step,
+                "passed": v.passed,
+                "output": v.output,
+                "errors": v.errors,
+                "duration_seconds": v.duration_seconds,
+            }
+            for k, v in result.steps.items()
+        },
+        "fixable_errors": result.fixable_errors,
+        "test_results": result.test_results,
+    }

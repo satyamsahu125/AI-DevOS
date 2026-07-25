@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from ..agents.base_agent import BaseAgent
 from ..agents.factory import AgentFactory
 from ..artifact.manager import ArtifactManager
+from ..execution.project_reader import ProjectReader
+from ..execution.project_validator import ProjectValidator, ValidationResult
 from ..execution.project_writer import ProjectWriter
 from ..shared.dto.pipeline_result import PipelineResult
 from ..shared.dto.workflow_result import WorkflowResult
@@ -40,8 +42,9 @@ class WorkflowManager:
         workspace_manager: WorkspaceManager | None = None,
         execution_state: ExecutionStateRegistry | None = None,
         agent_factory: AgentFactory | None = None,
+        project_validator: ProjectValidator | None = None,
     ) -> None:
-        """Wire the engine, workspace_manager, execution_state registry, and agent_factory."""
+        """Wire the engine, workspace_manager, execution_state registry, agent_factory, and project_validator."""
         self.engine = engine or WorkflowEngine()
         self.workspace_manager = workspace_manager or (
             getattr(self.engine, "workspace_manager", None) or WorkspaceManager()
@@ -49,6 +52,7 @@ class WorkflowManager:
         self.workspace = self.workspace_manager
         self.execution_state = execution_state or ExecutionStateRegistry()
         self._agent_factory = agent_factory or AgentFactory()
+        self.project_validator = project_validator or ProjectValidator(self.workspace_manager)
         self.project_writer = ProjectWriter(self.workspace_manager)
         self.artifact_manager = getattr(self.engine, "artifact_manager", None) or ArtifactManager(
             workspace_manager=self.workspace_manager
@@ -179,6 +183,7 @@ class WorkflowManager:
             elif state == ProjectState.SPRINT_IN_PROGRESS:
                 result = self._run_next_sprint(project_id)
                 if result.all_sprints_complete:
+                    self._run_validation_with_healing(project_id, request)
                     self._transition(project_id, ProjectState.ALL_SPRINTS_COMPLETE)
                 elif result.sprint_complete:
                     pass
@@ -381,4 +386,39 @@ class WorkflowManager:
             self.execution_state.mark_stopped(project_id)
         if result.stopped:
             self.workspace_manager.update_project_json(project_id, {"stopped": True})
+        return result
+
+    def _run_validation_with_healing(
+        self,
+        project_id: str,
+        original_request: str,
+        max_healing_attempts: int = 3,
+    ) -> ValidationResult:
+        """Validate the generated project. If startup fails, feed the error to BackendDeveloperAgent
+        for a targeted fix. Repeat up to max_healing_attempts times.
+        """
+        result = self.project_validator.validate(project_id)
+        for attempt in range(1, max_healing_attempts + 1):
+            logger.info("Validation attempt %d/%d for project %s", attempt, max_healing_attempts, project_id)
+            result = self.project_validator.validate(project_id)
+            if result.passed:
+                logger.info("Validation PASSED on attempt %d for %s", attempt, project_id)
+                return result
+
+            if attempt < max_healing_attempts and result.fixable_errors:
+                error_context = (
+                    f"The generated project failed validation (attempt {attempt}/{max_healing_attempts}).\n\n"
+                    f"Errors that need to be fixed:\n"
+                    + "\n".join(f"  - {e}" for e in result.fixable_errors[:5])
+                    + "\n\nFix ONLY the files mentioned in these errors. Do not rewrite other files."
+                )
+                logger.warning(
+                    "Validation failed — running self-healing for %s: %s",
+                    project_id, error_context[:200]
+                )
+                self.run_stage(project_id=project_id, stage_name="backend", content=error_context)
+            else:
+                logger.error("Validation failed after %d attempts for %s", attempt, project_id)
+                break
+
         return result

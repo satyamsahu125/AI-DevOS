@@ -16,6 +16,7 @@ from ..core.dependency_container import DependencyContainer
 from ..execution.file_validator import FileValidator
 from ..execution.manager import ExecutionManager
 from ..execution.project_reader import ProjectReader
+from ..execution.project_validator import ProjectValidator
 from ..execution.project_writer import ProjectWriter
 from ..llm.manager import LLMManager
 from ..memory.knowledge_memory import KnowledgeMemory
@@ -171,12 +172,17 @@ class Container:
         )
         self._dependencies.register_singleton("agent_factory", AgentFactory)
         self._dependencies.register_singleton(
+            "project_validator",
+            lambda: ProjectValidator(workspace_manager=self._dependencies.resolve("workspace_manager")),
+        )
+        self._dependencies.register_singleton(
             "workflow_manager",
             lambda: WorkflowManager(
                 engine=self._dependencies.resolve("workflow_engine"),
                 workspace_manager=self._dependencies.resolve("workspace_manager"),
                 execution_state=self._dependencies.resolve("execution_state"),
                 agent_factory=self._dependencies.resolve("agent_factory"),
+                project_validator=self._dependencies.resolve("project_validator"),
             ),
         )
         self._dependencies.register_singleton(
@@ -271,6 +277,10 @@ class Container:
     @property
     def project_file_manager(self) -> ProjectFileManager:
         return self._project_file_manager
+
+    @property
+    def project_validator(self) -> ProjectValidator:
+        return self._dependencies.resolve("project_validator")
 
     @property
     def project_writer(self) -> ProjectWriter:

@@ -3,11 +3,12 @@ import zipfile
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 
+from ..execution.project_validator import ProjectValidator
 from ..project.manager import ProjectManager
+from ..workspace.manager import WorkspaceManager
 from ..workspace.project_files import ProjectFileManager
 from ..workspace.project_readme import build_run_instructions
-from .dependencies import get_project_file_manager, get_project_manager, get_workspace_manager
-from ..workspace.manager import WorkspaceManager
+from .dependencies import get_project_file_manager, get_project_manager, get_project_validator, get_workspace_manager
 
 router = APIRouter()
 
@@ -62,8 +63,9 @@ def download_project(
     project_manager: ProjectManager = Depends(get_project_manager),
     workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
     project_file_manager: ProjectFileManager = Depends(get_project_file_manager),
+    project_validator: ProjectValidator = Depends(get_project_validator),
 ) -> Response:
-    """Zip and return every real generated file in the project directory for project_id, plus RUN_INSTRUCTIONS.md."""
+    """Zip and return every real generated file in the project directory for project_id, plus RUN_INSTRUCTIONS.md and VALIDATION_REPORT.md."""
     project = project_manager.repository.load(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -74,6 +76,25 @@ def download_project(
 
     if not project_dir.exists() or not any(p.is_file() for p in project_dir.rglob("*")):
         raise HTTPException(status_code=404, detail="No generated files yet -- run the dev team stages first")
+
+    val_result = project_validator.validate(project_id, skip_install=True)
+    def step_pass(name: str) -> bool:
+        s = val_result.steps.get(name)
+        return s.passed if s else False
+
+    report_content = f"""# Project Validation Report
+Project: {project_id}
+Overall Result: {"PASSED" if val_result.passed else "FAILED"}
+
+## Step Results
+- **Install Dependencies**: {"PASS" if step_pass("install") else "FAIL"}
+- **Python Compilation**: {"PASS" if step_pass("compile") else "FAIL"}
+- **Project Startup**: {"PASS" if step_pass("startup") else "FAIL"}
+- **Automated Tests**: {"PASS" if step_pass("tests") else "FAIL"}
+
+## Summary
+{val_result.error_summary or "All checks passed successfully."}
+"""
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -89,6 +110,7 @@ def download_project(
                 "RUN_INSTRUCTIONS.md",
                 build_run_instructions(project.name, project.description, backend_files, frontend_files),
             )
+        archive.writestr("VALIDATION_REPORT.md", report_content)
 
     safe_name = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in project.name.lower().replace(" ", "-")) or project_id
     return Response(

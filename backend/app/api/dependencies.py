@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from fastapi import Depends
 
-from ..artifact.manager import ArtifactManager
+from ..execution.project_validator import ProjectValidator
+from ..execution.project_writer import ProjectWriter
 from ..kernel.container import Container
 from ..llm.manager import LLMManager
 from ..memory.knowledge_memory import KnowledgeMemory
@@ -60,3 +61,7 @@ def get_project_file_manager(container: Container = Depends(get_container)) -> P
 
 def get_event_log(container: Container = Depends(get_container)) -> ProjectEventLog:
     return container.event_log
+
+
+def get_project_validator(container: Container = Depends(get_container)) -> ProjectValidator:
+    return container.project_validator
