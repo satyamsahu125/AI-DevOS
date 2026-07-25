@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import Depends
 
+from ..agents.chat_router import ChatRouter
 from ..execution.project_validator import ProjectValidator
 from ..execution.project_writer import ProjectWriter
 from ..kernel.container import Container
@@ -65,3 +66,7 @@ def get_event_log(container: Container = Depends(get_container)) -> ProjectEvent
 
 def get_project_validator(container: Container = Depends(get_container)) -> ProjectValidator:
     return container.project_validator
+
+
+def get_chat_router(container: Container = Depends(get_container)) -> ChatRouter:
+    return container.chat_router

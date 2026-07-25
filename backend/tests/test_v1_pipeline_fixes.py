@@ -314,7 +314,7 @@ class Fix007NewEndpointsTests(unittest.TestCase):
         response = self.client.get("/agents")
         self.assertEqual(response.status_code, 200)
         agents = response.json()
-        self.assertEqual(len(agents), 14)
+        self.assertEqual(len(agents), 15)
         self.assertTrue(all(agent["llm_backed"] for agent in agents))
 
     def test_memory_endpoint_returns_project_records(self) -> None:

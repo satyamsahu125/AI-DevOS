@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from .agents import router as agents_router
 from .artifacts import router as artifacts_router
+from .chat import router as chat_router
 from .files import router as files_router
 from .health import router as health_router
 from .logs import router as logs_router
@@ -14,6 +15,7 @@ api_router = APIRouter()
 api_router.include_router(health_router)
 api_router.include_router(project_router)
 api_router.include_router(workflow_router)
+api_router.include_router(chat_router)
 api_router.include_router(artifacts_router)
 api_router.include_router(agents_router)
 api_router.include_router(memory_router)

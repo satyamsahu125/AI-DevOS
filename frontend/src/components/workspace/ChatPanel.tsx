@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from "react"
 import { motion } from "framer-motion"
 import { Loader2, ArrowRight, Sparkles, RefreshCw, CheckCircle2, AlertCircle, Bot, User, Paperclip } from "lucide-react"
 
-import { STAGE_LABELS, type LogEvent } from "@/lib/api"
+import { api, STAGE_LABELS, type LogEvent } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 
 interface StageBlock {
@@ -32,35 +32,78 @@ function blockOutcome(events: LogEvent[]): "running" | "approved" | "failed" {
 
 interface ChatPanelProps {
   logs: LogEvent[]
+  projectId?: string
   onRetryStage: (stage: string) => void
   onSendMessage?: (text: string) => void
 }
 
 const QUICK_PROMPTS = [
-  "Add User Auth & JWT sessions",
-  "Redesign UI layout with dark mode",
-  "Run OWASP Security check",
-  "Add boundary error tests",
+  "What did the architect decide?",
+  "Show me the security findings",
+  "What's the current sprint?",
+  "Re-run the QA stage",
+  "Explain the file structure",
+  "What's the project status?",
 ]
 
-export function ChatPanel({ logs, onRetryStage, onSendMessage }: ChatPanelProps) {
+export function ChatPanel({ logs, projectId, onRetryStage, onSendMessage }: ChatPanelProps) {
   const [input, setInput] = useState("")
-  const [userMessages, setUserMessages] = useState<Array<{ text: string; time: string }>>([])
+  const [chatMessages, setChatMessages] = useState<Array<{
+    role: "user" | "assistant"
+    content: string
+    action_taken?: string
+    stage_triggered?: string
+    artifacts_read?: string[]
+    timestamp: string
+  }>>([])
+  const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const blocks = useMemo(() => groupByStage(logs), [logs])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [blocks.length, userMessages.length])
+  }, [blocks.length, chatMessages.length, isLoading])
 
-  function handleSend() {
+  async function handleSend() {
     if (!input.trim()) return
     const text = input.trim()
-    setUserMessages((prev) => [...prev, { text, time: new Date().toLocaleTimeString() }])
     setInput("")
+
+    const time = new Date().toLocaleTimeString()
+    setChatMessages((prev) => [...prev, { role: "user", content: text, timestamp: time }])
+
     if (onSendMessage) {
       onSendMessage(text)
+    }
+
+    if (!projectId) return
+
+    setIsLoading(true)
+    try {
+      const data = await api.sendChatMessage(projectId, text)
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: data.reply,
+          action_taken: data.action_taken,
+          stage_triggered: data.stage_triggered,
+          artifacts_read: data.artifacts_read,
+          timestamp: new Date().toLocaleTimeString(),
+        },
+      ])
+    } catch {
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "I encountered an error. Please try again.",
+          timestamp: new Date().toLocaleTimeString(),
+        },
+      ])
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -75,7 +118,7 @@ export function ChatPanel({ logs, onRetryStage, onSendMessage }: ChatPanelProps)
     <div className="flex h-full min-w-0 flex-col bg-[#0A0A14] justify-between">
       {/* Messages Scroll Feed Centered Column */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6 w-full max-w-3xl mx-auto">
-        {blocks.length === 0 && userMessages.length === 0 && (
+        {blocks.length === 0 && chatMessages.length === 0 && (
           <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
             <div className="w-14 h-14 rounded-2xl bg-aurora-subtle border border-violet-500/20 flex items-center justify-center shadow-glow-purple">
               <Sparkles className="size-7 text-violet-400" />
@@ -90,23 +133,66 @@ export function ChatPanel({ logs, onRetryStage, onSendMessage }: ChatPanelProps)
         )}
 
         {/* Combined Conversation Feed */}
-        {userMessages.map((msg, idx) => (
+        {chatMessages.map((msg, idx) => (
           <motion.div
-            key={`user-${idx}`}
+            key={`chat-${idx}`}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.25 }}
-            className="flex items-start justify-end gap-3"
+            className={`flex items-start gap-3 ${msg.role === "user" ? "justify-end" : ""}`}
           >
-            <div className="max-w-xl rounded-2xl rounded-tr-sm glass-card p-4 text-xs text-white/90 shadow-glass border border-white/10">
-              <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>
-              <span className="block mt-1 text-[10px] text-white/40 text-right">{msg.time}</span>
+            {msg.role === "assistant" && (
+              <div className="w-7 h-7 rounded-full bg-violet-600/30 text-violet-300 border border-violet-500/40 flex items-center justify-center shrink-0">
+                <Bot className="size-3.5" />
+              </div>
+            )}
+            <div
+              className={`max-w-xl rounded-2xl p-4 text-xs shadow-glass border ${
+                msg.role === "user"
+                  ? "rounded-tr-sm bg-violet-950/40 border-violet-500/30 text-white/90"
+                  : "rounded-tl-sm glass-card border-white/10 text-white/90"
+              }`}
+            >
+              {(msg.action_taken || msg.stage_triggered || (msg.artifacts_read && msg.artifacts_read.length > 0)) && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {msg.stage_triggered && (
+                    <Badge variant="warning" className="text-[10px]">
+                      Triggered {msg.stage_triggered}
+                    </Badge>
+                  )}
+                  {msg.artifacts_read && msg.artifacts_read.map((art) => (
+                    <Badge key={art} variant="info" className="text-[10px]">
+                      Read {art} Artifact
+                    </Badge>
+                  ))}
+                </div>
+              )}
+              <p className="leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+              <span className="block mt-1 text-[10px] text-white/40 text-right">{msg.timestamp}</span>
             </div>
-            <div className="w-7 h-7 rounded-full bg-violet-600/30 text-violet-300 border border-violet-500/40 flex items-center justify-center shrink-0">
-              <User className="size-3.5" />
-            </div>
+            {msg.role === "user" && (
+              <div className="w-7 h-7 rounded-full bg-violet-600/30 text-violet-300 border border-violet-500/40 flex items-center justify-center shrink-0">
+                <User className="size-3.5" />
+              </div>
+            )}
           </motion.div>
         ))}
+
+        {isLoading && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center gap-3"
+          >
+            <div className="w-7 h-7 rounded-full bg-violet-600/30 text-violet-300 border border-violet-500/40 flex items-center justify-center shrink-0">
+              <Bot className="size-3.5" />
+            </div>
+            <div className="glass-card p-3 rounded-2xl rounded-tl-sm border border-white/10 flex items-center gap-2 text-xs text-white/60">
+              <Loader2 className="size-3.5 animate-spin text-violet-400" />
+              Agent is thinking...
+            </div>
+          </motion.div>
+        )}
 
         {blocks.map((block, i) => {
           const outcome = blockOutcome(block.events)

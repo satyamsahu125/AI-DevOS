@@ -330,5 +330,15 @@ export const api = {
   updateLLMSettings: (update: LLMSettingsUpdate) =>
     request<LLMSettings>("/settings/llm", { method: "POST", body: JSON.stringify(update) }),
   listProviders: () => request<{ providers: ProviderInfo[] }>("/settings/providers"),
+  sendChatMessage: (projectId: string, message: string) =>
+    request<{
+      reply: string
+      action_taken?: string
+      stage_triggered?: string
+      artifacts_read?: string[]
+    }>(`/projects/${projectId}/chat`, {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    }),
 }
 

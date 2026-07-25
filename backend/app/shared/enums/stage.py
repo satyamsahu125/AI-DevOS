@@ -18,3 +18,4 @@ class Stage(str, Enum):
     Retro = "Retro"
     Clarification = "Clarification"
     SprintPlanning = "SprintPlanning"
+    ScrumMaster = "ScrumMaster"

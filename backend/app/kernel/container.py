@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 from ..agents.backend import BackendDeveloperAgent
+from ..agents.chat_router import ChatRouter
 from ..agents.clarification import ClarificationAgent
 from ..agents.factory import AgentFactory
 from ..agents.file_planner import FilePlannerAgent
@@ -193,6 +194,15 @@ class Container:
             "project_manager",
             lambda: ProjectManager(initializer=self._dependencies.resolve("project_initializer")),
         )
+        self._dependencies.register_singleton(
+            "chat_router",
+            lambda: ChatRouter(
+                llm_manager=self._dependencies.resolve("llm_manager"),
+                artifact_manager=self._dependencies.resolve("artifact_manager"),
+                workflow_manager=self._dependencies.resolve("workflow_manager"),
+                workspace_manager=self._dependencies.resolve("workspace_manager"),
+            ),
+        )
 
         self._workspace = self._dependencies.resolve("workspace_manager")
         self._memory = self._dependencies.resolve("memory_manager")
@@ -285,6 +295,10 @@ class Container:
     @property
     def project_writer(self) -> ProjectWriter:
         return self._project_writer
+
+    @property
+    def chat_router(self) -> ChatRouter:
+        return self._dependencies.resolve("chat_router")
 
     @property
     def file_validator(self) -> FileValidator:

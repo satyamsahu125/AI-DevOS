@@ -32,5 +32,7 @@ class AgentResolver:
             "sprint_planner": "sprint_planner",
             "sprintplanning": "sprint_planner",
             "sprint_planning": "sprint_planner",
+            "scrummaster": "scrum_master",
+            "scrum_master": "scrum_master",
         }
         return mapping.get(normalized, normalized)

@@ -62,6 +62,24 @@ class WorkflowManager:
         """Resolve agent via factory — never instantiate directly."""
         return self._agent_factory.create(stage_name)
 
+    def _sanitize_stages_completed(
+        self,
+        stages_completed: list[str],
+        stage_order: list[Stage],
+    ) -> list[str]:
+        """Remove any stage from stages_completed that comes after
+        a stage that is NOT in stages_completed.
+        Prevents gaps where stage 5 is "complete" but stage 4 is not.
+        """
+        order = [s.value for s in stage_order]
+        clean = []
+        for stage in order:
+            if stage in stages_completed:
+                clean.append(stage)
+            else:
+                break  # first incomplete stage found — stop
+        return clean
+
     def run(self, project_id: str, request: str = "") -> PipelineResult:
         """Main entry point. Reads current state and advances pipeline.
 
@@ -86,11 +104,25 @@ class WorkflowManager:
                 completed_stages=list(data.get("stages_completed", [])),
             )
 
+        p_data = self.workspace.load_project_json(project_id) or {}
         if request:
             self.workspace.update_project_json(project_id, {"original_request": request})
         else:
-            p_data = self.workspace.load_project_json(project_id) or {}
             request = p_data.get("original_request") or p_data.get("description") or f"Build project {project_id}"
+
+        from .dependency_graph import DependencyGraph
+        raw_completed = p_data.get("stages_completed", [])
+        stages_completed = self._sanitize_stages_completed(
+            raw_completed, DependencyGraph.ordered_stages()
+        )
+        if raw_completed != stages_completed:
+            logger.warning(
+                "Sanitized stages_completed for %s: %s → %s (removed gap stages)",
+                project_id, raw_completed, stages_completed
+            )
+            self.workspace.update_project_json(
+                project_id, {"stages_completed": stages_completed}
+            )
 
         while True:
             state = self.workspace.get_state(project_id)
@@ -168,14 +200,21 @@ class WorkflowManager:
                 result_sec = self._run_stage(project_id, "Security", request)
                 if not result_sec.success:
                     return self._fail(project_id, "Security", result_sec)
-                result_fplan = self._run_stage(project_id, "FileStructurePlanner", request)
-                if not result_fplan.success:
-                    return self._fail(project_id, "FilePlanner", result_fplan)
+
                 result_sp = self._run_stage(project_id, "SprintPlanner", request)
-                if result_sp.success:
+                if not result_sp.success:
+                    return self._fail(project_id, "SprintPlanning", result_sp)
+                self._handle_sprint_planner_approval(project_id, result_sp)
+
+                result_sm = self._run_stage(project_id, "ScrumMaster", request)
+                if not result_sm.success:
+                    return self._fail(project_id, "ScrumMaster", result_sm)
+
+                result_fplan = self._run_stage(project_id, "FileStructurePlanner", request)
+                if result_fplan.success:
                     self._transition(project_id, ProjectState.SPRINT_PLAN_READY)
                 else:
-                    return self._fail(project_id, "SprintPlanning", result_sp)
+                    return self._fail(project_id, "FilePlanner", result_fplan)
 
             elif state == ProjectState.SPRINT_PLAN_READY:
                 self._transition(project_id, ProjectState.SPRINT_IN_PROGRESS)
@@ -387,6 +426,21 @@ class WorkflowManager:
         if result.stopped:
             self.workspace_manager.update_project_json(project_id, {"stopped": True})
         return result
+
+    def _handle_sprint_planner_approval(
+        self,
+        project_id: str,
+        result: WorkflowResult,
+    ) -> None:
+        """Save approved sprint plan to project.json."""
+        artifact = self.artifact_manager.get_artifact(project_id, Stage.SprintPlanning)
+        if artifact and artifact.structured_content:
+            self.workspace.update_project_json(
+                project_id,
+                {"sprint_plan": artifact.structured_content},
+            )
+            sprint_count = len(artifact.structured_content.get("sprints", []))
+            logger.info("Sprint plan saved for %s: %d sprints", project_id, sprint_count)
 
     def _run_validation_with_healing(
         self,

@@ -44,6 +44,7 @@ def _build_test_rig(tmp_dir: Path):
         "designer",
         "planner",
         "sprint_planner",
+        "scrum_master",
         "backend",
         "frontend",
         "devops",
