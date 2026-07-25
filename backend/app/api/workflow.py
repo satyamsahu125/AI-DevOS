@@ -393,6 +393,72 @@ def stop_workflow(project_id: str, manager: WorkflowManager = Depends(get_workfl
     return {"project_id": project_id, "stop_requested": stopped}
 
 
+class HumanApprovalRequest(BaseModel):
+    stage: str | None = None
+    approved: bool = True
+    comment: str | None = None
+
+
+@router.get("/workflow/{project_id}/pending-approval")
+def get_pending_approval(
+    project_id: str,
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+    artifact_manager: ArtifactManager = Depends(get_artifact_manager),
+) -> dict:
+    workspace_state = workspace_manager.load_project_json(project_id)
+    if workspace_state is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    state = workspace_manager.get_state(project_id)
+    curr_stage = workspace_state.get("current_stage") or "architect"
+    st_val = state.value if hasattr(state, "value") else str(state)
+    awaiting = (state == ProjectState.AWAITING_HUMAN_APPROVAL) or (st_val in ["awaiting_human_approval", "awaiting_human", "human_action_required"])
+
+    artifact_preview = ""
+    reviewer_decision = {"approved": True, "findings": []}
+
+    try:
+        for s in Stage:
+            if s.value.lower() == curr_stage.lower():
+                art = artifact_manager.get_artifact(project_id, s)
+                if art and art.content:
+                    artifact_preview = art.content[:500]
+                break
+    except Exception:
+        pass
+
+    return {
+        "stage": curr_stage,
+        "artifact_preview": artifact_preview,
+        "reviewer_decision": reviewer_decision,
+        "awaiting_human": awaiting,
+    }
+
+
+@router.post("/workflow/{project_id}/approve")
+def approve_human_stage(
+    project_id: str,
+    req: HumanApprovalRequest,
+    background_tasks: BackgroundTasks,
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+    manager: WorkflowManager = Depends(get_workflow_manager),
+) -> dict:
+    workspace_state = workspace_manager.load_project_json(project_id)
+    if workspace_state is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if req.approved:
+        workspace_state_dict = workspace_manager.load_project_json(project_id) or {}
+        orig_req = workspace_state_dict.get("original_request") or workspace_state_dict.get("description") or f"Project {project_id}"
+        background_tasks.add_task(manager.run, project_id, orig_req)
+        return {"project_id": project_id, "approved": True, "message": "Stage approved, pipeline continuing"}
+    else:
+        stage_name = req.stage or workspace_state.get("current_stage") or "architect"
+        comment_text = req.comment or "Operator requested changes"
+        background_tasks.add_task(manager.run_stage, project_id, stage_name, comment_text)
+        return {"project_id": project_id, "approved": False, "message": f"Stage {stage_name} rejected, retrying with feedback"}
+
+
 @router.post("/workflow/stage", response_model=WorkflowResult)
 def run_single_stage(request: StageRequest, manager: WorkflowManager = Depends(get_workflow_manager)) -> WorkflowResult:
     """Run exactly one named stage (for debugging)."""

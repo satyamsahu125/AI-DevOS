@@ -15,7 +15,9 @@ import { QAPanel } from "@/components/qa/QAPanel"
 import { WorkflowPanel } from "@/components/workspace/WorkflowPanel"
 import { ChatPanel } from "@/components/workspace/ChatPanel"
 import { ProjectPanel } from "@/components/workspace/ProjectPanel"
-import { FileExplorer } from "@/components/workspace/FileExplorer"
+import { FileExplorer } from "@/components/files/FileExplorer"
+import { ArtifactViewer } from "@/components/artifacts/ArtifactViewer"
+import { ApprovalPanel } from "@/components/approval/ApprovalPanel"
 import { BottomPanel } from "@/components/workspace/BottomPanel"
 import { DesignReviewModal } from "@/components/workspace/DesignReviewModal"
 
@@ -113,6 +115,11 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
     status?.state?.toLowerCase() === "human_action_required"
   )
 
+  const isAwaitingHumanApproval = Boolean(
+    status?.state?.toLowerCase() === "awaiting_human_approval" ||
+    status?.state?.toLowerCase() === "awaiting_human"
+  )
+
   return (
     <div className="flex h-full flex-col overflow-hidden bg-slate-950/60 backdrop-blur-3xl">
       {/* Top Pipeline Bar */}
@@ -140,15 +147,20 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
 
       {/* Main Studio Workspace Split */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Center: Conversational AI Prompt Workspace / Interactive Q&A */}
-        <div className="min-w-0 flex-1 overflow-hidden">
+        {/* Center: Conversational AI Prompt Workspace / Interactive Q&A / Approval Panel */}
+        <div className="min-w-0 flex-1 overflow-hidden flex flex-col">
           {status?.state === "qa_pending" || status?.state === "qa_in_progress" ? (
             <QAPanel projectId={projectId} onComplete={refreshProject} />
+          ) : isAwaitingHumanApproval ? (
+            <ApprovalPanel
+              projectId={projectId}
+              stage={status?.current_stage || "architect"}
+              onDecision={() => refreshProject()}
+            />
           ) : (
-            <ChatPanel logs={logs} onRetryStage={handleRetryStage} onSendMessage={handleStartBuild} />
+            <ChatPanel logs={logs} projectId={projectId} onRetryStage={handleRetryStage} onSendMessage={handleStartBuild} />
           )}
         </div>
-
 
         <Resizer direction="vertical" onPointerDown={rightColumnWidth.onPointerDown} />
 
@@ -185,7 +197,10 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
 
             {/* Artifact Specs Tab */}
             <TabsContent value="artifacts" className="flex-1 overflow-hidden m-0">
-              <BottomPanel projectId={projectId} logs={logs} artifacts={project.artifacts} />
+              <ArtifactViewer
+                projectId={projectId}
+                stagesCompleted={status?.completed_stages || project?.stages_completed || []}
+              />
             </TabsContent>
 
             {/* Metrics & Controls Tab */}

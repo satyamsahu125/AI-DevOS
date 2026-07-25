@@ -161,7 +161,7 @@ export function ChatPanel({ logs, projectId, onRetryStage, onSendMessage }: Chat
                     </Badge>
                   )}
                   {msg.artifacts_read && msg.artifacts_read.map((art) => (
-                    <Badge key={art} variant="info" className="text-[10px]">
+                    <Badge key={art} variant="secondary" className="text-[10px]">
                       Read {art} Artifact
                     </Badge>
                   ))}

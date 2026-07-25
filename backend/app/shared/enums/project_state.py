@@ -21,6 +21,7 @@ class ProjectState(str, Enum):
     SPRINT_IN_PROGRESS      = "sprint_in_progress"  # has sub-state
     SPRINT_COMPLETE         = "sprint_complete"
     ALL_SPRINTS_COMPLETE    = "all_sprints_complete"
+    AWAITING_HUMAN_APPROVAL = "awaiting_human_approval"
     DEPLOYABLE              = "deployable"
     DONE                    = "done"
     FAILED                  = "failed"
