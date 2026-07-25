@@ -1,8 +1,9 @@
 # Database files — generated at runtime, never commit
-backend/app/memory/*.db
-backend/app/memory/*.hnsw
-backend/app/memory/*.sqlite
-backend/app/memory/*.sqlite3
+*.db
+*.hnsw
+*.sqlite
+*.sqlite3
+backend/backend/
 temp-workspace/
 backend/temp-workspace/
 

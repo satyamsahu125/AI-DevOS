@@ -82,7 +82,7 @@ class StateMachineTests(unittest.TestCase):
         initial_state = self.workspace_manager.get_state(self.project_id)
         self.assertEqual(initial_state, ProjectState.EMPTY)
 
-        result = self.workflow_manager.run(self.project_id, "Build app")
+        result = self.workflow_manager.run(self.project_id, "Build app", skip_qa=True)
         self.assertEqual(result.state, ProjectState.DESIGN_REVIEW_PENDING)
         self.assertTrue(result.requires_user_action)
         self.assertEqual(result.action_needed, "review_design")
@@ -90,12 +90,12 @@ class StateMachineTests(unittest.TestCase):
     def test_crash_recovery_resumes_from_last_state(self) -> None:
         self.workspace_manager.update_state(self.project_id, ProjectState.ARCHITECTURE_READY)
 
-        result = self.workflow_manager.run(self.project_id, "Build app")
+        result = self.workflow_manager.run(self.project_id, "Build app", skip_qa=True)
         self.assertEqual(result.state, ProjectState.DESIGN_REVIEW_PENDING)
 
     def test_design_review_pauses_pipeline(self) -> None:
         self.workspace_manager.update_state(self.project_id, ProjectState.DESIGN_REVIEW_PENDING)
-        result = self.workflow_manager.run(self.project_id, "Build app")
+        result = self.workflow_manager.run(self.project_id, "Build app", skip_qa=True)
         self.assertEqual(result.state, ProjectState.DESIGN_REVIEW_PENDING)
         self.assertTrue(result.requires_user_action)
 
@@ -104,7 +104,7 @@ class StateMachineTests(unittest.TestCase):
         self.workspace_manager.update_design_review(self.project_id, "approved", "Looks great")
         self.workspace_manager.update_state(self.project_id, ProjectState.DESIGN_APPROVED)
 
-        result = self.workflow_manager.run(self.project_id, "Build app")
+        result = self.workflow_manager.run(self.project_id, "Build app", skip_qa=True)
         self.assertIn(
             result.state,
             [
@@ -117,7 +117,7 @@ class StateMachineTests(unittest.TestCase):
         self.assertTrue(result.success)
 
     def test_pipeline_result_has_correct_state(self) -> None:
-        result = self.workflow_manager.run(self.project_id, "Build app")
+        result = self.workflow_manager.run(self.project_id, "Build app", skip_qa=True)
         self.assertIsInstance(result.state, ProjectState)
         self.assertEqual(result.state, ProjectState.DESIGN_REVIEW_PENDING)
 

@@ -11,12 +11,14 @@ import { Resizer } from "@/components/ui/resizer"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 
+import { QAPanel } from "@/components/qa/QAPanel"
 import { WorkflowPanel } from "@/components/workspace/WorkflowPanel"
 import { ChatPanel } from "@/components/workspace/ChatPanel"
 import { ProjectPanel } from "@/components/workspace/ProjectPanel"
 import { FileExplorer } from "@/components/workspace/FileExplorer"
 import { BottomPanel } from "@/components/workspace/BottomPanel"
 import { DesignReviewModal } from "@/components/workspace/DesignReviewModal"
+
 
 interface ProjectWorkspaceProps {
   projectId: string
@@ -138,10 +140,15 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
 
       {/* Main Studio Workspace Split */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Center: Conversational AI Prompt Workspace (Claude / AI Studio Style) */}
+        {/* Center: Conversational AI Prompt Workspace / Interactive Q&A */}
         <div className="min-w-0 flex-1 overflow-hidden">
-          <ChatPanel logs={logs} onRetryStage={handleRetryStage} onSendMessage={handleStartBuild} />
+          {status?.state === "qa_pending" || status?.state === "qa_in_progress" ? (
+            <QAPanel projectId={projectId} onComplete={refreshProject} />
+          ) : (
+            <ChatPanel logs={logs} onRetryStage={handleRetryStage} onSendMessage={handleStartBuild} />
+          )}
         </div>
+
 
         <Resizer direction="vertical" onPointerDown={rightColumnWidth.onPointerDown} />
 

@@ -340,5 +340,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ message }),
     }),
+  getQASession: (projectId: string) => request<Record<string, unknown>>(`/workflow/${projectId}/qa`),
+  answerQAQuestion: (projectId: string, question_index: number, answer: string) =>
+    request<{ saved: boolean; is_complete: boolean }>(`/workflow/${projectId}/qa/answer`, {
+      method: "POST",
+      body: JSON.stringify({ question_index, answer }),
+    }),
+  skipQAQuestion: (projectId: string, question_index: number) =>
+    request<{ skipped: boolean; is_complete: boolean }>(`/workflow/${projectId}/qa/skip`, {
+      method: "POST",
+      body: JSON.stringify({ question_index }),
+    }),
+  completeQASession: (projectId: string) =>
+    request<{ status: string; message: string }>(`/workflow/${projectId}/qa/complete`, { method: "POST" }),
 }
+
 

@@ -80,7 +80,7 @@ class WorkflowManager:
                 break  # first incomplete stage found — stop
         return clean
 
-    def run(self, project_id: str, request: str = "") -> PipelineResult:
+    def run(self, project_id: str, request: str = "", skip_qa: bool = False) -> PipelineResult:
         """Main entry point. Reads current state and advances pipeline.
 
         Safe to call multiple times — idempotent per state.
@@ -131,11 +131,75 @@ class WorkflowManager:
                 self._transition(project_id, ProjectState.CLARIFYING)
 
             elif state == ProjectState.CLARIFYING:
-                result = self._run_stage(project_id, "StrategicReview", request)
-                if result.success:
-                    self._transition(project_id, ProjectState.REQUIREMENTS_READY)
+                if skip_qa:
+                    result = self._run_stage(project_id, "StrategicReview", request)
+                    if result.success:
+                        self._transition(project_id, ProjectState.REQUIREMENTS_READY)
+                    else:
+                        return self._fail(project_id, "StrategicReview", result)
                 else:
-                    return self._fail(project_id, "StrategicReview", result)
+                    from ..agents.clarification import ClarificationAgent
+                    agent = self._get_agent("clarification")
+                    if isinstance(agent, ClarificationAgent):
+                        q_set = agent.generate_questions(request)
+                        questions = [q.model_dump(mode="json") if hasattr(q, "model_dump") else q for q in q_set.questions]
+                    else:
+                        questions = []
+                    if questions:
+                        self.workspace.save_qa_questions(project_id, questions)
+                        self._transition(project_id, ProjectState.QA_PENDING)
+                        data = self.workspace.load_project_json(project_id) or {}
+                        completed_stages = list(data.get("stages_completed", []))
+                        return PipelineResult(
+                            project_id=project_id,
+                            state=ProjectState.QA_PENDING,
+                            requires_user_action=True,
+                            action_needed="answer_questions",
+                            message=f"I have {len(questions)} questions to help me understand your project better.",
+                            completed_stages=completed_stages,
+                        )
+                    else:
+                        result = self._run_stage(project_id, "StrategicReview", request)
+                        if result.success:
+                            self._transition(project_id, ProjectState.REQUIREMENTS_READY)
+                        else:
+                            return self._fail(project_id, "StrategicReview", result)
+
+            elif state == ProjectState.QA_PENDING:
+                qa = self.workspace.get_qa_session(project_id)
+                answered = len(qa.get("answers", []))
+                total = len(qa.get("questions", []))
+                if total > 0 and answered < total:
+                    data = self.workspace.load_project_json(project_id) or {}
+                    completed_stages = list(data.get("stages_completed", []))
+                    return PipelineResult(
+                        project_id=project_id,
+                        state=ProjectState.QA_PENDING,
+                        requires_user_action=True,
+                        action_needed="answer_questions",
+                        message=f"Answered {answered}/{total} questions. Please answer remaining questions.",
+                        completed_stages=completed_stages,
+                    )
+                else:
+                    self._transition(project_id, ProjectState.QA_IN_PROGRESS)
+
+            elif state == ProjectState.QA_IN_PROGRESS:
+                from ..agents.clarification import ClarificationAgent
+                agent = self._get_agent("clarification")
+                qa = self.workspace.get_qa_session(project_id)
+                if isinstance(agent, ClarificationAgent):
+                    artifact_obj = agent.process_answers(request, qa)
+                    struct = artifact_obj.model_dump(mode="json") if hasattr(artifact_obj, "model_dump") else {}
+                    content_str = getattr(artifact_obj, "clarified_requirement", "") or request
+                    self.artifact_manager.save_artifact(
+                        project_id=project_id,
+                        stage=Stage.StrategicReview,
+                        content=content_str,
+                        structured_content=struct,
+                    )
+                self.workspace.mark_qa_complete(project_id)
+                self._transition(project_id, ProjectState.REQUIREMENTS_READY)
+
 
             elif state == ProjectState.REQUIREMENTS_READY:
                 result = self._run_stage(project_id, "ProductOwner", request)

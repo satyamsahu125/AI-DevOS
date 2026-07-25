@@ -229,11 +229,13 @@ def workflow_status(
     else:
         status_str = "paused"
 
+    requires_action = state in [ProjectState.DESIGN_REVIEW_PENDING, ProjectState.QA_PENDING, ProjectState.QA_IN_PROGRESS]
+
     return {
         "project_id": project_id,
         "state": state.value if hasattr(state, "value") else str(state),
         "status": status_str,
-        "requires_user_action": state == ProjectState.DESIGN_REVIEW_PENDING,
+        "requires_user_action": requires_action,
         "current_sprint": current_sprint,
         "total_sprints": total_sprints,
         "sprint_name": sprint_name,
@@ -245,6 +247,143 @@ def workflow_status(
         "total_stages": total_stages,
         "progress_percent": progress_percent,
     }
+
+
+class QAAnswerRequest(BaseModel):
+    question_index: int
+    answer: str
+
+
+class QASkipRequest(BaseModel):
+    question_index: int
+
+
+@router.get("/workflow/{project_id}/qa")
+def get_qa_session(
+    project_id: str,
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+) -> dict:
+    workspace_state = workspace_manager.load_project_json(project_id)
+    if workspace_state is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    qa = workspace_manager.get_qa_session(project_id)
+    questions = qa.get("questions", [])
+    answers = qa.get("answers", [])
+    total_questions = len(questions)
+    answered_count = len(answers)
+
+    current_q_index = qa.get("current_question_index", 0)
+    current_q = None
+    if current_q_index < total_questions:
+        current_q = questions[current_q_index]
+
+    previous_answers = []
+    for a in answers:
+        q_idx = a.get("question_index", 0)
+        q_text = questions[q_idx].get("question", "") if q_idx < len(questions) else ""
+        previous_answers.append({
+            "question_index": q_idx,
+            "question": q_text,
+            "answer": a.get("answer", ""),
+        })
+
+    return {
+        "project_id": project_id,
+        "status": qa.get("status", "pending"),
+        "total_questions": total_questions,
+        "answered": answered_count,
+        "current_question_index": current_q_index,
+        "current_question": current_q,
+        "previous_answers": previous_answers,
+        "questions": questions,
+        "is_complete": answered_count >= total_questions and total_questions > 0,
+    }
+
+
+@router.post("/workflow/{project_id}/qa/answer")
+def answer_qa_question(
+    project_id: str,
+    req: QAAnswerRequest,
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+) -> dict:
+    workspace_state = workspace_manager.load_project_json(project_id)
+    if workspace_state is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    workspace_manager.save_qa_answer(project_id, req.question_index, req.answer)
+    qa = workspace_manager.get_qa_session(project_id)
+    total_questions = qa.get("total_questions", 0)
+    answered_count = qa.get("answered", 0)
+    is_complete = answered_count >= total_questions and total_questions > 0
+
+    next_q = None
+    current_q_index = qa.get("current_question_index", 0)
+    questions = qa.get("questions", [])
+    if current_q_index < total_questions:
+        next_q = questions[current_q_index]
+
+    return {
+        "saved": True,
+        "next_question": next_q,
+        "progress": {"answered": answered_count, "total": total_questions},
+        "is_complete": is_complete,
+    }
+
+
+@router.post("/workflow/{project_id}/qa/skip")
+def skip_qa_question(
+    project_id: str,
+    req: QASkipRequest,
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+) -> dict:
+    workspace_state = workspace_manager.load_project_json(project_id)
+    if workspace_state is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    qa = workspace_manager.get_qa_session(project_id)
+    questions = qa.get("questions", [])
+    if req.question_index < len(questions):
+        q = questions[req.question_index]
+        if q.get("priority") == "CRITICAL":
+            raise HTTPException(status_code=400, detail="CRITICAL questions cannot be skipped.")
+
+    workspace_manager.skip_qa_question(project_id, req.question_index)
+    updated_qa = workspace_manager.get_qa_session(project_id)
+    total_questions = updated_qa.get("total_questions", 0)
+    answered_count = updated_qa.get("answered", 0)
+    is_complete = answered_count >= total_questions and total_questions > 0
+
+    return {
+        "skipped": True,
+        "progress": {"answered": answered_count, "total": total_questions},
+        "is_complete": is_complete,
+    }
+
+
+@router.post("/workflow/{project_id}/qa/complete")
+def complete_qa_session(
+    project_id: str,
+    background_tasks: BackgroundTasks,
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+    manager: WorkflowManager = Depends(get_workflow_manager),
+) -> dict:
+    workspace_state = workspace_manager.load_project_json(project_id)
+    if workspace_state is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    workspace_manager.update_state(project_id, ProjectState.QA_IN_PROGRESS)
+    original_req = (
+        workspace_state.get("original_request")
+        or workspace_state.get("description")
+        or f"Project {project_id}"
+    )
+    background_tasks.add_task(manager.run, project_id, original_req)
+    return {
+        "status": "processing",
+        "message": "Processing your answers...",
+    }
+
 
 
 @router.post("/workflow/{project_id}/stop")

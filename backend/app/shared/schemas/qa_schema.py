@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 class TestCase(BaseModel):
     """One test case in a QA report."""
 
+    __test__ = False
+
     name: str = ""
     steps: list[str] = Field(default_factory=list)
     expected: str = ""

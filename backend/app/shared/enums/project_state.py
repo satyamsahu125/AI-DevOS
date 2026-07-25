@@ -8,7 +8,10 @@ class ProjectState(str, Enum):
     If process crashes, resume from last saved state.
     """
     EMPTY                   = "empty"
-    CLARIFYING              = "clarifying"         # Q&A agent running
+    CLARIFYING              = "clarifying"         # Q&A agent running Phase A
+    QA_PENDING              = "qa_pending"         # Pipeline paused — questions generated, waiting for answers
+    QA_IN_PROGRESS          = "qa_in_progress"     # User is actively answering questions
+    QA_COMPLETE             = "qa_complete"        # All questions answered — pipeline can continue
     REQUIREMENTS_READY      = "requirements_ready"
     ARCHITECTURE_READY      = "architecture_ready"
     DESIGN_READY            = "design_ready"
@@ -18,7 +21,6 @@ class ProjectState(str, Enum):
     SPRINT_IN_PROGRESS      = "sprint_in_progress"  # has sub-state
     SPRINT_COMPLETE         = "sprint_complete"
     ALL_SPRINTS_COMPLETE    = "all_sprints_complete"
-    QA_COMPLETE             = "qa_complete"
     DEPLOYABLE              = "deployable"
     DONE                    = "done"
     FAILED                  = "failed"

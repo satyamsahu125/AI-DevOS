@@ -132,11 +132,16 @@ class Fix002MultiStagePipelineTests(unittest.TestCase):
         try:
             manager, workspace_manager, _ = _build_pipeline_manager(tmp_dir)
             workspace_manager.create_workspace("proj-pipeline")
-            result = manager.run("proj-pipeline", "Build a todo app")
-            if getattr(result, "requires_user_action", False):
-                workspace_manager.update_design_review("proj-pipeline", "approved", "Auto-approved for test")
-                workspace_manager.update_state("proj-pipeline", ProjectState.DESIGN_APPROVED)
-                result = manager.run("proj-pipeline", "Build a todo app")
+            result = manager.run("proj-pipeline", "Build a todo app", skip_qa=True)
+            while getattr(result, "requires_user_action", False):
+                if result.action_needed == "answer_questions":
+                    workspace_manager.mark_qa_complete("proj-pipeline")
+                    workspace_manager.update_state("proj-pipeline", ProjectState.REQUIREMENTS_READY)
+                elif result.action_needed == "review_design":
+                    workspace_manager.update_design_review("proj-pipeline", "approved", "Auto-approved for test")
+                    workspace_manager.update_state("proj-pipeline", ProjectState.DESIGN_APPROVED)
+                result = manager.run("proj-pipeline", "Build a todo app", skip_qa=True)
+
 
             expected = [s.value for s in DependencyGraph.ordered_stages()]
             self.assertEqual(result.completed_stages, expected)

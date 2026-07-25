@@ -230,3 +230,84 @@ class WorkspaceManager:
             return project_data["approved_design"]
         return None
 
+    def save_qa_questions(self, project_id: str, questions: list[Any]) -> None:
+        """Save Phase A questions to project.json."""
+        serialized_q = []
+        for q in questions:
+            if hasattr(q, "model_dump"):
+                serialized_q.append(q.model_dump(mode="json"))
+            elif isinstance(q, dict):
+                serialized_q.append(q)
+            else:
+                serialized_q.append({"index": len(serialized_q), "question": str(q)})
+
+        qa_session = {
+            "status": "pending",
+            "current_question_index": 0,
+            "total_questions": len(serialized_q),
+            "answered": 0,
+            "questions": serialized_q,
+            "answers": [],
+            "completed": False,
+        }
+        self.update_project_json(project_id, {"qa_session": qa_session})
+
+    def save_qa_answer(self, project_id: str, q_index: int, answer: str) -> None:
+        """Save a user answer for question at q_index."""
+        data = self.load_project_json(project_id) or {}
+        qa = dict(data.get("qa_session") or {})
+        answers = list(qa.get("answers", []))
+
+        existing_idx = None
+        for i, a in enumerate(answers):
+            if isinstance(a, dict) and a.get("question_index") == q_index:
+                existing_idx = i
+                break
+
+        ans_obj = {
+            "question_index": q_index,
+            "answer": answer,
+            "answered_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if existing_idx is not None:
+            answers[existing_idx] = ans_obj
+        else:
+            answers.append(ans_obj)
+
+        qa["answers"] = answers
+        qa["answered"] = len(answers)
+        qa["current_question_index"] = q_index + 1
+        if qa["answered"] >= qa.get("total_questions", 0):
+            qa["status"] = "in_progress"
+
+        self.update_project_json(project_id, {"qa_session": qa})
+
+    def skip_qa_question(self, project_id: str, q_index: int) -> None:
+        """Skip optional question at q_index."""
+        self.save_qa_answer(project_id, q_index, "Skipped")
+
+    def get_qa_session(self, project_id: str) -> dict[str, Any]:
+        """Retrieve Q&A session dictionary from project.json."""
+        data = self.load_project_json(project_id) or {}
+        return dict(
+            data.get("qa_session")
+            or {
+                "status": "pending",
+                "current_question_index": 0,
+                "total_questions": 0,
+                "answered": 0,
+                "questions": [],
+                "answers": [],
+                "completed": False,
+            }
+        )
+
+    def mark_qa_complete(self, project_id: str) -> None:
+        """Mark Q&A session as complete."""
+        data = self.load_project_json(project_id) or {}
+        qa = dict(data.get("qa_session") or {})
+        qa["status"] = "complete"
+        qa["completed"] = True
+        self.update_project_json(project_id, {"qa_session": qa})
+
+

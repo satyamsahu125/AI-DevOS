@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from .builder import PromptBuilder
 
 SYSTEM_PROMPT = """
@@ -196,79 +197,61 @@ NEVER ask about:
 
 These are IMPLEMENTATION decisions, not product decisions.
 Asking them confuses users and wastes the 7-question limit.
+"""
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-OUTPUT FORMAT (exact JSON)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-{
-  "original_request": "Build a calculator",
-  "interpretations_analyzed": [
-    "Simple web calculator for basic arithmetic",
-    "Financial calculator with loan/EMI computation",
-    "Scientific calculator with advanced functions"
-  ],
-  "divergences_found": [
-    "Does it need user accounts?",
-    "What type of calculations?",
-    "Does it need history/memory?"
-  ],
-  "questions_and_answers": [
-    {
-      "question": "Who will use this calculator?",
-      "category": "WHO_ARE_USERS",
-      "priority": "CRITICAL",
-      "answer": "Anyone visiting the website — no login needed",
-      "source": "assumed_reasonable_default",
-      "confidence": "HIGH"
-    },
-    {
-      "question": "What type of calculations are needed?",
-      "category": "FEATURES_AND_SCOPE",
-      "priority": "CRITICAL",
-      "answer": "Basic arithmetic: add, subtract, multiply, divide",
-      "source": "assumed_reasonable_default",
-      "confidence": "HIGH"
-    },
-    {
-      "question": "How many users expected?",
-      "category": "SCALE_AND_VOLUME",
-      "priority": "MAJOR",
-      "answer": "Personal/small use — under 100 users",
-      "source": "assumed_reasonable_default",
-      "confidence": "MEDIUM"
-    },
-    {
-      "question": "Is calculation history needed?",
-      "category": "FEATURES_AND_SCOPE",
-      "priority": "MAJOR",
-      "answer": "No — results reset on page refresh",
-      "source": "assumed_reasonable_default",
-      "confidence": "HIGH"
-    }
-  ],
-  "assumptions_made": [
-    "No user authentication required",
-    "No database needed (no persistent data)",
-    "Web browser only",
-    "English language only"
-  ],
-  "explicit_non_requirements": [
-    "NO user accounts or authentication",
-    "NO database or data persistence",
-    "NO financial calculations (loan, EMI, interest)",
-    "NO user history or saved calculations",
-    "NO third-party integrations"
-  ],
-  "clarified_requirement": "Build a simple web calculator accessible to anyone without login. It performs basic arithmetic operations: addition, subtraction, multiplication, and division. No data is stored — results reset on page refresh. Designed for personal/small use with no scalability requirements.",
-  "scale_profile": {
-    "user_count": "under_100",
-    "database_needed": false,
-    "auth_needed": false,
-    "infrastructure_tier": "static_frontend_only"
-  },
-  "confidence_score": 0.92,
-  "ready_for_requirements": true
-}
+GENERATE_SYSTEM_PROMPT = """
+You are a Requirements Clarification Specialist.
+You analyze a software request and generate targeted questions.
+
+YOUR JOB IN PHASE A:
+  Generate questions only — do NOT answer them.
+  The user will answer in the UI.
+
+QUESTION GENERATION RULES:
+  Maximum 7 questions total.
+  Order by priority: CRITICAL first, then MAJOR.
+  Never ask MINOR questions unless CRITICAL + MAJOR are done.
+  Never ask about implementation details (framework, database, etc.)
+  Every question must be answerable by a non-technical user.
+
+FOR EACH QUESTION PROVIDE:
+  - index: integer (0, 1, 2...)
+  - question: plain English, no jargon
+  - category: one of the 7 categories
+  - priority: CRITICAL | MAJOR
+  - options: list of objects [{ "value": "str", "label": "str" }] (3-5 choices, if applicable)
+  - allows_custom: true if user can type own answer
+  - skippable: false for CRITICAL, true for MAJOR
+
+OPTION GUIDELINES:
+  - Make options cover the realistic range for this type of request
+  - Keep option labels short (< 8 words)
+  - Always include a custom/other option if choices are limited
+
+OUTPUT: Valid QuestionSet JSON matching schema.
+"""
+
+PROCESS_SYSTEM_PROMPT = """
+You are a Requirements Clarification Specialist.
+You receive a user's request + their answers to questions.
+Produce a complete ClarificationArtifact.
+
+YOUR JOB IN PHASE B:
+  Combine the original request + user answers into one
+  enriched, unambiguous requirement.
+
+  The explicit_non_requirements field is CRITICAL.
+  If user said "No auth needed" → add to explicit_non_requirements.
+  If user said "Under 100 users" → set database_needed accordingly.
+  These constraints flow to every downstream agent.
+
+SCALE_PROFILE RULES:
+  user_count → infrastructure_tier:
+  under_100    → static_frontend_only OR single_server
+  100_to_1000  → single_server
+  1000+        → small_cloud or higher
+  auth_needed  → true only if user explicitly said yes
+  database_needed → false if no persistent data and under 1000 users
 """
 
 
@@ -282,3 +265,37 @@ class ClarificationPromptBuilder(PromptBuilder):
         base = super().build(context)
         body = f"Clarification Prompt:\n{base}" if base else "Clarification Prompt"
         return f"{SYSTEM_PROMPT}\n\n{body}"
+
+    def build_generate_prompt(self, request: str) -> str:
+        return (
+            f"{GENERATE_SYSTEM_PROMPT}\n\n"
+            f"Analyze this request and generate questions:\n\n"
+            f"{request}\n\n"
+            f"Focus on: what type of app, who uses it, "
+            f"what scale, what features are needed, "
+            f"what is explicitly NOT needed."
+        )
+
+    def build_process_prompt(self, original_request: str, qa_session: dict[str, Any]) -> str:
+        questions = qa_session.get("questions", [])
+        answers = qa_session.get("answers", [])
+
+        qa_pairs_list = []
+        for i, q in enumerate(questions):
+            q_text = q.get("question", "") if isinstance(q, dict) else getattr(q, "question", "")
+            ans_text = "Skipped"
+            for a in answers:
+                if isinstance(a, dict) and a.get("question_index") == i:
+                    ans_text = a.get("answer", "Skipped")
+                    break
+            qa_pairs_list.append(f"Q{i+1}: {q_text}\nA{i+1}: {ans_text}")
+
+        qa_pairs = "\n".join(qa_pairs_list)
+
+        return (
+            f"{PROCESS_SYSTEM_PROMPT}\n\n"
+            f"Original request:\n{original_request}\n\n"
+            f"User's answers:\n{qa_pairs}\n\n"
+            f"Produce a complete ClarificationArtifact "
+            f"including explicit_non_requirements and scale_profile."
+        )
