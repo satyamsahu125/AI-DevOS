@@ -1,8 +1,18 @@
-# Python
+# Database files — generated at runtime, never commit
+backend/app/memory/*.db
+backend/app/memory/*.hnsw
+backend/app/memory/*.sqlite
+backend/app/memory/*.sqlite3
+temp-workspace/
+backend/temp-workspace/
+
+# Python runtime
+__pycache__/
+*.pyc
+*.py[cod]
 .venv/
 venv/
-__pycache__/
-*.py[cod]
+.env
 .pytest_cache/
 .mypy_cache/
 .coverage
@@ -14,9 +24,6 @@ __pycache__/
 build/
 dist/
 *.egg-info/
-
-# Environment
-.env
 
 # Logs
 *.log
@@ -34,3 +41,6 @@ node_modules/
 # AI DevOS runtime data
 backend/data/*.sqlite
 backend/data/*.hnsw
+
+# Project records written by ProjectRepository at runtime.
+backend/app/projects/
