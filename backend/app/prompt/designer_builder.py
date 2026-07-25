@@ -83,85 +83,52 @@ DESIGN PRINCIPLES (non-negotiable)
    Use: p-1(4px) p-2(8px) p-3(12px) p-4(16px)
         p-6(24px) p-8(32px) p-12(48px) p-16(64px)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-COMPONENT SELECTION RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DESIGN SIZING RULE (from scale_profile)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Read ClarificationArtifact.scale_profile.infrastructure_tier.
 
-For each UI pattern, use exactly these components:
+static_frontend_only / under_100:
+  → Simple clean UI, no dashboard, no complex nav
+  → Mobile responsive is NICE, not required
+  → Focus: single-screen clarity
 
-LOGIN / AUTH FORMS:
-  Card > CardHeader > CardContent > Form > Input + Button
-  Tailwind: max-w-md mx-auto mt-20 p-6
+single_server / 100_to_1000:
+  → Responsive design required
+  → Simple navigation (< 5 items)
+  → Basic empty/error states
 
-DASHBOARDS:
-  SidebarProvider + AppSidebar (shadcn sidebar) 
-  Main content: SidebarInset with header
-  Metrics: Tremor MetricCard in grid
-  Charts: Tremor AreaChart or BarChart
-  Tables: shadcn DataTable with sorting + pagination
+medium_cloud / 1000_to_10000:
+  → Full responsive with sidebar nav
+  → Complete empty/loading/error states for all components
+  → Consider dark mode
 
-NAVIGATION:
-  Top nav app: NavigationMenu + Sheet (mobile)
-  Admin: Sidebar (collapsible, icons + labels)
-  Marketing: sticky header + mobile hamburger Sheet
+large_cloud / distributed:
+  → Enterprise UI patterns
+  → Advanced data tables, filters, bulk actions
+  → Accessibility (WCAG 2.1 AA) is mandatory
 
-DATA TABLES:
-  shadcn Table + TanStack Table (sorting, filtering, pagination)
-  Row actions: DropdownMenu
-  Bulk actions: Checkbox + toolbar
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FOR EVERY PAGE — DOCUMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+primary_action: the ONE thing users do most on this page
+secondary_actions: everything else
+empty_state: what user sees with no data
+loading_state: skeleton while data loads
+error_state: what shows when something fails
+design_rationale: WHY this layout (not just WHAT)
 
-MODALS / DIALOGS:
-  Confirmation: Dialog (small, centered)
-  Forms: Sheet (slides from right, full height)
-  Images: Dialog (max-w-3xl)
+Do NOT say "use Card component".
+Say WHY: "Cards here because users scan multiple
+items — the border creates visual separation without
+the cognitive load of a full table"
 
-NOTIFICATIONS:
-  Inline: Alert (variant: default/destructive/warning)
-  Toast: Sonner (via shadcn)
-  Banners: Alert at top of page
-
-STATUS INDICATORS:
-  Tags: Badge (variant: default/secondary/outline/destructive)
-  Progress: Progress bar or Tremor Tracker
-  Loading skeleton: Skeleton component
-
-EMPTY STATES (required for every list/table):
-  Centered illustration placeholder + heading + CTA Button
-  
-ERROR STATES (required for every async component):
-  Alert destructive + retry Button
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-OUTPUT REQUIREMENTS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-For every component you define:
-  shadcn_component: exact shadcn/ui component name
-  tailwind_classes: exact Tailwind class string
-  animation_component: Magic UI / Aceternity component if applicable
-  animation_trigger: on-mount / on-hover / on-scroll if applicable
-  cult_ui_pattern: StreamingText / ThoughtChain / ApprovalCard etc if applicable
-  dark_mode_classes: exact dark: variant Tailwind classes
-  states: all 5 states defined
-  accessibility: aria attributes and keyboard behavior
-
-For every page you define:
-  route: exact path (/dashboard, /login, etc.)
-  layout: which layout wrapper (centered / sidebar / full-width)
-  components: exact list of component IDs on this page
-  empty_state: what user sees with no data
-  loading_state: skeleton layout during data fetch
-  error_state: what user sees on API failure
-
-CRITICAL RULES:
-  Never use vague descriptions ("a nice button")
-  Always use exact component names ("shadcn Button variant=outline")
-  Always specify exact Tailwind classes
-  Always include dark mode classes (dark:bg-gray-900 etc)
-  Always include responsive breakpoints
-  
-A frontend developer must be able to implement from your
-output with ZERO guesswork. Every decision is made here.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFORMATION ARCHITECTURE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Primary navigation: what, why accessible from everywhere
+Secondary navigation: what, why within section
+Decision: why this structure matches the user's mental model
 """
 
 
