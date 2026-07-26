@@ -364,6 +364,11 @@ class BugFixDescriptionAndPatternLeakTests(unittest.TestCase):
         self.assertIn("Create a basic calculator app", received["content"])
 
     def test_pattern_search_is_isolated_per_project(self) -> None:
+        try:
+            import torch  # noqa: F401  — sentence_transformers requires torch
+        except ImportError:
+            self.skipTest("torch not installed; sentence_transformers cannot embed vectors")
+
         tmp_dir = Path(tempfile.mkdtemp(prefix="pattern_leak_"))
         try:
             from app.memory.knowledge_memory import KnowledgeMemory

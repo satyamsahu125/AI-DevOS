@@ -285,6 +285,7 @@ class Fix009ScrumMasterInjection(unittest.TestCase):
         scrum_artifact.content = "Daily standups at 9am. Velocity: 40 points."
         wm.artifact_manager = MagicMock()
         wm.artifact_manager.get_artifact.return_value = scrum_artifact
+        wm.sprint_monitor = None
 
         sprint = Sprint(
             sprint_id="s1", sprint_number=1, name="Sprint 1",
@@ -302,6 +303,7 @@ class Fix009ScrumMasterInjection(unittest.TestCase):
         wm = WorkflowManager.__new__(WorkflowManager)
         wm.artifact_manager = MagicMock()
         wm.artifact_manager.get_artifact.return_value = None
+        wm.sprint_monitor = None
 
         sprint = Sprint(
             sprint_id="s1", sprint_number=1, name="Sprint 1",

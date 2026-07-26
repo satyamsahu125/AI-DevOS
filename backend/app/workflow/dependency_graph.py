@@ -22,7 +22,6 @@ class DependencyGraph:
         "security",
         "sprint_planner",
         "scrum_master",
-        "file_planner",
         "backend",
         "frontend",
         "qa",
@@ -30,6 +29,9 @@ class DependencyGraph:
         "document",
         "retro",
     ]
+    # FileStructurePlanner is intentionally excluded from STAGE_ORDER.
+    # It runs as an internal per-sprint step inside WorkflowManager._run_sprint()
+    # and is never tracked as a top-level completed stage.
 
     STAGE_DEPENDENCIES: dict[Stage, list[Stage]] = {
         Stage.StrategicReview: [],
@@ -39,9 +41,8 @@ class DependencyGraph:
         Stage.Security: [Stage.Designer],
         Stage.SprintPlanning: [Stage.Security],
         Stage.ScrumMaster: [Stage.SprintPlanning],
-        Stage.FileStructurePlanner: [Stage.ScrumMaster],
-        Stage.BackendDeveloper: [Stage.Security, Stage.FileStructurePlanner, Stage.SprintPlanning],
-        Stage.FrontendDeveloper: [Stage.Security, Stage.Designer, Stage.FileStructurePlanner, Stage.SprintPlanning],
+        Stage.BackendDeveloper: [Stage.Security, Stage.SprintPlanning],
+        Stage.FrontendDeveloper: [Stage.Security, Stage.Designer, Stage.SprintPlanning],
         Stage.QA: [Stage.BackendDeveloper, Stage.FrontendDeveloper],
         Stage.DevOps: [Stage.QA],
         Stage.Document: [Stage.DevOps],

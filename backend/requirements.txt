@@ -8,6 +8,7 @@ pytest>=8.0.0
 pytest-asyncio>=0.23.0
 hnswlib>=0.8.0
 sentence-transformers>=3.0.0
+transformers>=4.0.0
 python-dotenv>=1.0.0
 
 # sqlite3 is part of the Python standard library -- not installed via pip.
