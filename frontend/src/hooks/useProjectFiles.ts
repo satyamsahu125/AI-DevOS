@@ -2,31 +2,28 @@ import { useEffect, useState } from "react"
 
 import { api, type ProjectFiles } from "@/lib/api"
 
-/** Polls GET /projects/{projectId}/files -- the real generated file tree, growing live as
- * Backend/Frontend stages write files. */
-export function useProjectFiles(projectId: string | null, intervalMs = 4000) {
+/** Fetches initial GET /projects/{projectId}/files without periodic polling. */
+export function useProjectFiles(projectId: string | null) {
   const [files, setFiles] = useState<ProjectFiles>({ backend: [], frontend: [] })
 
   useEffect(() => {
     if (!projectId) return
     let cancelled = false
 
-    async function poll() {
+    async function fetchFiles() {
       try {
         const next = await api.getFiles(projectId!)
         if (!cancelled) setFiles(next)
       } catch {
-        // ignore transient errors, keep last known tree
+        // ignore network error
       }
     }
 
-    poll()
-    const timer = setInterval(poll, intervalMs)
+    fetchFiles()
     return () => {
       cancelled = true
-      clearInterval(timer)
     }
-  }, [projectId, intervalMs])
+  }, [projectId])
 
   return files
 }

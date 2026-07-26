@@ -8,8 +8,10 @@ from ..shared.dto.project_request import ProjectRequest
 from ..shared.dto.project_response import ProjectResponse
 from ..workspace.manager import WorkspaceManager
 from ..workspace.project_files import ProjectFileManager
+from ..llm.cost_tracker import CostTracker
 from .dependencies import (
     get_artifact_manager,
+    get_cost_tracker,
     get_memory_manager,
     get_project_file_manager,
     get_project_manager,
@@ -202,3 +204,24 @@ def validate_project(
         "fixable_errors": result.fixable_errors,
         "test_results": result.test_results,
     }
+
+
+@router.get("/projects/{project_id}/metrics")
+@router.get("/api/projects/{project_id}/metrics")
+def get_project_metrics(
+    project_id: str,
+    tracker: CostTracker = Depends(get_cost_tracker),
+):
+    """Return ProjectCostSummary metrics for project_id."""
+    return tracker.get_project_summary(project_id)
+
+
+@router.get("/projects/{project_id}/metrics/{stage}")
+@router.get("/api/projects/{project_id}/metrics/{stage}")
+def get_stage_metrics(
+    project_id: str,
+    stage: str,
+    tracker: CostTracker = Depends(get_cost_tracker),
+):
+    """Return individual LLM call details for stage under project_id."""
+    return tracker.get_stage_calls(project_id, stage)

@@ -13,7 +13,7 @@ interface FormFieldItem { label?: string; type?: string; placeholder?: string }
 interface ColumnItem { header?: string }
 interface NavItem { icon?: string; label?: string; active?: boolean }
 
-export const puckConfig: Config = {
+export const puckConfig: Config<Record<string, any>> = {
   components: {
     HeroSection: {
       label: "Hero Section",
@@ -44,7 +44,7 @@ export const puckConfig: Config = {
         ctaVariant: "default",
         layout: "center",
       },
-      render: ({ title, subtitle, ctaText, ctaVariant, layout }) => (
+      render: ({ title, subtitle, ctaText, ctaVariant, layout }: any) => (
         <section className={`py-20 px-6 text-${layout}`}>
           <h1 className="text-4xl font-bold tracking-tight">{title}</h1>
           <p className="mt-4 text-xl text-muted-foreground">{subtitle}</p>
@@ -79,7 +79,7 @@ export const puckConfig: Config = {
         columns: "3",
         cards: [{ title: "Feature 1", description: "Description", badge: "New" }],
       },
-      render: ({ columns, cards }) => (
+      render: ({ columns, cards }: any) => (
         <div className={`grid grid-cols-${columns} gap-6 p-6`}>
           {(cards || []).map((card: CardItem, i: number) => (
             <Card key={i} className="p-6">
@@ -119,7 +119,7 @@ export const puckConfig: Config = {
         ],
         showAuthButtons: true,
       },
-      render: ({ logo, links, showAuthButtons }) => (
+      render: ({ logo, links, showAuthButtons }: any) => (
         <nav className="flex items-center justify-between px-6 py-4 border-b">
           <span className="font-bold text-xl">{logo}</span>
           <div className="flex gap-6">
@@ -169,7 +169,7 @@ export const puckConfig: Config = {
         ],
         submitText: "Submit",
       },
-      render: ({ title, fields, submitText }) => (
+      render: ({ title, fields, submitText }: any) => (
         <Card className="max-w-md mx-auto p-6">
           <h2 className="text-2xl font-bold mb-4">{title}</h2>
           <div className="space-y-4">
@@ -198,7 +198,7 @@ export const puckConfig: Config = {
         title: "Data Table",
         columns: [{ header: "Name" }, { header: "Status" }, { header: "Date" }],
       },
-      render: ({ title, columns }) => (
+      render: ({ title, columns }: any) => (
         <div className="p-6">
           <h3 className="font-semibold mb-4">{title}</h3>
           <div className="border rounded-lg overflow-hidden">
@@ -252,7 +252,7 @@ export const puckConfig: Config = {
           { icon: "⚙️", label: "Settings", active: false },
         ],
       },
-      render: ({ items }) => (
+      render: ({ items }: any) => (
         <aside className="w-64 min-h-screen border-r p-4">
           <nav className="space-y-1">
             {(items || []).map((item: NavItem, i: number) => (
@@ -271,4 +271,4 @@ export const puckConfig: Config = {
       ),
     },
   },
-}
+} as any

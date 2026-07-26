@@ -28,7 +28,14 @@ class LLMManager:
         self._settings = self._config_manager.load()
         self._provider = self._build_provider()
         self.cost_tracker = cost_tracker or get_shared_cost_tracker()
+        self._current_project_id: str = ""
+        self._current_stage: str = ""
         logger.debug("llm manager ready: provider=%s model=%s", self._settings.llm.provider, self._settings.llm.model)
+
+    def set_context(self, project_id: str, stage: str) -> None:
+        """Called by WorkflowEngine before each stage."""
+        self._current_project_id = project_id
+        self._current_stage = stage
 
     def _build_provider(self):
         llm = self._settings.llm
@@ -124,12 +131,16 @@ class LLMManager:
         """Record response's token usage and latency with CostTracker, tolerating response shapes without them."""
         usage = getattr(response, "usage", None) or {}
         latency = getattr(response, "latency", None) or 0.0
+        eff_project_id = project_id or self._current_project_id
+        eff_stage = stage or self._current_stage
         self.cost_tracker.record(
-            stage=stage,
+            project_id=eff_project_id,
+            stage=eff_stage,
             agent=agent,
+            provider=self.configured_provider,
+            model=model,
             prompt_tokens=int(usage.get("prompt", 0)),
             completion_tokens=int(usage.get("completion", 0)),
-            model=model,
             latency_ms=latency * 1000,
-            project_id=project_id,
+            success=True,
         )

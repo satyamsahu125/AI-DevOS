@@ -464,3 +464,88 @@ def run_single_stage(request: StageRequest, manager: WorkflowManager = Depends(g
     """Run exactly one named stage (for debugging)."""
     stage_name = resolve_stage_name(request.stage)
     return manager.run_stage(request.project_id, stage_name, request.request)
+
+
+class RequirementChangeRequest(BaseModel):
+    description: str
+
+
+class ChangeConfirmRequest(BaseModel):
+    change_id: str
+    confirmed: bool = True
+    comment: str | None = ""
+
+
+class ChangeCancelRequest(BaseModel):
+    change_id: str
+
+
+@router.post("/workflow/{project_id}/change")
+def submit_requirement_change(
+    project_id: str,
+    req: RequirementChangeRequest,
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+    manager: WorkflowManager = Depends(get_workflow_manager),
+) -> dict:
+    workspace_state = workspace_manager.load_project_json(project_id)
+    if workspace_state is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    analysis = manager.submit_requirement_change(project_id, req.description)
+    if hasattr(analysis, "model_dump"):
+        return analysis.model_dump(mode="json")
+    return dict(analysis)
+
+
+@router.post("/workflow/{project_id}/change/confirm")
+def confirm_requirement_change(
+    project_id: str,
+    req: ChangeConfirmRequest,
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+    manager: WorkflowManager = Depends(get_workflow_manager),
+) -> dict:
+    workspace_state = workspace_manager.load_project_json(project_id)
+    if workspace_state is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    return manager.apply_requirement_change(
+        project_id=project_id,
+        change_id=req.change_id,
+        confirmed=req.confirmed,
+        user_comment=req.comment or "",
+    )
+
+
+@router.post("/workflow/{project_id}/change/cancel")
+def cancel_requirement_change(
+    project_id: str,
+    req: ChangeCancelRequest,
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+    manager: WorkflowManager = Depends(get_workflow_manager),
+) -> dict:
+    workspace_state = workspace_manager.load_project_json(project_id)
+    if workspace_state is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    return manager.apply_requirement_change(
+        project_id=project_id,
+        change_id=req.change_id,
+        confirmed=False,
+    )
+
+
+@router.get("/workflow/{project_id}/changes")
+def list_requirement_changes(
+    project_id: str,
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+) -> dict:
+    workspace_state = workspace_manager.load_project_json(project_id)
+    if workspace_state is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    changes = workspace_state.get("requirement_changes", [])
+    return {
+        "project_id": project_id,
+        "changes": changes,
+    }
+

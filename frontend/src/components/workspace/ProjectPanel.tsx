@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import { RequirementChangePanel } from "@/components/changes/RequirementChangePanel"
 
 const STATUS_BADGE_VARIANT: Record<string, "success" | "warning" | "destructive" | "muted"> = {
   failed: "destructive",
@@ -24,6 +25,7 @@ interface ProjectPanelProps {
   onStopBuild: () => void
   onDeleteProject?: () => void
   onOpenDesignReview?: () => void
+  onChangeApplied?: () => void
   starting: boolean
   stopping: boolean
 }
@@ -35,6 +37,7 @@ export function ProjectPanel({
   onStopBuild,
   onDeleteProject,
   onOpenDesignReview,
+  onChangeApplied,
   starting,
   stopping,
 }: ProjectPanelProps) {
@@ -173,6 +176,22 @@ export function ProjectPanel({
           {STAGE_LABELS[status.failed_stage as keyof typeof STAGE_LABELS] ?? status.failed_stage} failed after retries.
           Resume Build to pick up.
         </p>
+      )}
+
+      {[
+        "sprint_in_progress",
+        "all_sprints_complete",
+        "sprint_complete",
+        "design_approved",
+        "change_requested",
+        "impact_analyzed",
+        "replanning",
+        "resuming_from_change",
+      ].includes((status?.state || project?.status || "").toLowerCase()) && !isRunning && (
+        <RequirementChangePanel
+          projectId={project.project_id}
+          onChangeApplied={onChangeApplied}
+        />
       )}
 
       <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>

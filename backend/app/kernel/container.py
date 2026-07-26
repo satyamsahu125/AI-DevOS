@@ -98,6 +98,8 @@ class Container:
             lambda: ProjectReader(self._dependencies.resolve("workspace_manager")),
         )
         self._dependencies.register_singleton("file_validator", FileValidator)
+        from ..events.broadcaster import broadcaster
+        self._dependencies.register_singleton("broadcaster", lambda: broadcaster)
         self._dependencies.register_singleton("event_log", ProjectEventLog)
         self._dependencies.register_singleton(
             "knowledge_memory",
@@ -117,9 +119,14 @@ class Container:
                 learning_loop=self._dependencies.resolve("learning_loop"),
             ),
         )
+        from ..llm.cost_tracker import CostTracker
+        self._dependencies.register_singleton("cost_tracker", lambda: CostTracker("backend/app/memory/costs.db"))
         self._dependencies.register_singleton(
             "llm_manager",
-            lambda: LLMManager(config_manager=self._dependencies.resolve("configuration_manager")),
+            lambda: LLMManager(
+                config_manager=self._dependencies.resolve("configuration_manager"),
+                cost_tracker=self._dependencies.resolve("cost_tracker"),
+            ),
         )
 
         # Singletons for Agents
@@ -169,12 +176,21 @@ class Container:
                 retry_policy=RetryPolicy(max_retries=settings.runtime.retry_limit),
                 event_log=self._dependencies.resolve("event_log"),
                 execution_state=self._dependencies.resolve("execution_state"),
+                broadcaster=self._dependencies.resolve("broadcaster"),
             ),
         )
         self._dependencies.register_singleton("agent_factory", AgentFactory)
         self._dependencies.register_singleton(
             "project_validator",
             lambda: ProjectValidator(workspace_manager=self._dependencies.resolve("workspace_manager")),
+        )
+        from ..workflow.impact_analyzer import ImpactAnalyzer
+        self._dependencies.register_singleton(
+            "impact_analyzer",
+            lambda: ImpactAnalyzer(
+                llm_manager=self._dependencies.resolve("llm_manager"),
+                artifact_manager=self._dependencies.resolve("artifact_manager"),
+            ),
         )
         self._dependencies.register_singleton(
             "workflow_manager",
@@ -184,6 +200,7 @@ class Container:
                 execution_state=self._dependencies.resolve("execution_state"),
                 agent_factory=self._dependencies.resolve("agent_factory"),
                 project_validator=self._dependencies.resolve("project_validator"),
+                impact_analyzer=self._dependencies.resolve("impact_analyzer"),
             ),
         )
         self._dependencies.register_singleton(
@@ -295,6 +312,14 @@ class Container:
     @property
     def project_writer(self) -> ProjectWriter:
         return self._project_writer
+
+    @property
+    def cost_tracker(self):
+        return self._dependencies.resolve("cost_tracker")
+
+    @property
+    def impact_analyzer(self):
+        return self._dependencies.resolve("impact_analyzer")
 
     @property
     def chat_router(self) -> ChatRouter:

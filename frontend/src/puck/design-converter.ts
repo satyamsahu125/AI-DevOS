@@ -62,9 +62,10 @@ function mapComponentToPuck(spec: ComponentSpec) {
   return {
     type: puckType,
     props: {
+      id: spec.component_id || spec.name || Math.random().toString(36).substring(2),
       ...spec.props,
     },
-  }
+  } as any
 }
 
 function buildTailwindFromProps(props: Record<string, any>): string {

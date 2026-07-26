@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from "react"
 import { Loader2, Code2, FileText, Terminal, BarChart3, Sparkles } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 
-import { api, type ProjectDetail } from "@/lib/api"
+import { api, type ProjectDetail, type LogEvent, type WorkflowStatus } from "@/lib/api"
 import { useWorkflowStatus } from "@/hooks/useWorkflowStatus"
 import { useProjectLogs } from "@/hooks/useProjectLogs"
 import { useProjectFiles } from "@/hooks/useProjectFiles"
+import { useProjectWebSocket, type WSMessage } from "@/hooks/useProjectWebSocket"
 import { useResizable } from "@/hooks/useResizable"
 import { Resizer } from "@/components/ui/resizer"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -20,7 +21,8 @@ import { ArtifactViewer } from "@/components/artifacts/ArtifactViewer"
 import { ApprovalPanel } from "@/components/approval/ApprovalPanel"
 import { BottomPanel } from "@/components/workspace/BottomPanel"
 import { DesignReviewModal } from "@/components/workspace/DesignReviewModal"
-
+import { LiveLogsPanel } from "@/components/workspace/LiveLogsPanel"
+import { MetricsPanel } from "@/components/metrics/MetricsPanel"
 
 interface ProjectWorkspaceProps {
   projectId: string
@@ -34,12 +36,148 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
   const [activeWorkbenchTab, setActiveWorkbenchTab] = useState("files")
 
   const navigate = useNavigate()
-
   const rightColumnWidth = useResizable({ axis: "width", initial: 480, min: 360, max: 720, storageKey: "aidevos:right-column-width" })
 
-  const { status } = useWorkflowStatus(projectId ?? null)
-  const logs = useProjectLogs(projectId ?? null)
-  const files = useProjectFiles(projectId ?? null)
+  const { status: initialStatus } = useWorkflowStatus(projectId ?? null)
+  const initialLogs = useProjectLogs(projectId ?? null)
+  const initialFiles = useProjectFiles(projectId ?? null)
+
+  const [pipelineState, setPipelineState] = useState({
+    state: "empty",
+    current_stage: null as string | null,
+    stages_completed: [] as string[],
+  })
+  const [liveLogs, setLiveLogs] = useState<string[]>([])
+  const [logEvents, setLogEvents] = useState<LogEvent[]>([])
+  const [liveFiles, setLiveFiles] = useState<{ backend: string[]; frontend: string[] }>({
+    backend: [],
+    frontend: [],
+  })
+
+  // Sync initial state once fetched
+  useEffect(() => {
+    if (initialStatus) {
+      setPipelineState({
+        state: initialStatus.state || "empty",
+        current_stage: initialStatus.current_stage || null,
+        stages_completed: initialStatus.completed_stages || [],
+      })
+    }
+  }, [initialStatus])
+
+  useEffect(() => {
+    if (initialLogs.length > 0 && logEvents.length === 0) {
+      setLogEvents(initialLogs)
+      setLiveLogs(initialLogs.map((l) => `[${l.stage}] ${l.message}`))
+    }
+  }, [initialLogs, logEvents.length])
+
+  useEffect(() => {
+    if (initialFiles.backend.length > 0 || initialFiles.frontend.length > 0) {
+      setLiveFiles(initialFiles)
+    }
+  }, [initialFiles])
+
+  const handleWSMessage = useCallback((msg: WSMessage) => {
+    switch (msg.type) {
+      case "status_update":
+        setPipelineState({
+          state: (msg.state as string) || "empty",
+          current_stage: (msg.current_stage as string) || null,
+          stages_completed: (msg.stages_completed as string[]) || [],
+        })
+        break
+
+      case "stage_started":
+        setLiveLogs((prev) => [...prev, `▶ ${msg.stage} started (attempt ${msg.attempt || 1})`])
+        setPipelineState((prev) => ({
+          ...prev,
+          current_stage: (msg.stage as string) || null,
+        }))
+        break
+
+      case "stage_complete":
+        setLiveLogs((prev) => [
+          ...prev,
+          `✓ ${msg.stage} approved on attempt ${msg.attempt || 1} (${msg.duration_seconds || 0}s)`,
+        ])
+        setPipelineState((prev) => ({
+          ...prev,
+          stages_completed: [...new Set([...prev.stages_completed, msg.stage as string])],
+        }))
+        break
+
+      case "stage_retry":
+        setLiveLogs((prev) => [
+          ...prev,
+          `↩ ${msg.stage} retrying (attempt ${msg.attempt}): ${String(msg.feedback || "").slice(0, 80)}`,
+        ])
+        break
+
+      case "stage_failed":
+        setLiveLogs((prev) => [...prev, `✗ ${msg.stage} failed: ${msg.reason}`])
+        break
+
+      case "log_line":
+        setLiveLogs((prev) => [...prev, msg.line || ""])
+        break
+
+      case "file_added": {
+        const filePath = String(msg.file_path || "")
+        setLiveLogs((prev) => [...prev, `📄 Generated: ${filePath}`])
+        setLiveFiles((prev) => {
+          if (filePath.startsWith("backend/")) {
+            const rel = filePath.replace("backend/", "")
+            if (!prev.backend.includes(rel)) return { ...prev, backend: [...prev.backend, rel] }
+          } else if (filePath.startsWith("frontend/")) {
+            const rel = filePath.replace("frontend/", "")
+            if (!prev.frontend.includes(rel)) return { ...prev, frontend: [...prev.frontend, rel] }
+          }
+          return prev
+        })
+        break
+      }
+
+      case "qa_question":
+        setLiveLogs((prev) => [...prev, `❓ Q&A: ${msg.question}`])
+        break
+
+      case "approval_needed":
+        setLiveLogs((prev) => [...prev, `⏸ Waiting for approval: ${msg.stage}`])
+        break
+
+      case "change_analyzed":
+        setLiveLogs((prev) => [
+          ...prev,
+          `🔍 Impact: ${(msg.affected_stages as string[])?.length || 0} stages affected`,
+        ])
+        break
+
+      case "pipeline_done":
+        setLiveLogs((prev) => [...prev, `🎉 Pipeline complete! ${msg.total_stages || 0} stages done`])
+        setPipelineState((prev) => ({
+          ...prev,
+          state: "done",
+          stages_completed: (msg.stages_completed as string[]) || prev.stages_completed,
+        }))
+        break
+    }
+
+    if (msg.message || msg.line) {
+      setLogEvents((prev) => [
+        ...prev,
+        {
+          id: Date.now() + Math.floor(Math.random() * 1000),
+          stage: String(msg.stage || "Pipeline"),
+          level: msg.type.includes("failed") ? "error" : msg.type.includes("retry") ? "warning" : "info",
+          message: String(msg.message || msg.line || ""),
+          created_at: String(msg.timestamp || new Date().toISOString()),
+        },
+      ])
+    }
+  }, [])
+
+  const { connected } = useProjectWebSocket(projectId, handleWSMessage)
 
   const refreshProject = useCallback(() => {
     if (!projectId) return
@@ -50,16 +188,10 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
     refreshProject()
   }, [refreshProject])
 
+  // Automatically open Human Action popup modal if backend requires user action
   useEffect(() => {
-    refreshProject()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status?.status, status?.completed_stages.length, files.backend.length, files.frontend.length])
-
-  // Automatically open Human Action popup modal if the backend is waiting on user action
-  useEffect(() => {
-    const st = status?.state ? String(status.state).toLowerCase() : ""
+    const st = pipelineState.state.toLowerCase()
     if (
-      status?.requires_user_action ||
       st === "design_review_pending" ||
       st.includes("design_review") ||
       st === "design_ready" ||
@@ -68,7 +200,7 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
     ) {
       setDesignReviewOpen(true)
     }
-  }, [status?.requires_user_action, status?.state])
+  }, [pipelineState.state])
 
   async function handleStartBuild(requestText: string) {
     if (!projectId) return
@@ -107,26 +239,57 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
     )
   }
 
+  const effectiveStatus: WorkflowStatus = {
+    project_id: projectId,
+    state: pipelineState.state,
+    current_stage: pipelineState.current_stage,
+    completed_stages: pipelineState.stages_completed,
+    failed_stage: initialStatus?.failed_stage || null,
+    total_stages: 14,
+    progress_percent: Math.round((100 * pipelineState.stages_completed.length) / 14),
+    status:
+      pipelineState.state === "done" || pipelineState.state === "deployable"
+        ? "complete"
+        : pipelineState.state === "failed"
+        ? "failed"
+        : pipelineState.current_stage
+        ? "running"
+        : "not_started",
+    requires_user_action: ["design_review_pending", "qa_pending"].includes(pipelineState.state),
+  }
+
   const isHumanActionRequired = Boolean(
-    status?.requires_user_action ||
-    status?.state?.toLowerCase().includes("design_review") ||
-    status?.state?.toLowerCase() === "design_ready" ||
-    status?.state?.toLowerCase() === "awaiting_human" ||
-    status?.state?.toLowerCase() === "human_action_required"
+    effectiveStatus.requires_user_action ||
+    pipelineState.state.toLowerCase().includes("design_review") ||
+    pipelineState.state.toLowerCase() === "design_ready" ||
+    pipelineState.state.toLowerCase() === "awaiting_human" ||
+    pipelineState.state.toLowerCase() === "human_action_required"
   )
 
   const isAwaitingHumanApproval = Boolean(
-    status?.state?.toLowerCase() === "awaiting_human_approval" ||
-    status?.state?.toLowerCase() === "awaiting_human"
+    pipelineState.state.toLowerCase() === "awaiting_human_approval" ||
+    pipelineState.state.toLowerCase() === "awaiting_human"
   )
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-slate-950/60 backdrop-blur-3xl">
       {/* Top Pipeline Bar */}
-      <WorkflowPanel
-        status={status}
-        onOpenDesignReview={() => setDesignReviewOpen(true)}
-      />
+      <div className="relative flex items-center justify-between border-b border-white/10 bg-slate-950/80 px-4 py-2">
+        <WorkflowPanel
+          status={effectiveStatus}
+          onOpenDesignReview={() => setDesignReviewOpen(true)}
+        />
+        {/* WebSocket Connection Status Indicator */}
+        <div className="absolute right-4 top-3 flex items-center gap-2 text-[11px] text-white/40">
+          <div
+            className={`w-2 h-2 rounded-full flex-shrink-0 ${
+              connected ? "bg-emerald-400 animate-pulse" : "bg-rose-400"
+            }`}
+            title={connected ? "WebSocket Connected" : "WebSocket Disconnected"}
+          />
+          <span className="hidden sm:inline font-mono">{connected ? "Live" : "Offline"}</span>
+        </div>
+      </div>
 
       {/* Human Action Required Alert Banner */}
       {isHumanActionRequired && (
@@ -149,16 +312,16 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
       <div className="flex flex-1 overflow-hidden">
         {/* Center: Conversational AI Prompt Workspace / Interactive Q&A / Approval Panel */}
         <div className="min-w-0 flex-1 overflow-hidden flex flex-col">
-          {status?.state === "qa_pending" || status?.state === "qa_in_progress" ? (
+          {pipelineState.state === "qa_pending" || pipelineState.state === "qa_in_progress" ? (
             <QAPanel projectId={projectId} onComplete={refreshProject} />
           ) : isAwaitingHumanApproval ? (
             <ApprovalPanel
               projectId={projectId}
-              stage={status?.current_stage || "architect"}
+              stage={pipelineState.current_stage || "architect"}
               onDecision={() => refreshProject()}
             />
           ) : (
-            <ChatPanel logs={logs} projectId={projectId} onRetryStage={handleRetryStage} onSendMessage={handleStartBuild} />
+            <ChatPanel logs={logEvents} projectId={projectId} onRetryStage={handleRetryStage} onSendMessage={handleStartBuild} />
           )}
         </div>
 
@@ -187,31 +350,37 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
 
             {/* Files & Code Tab */}
             <TabsContent value="files" className="flex-1 overflow-hidden m-0">
-              <FileExplorer projectId={projectId} files={files} />
+              <FileExplorer projectId={projectId} files={liveFiles} />
             </TabsContent>
 
             {/* Live Output Console Tab */}
             <TabsContent value="console" className="flex-1 overflow-hidden m-0">
-              <BottomPanel projectId={projectId} logs={logs} artifacts={project.artifacts} />
+              {liveLogs.length > 0 ? (
+                <LiveLogsPanel logs={liveLogs} />
+              ) : (
+                <BottomPanel projectId={projectId} logs={logEvents} artifacts={project.artifacts} />
+              )}
             </TabsContent>
 
             {/* Artifact Specs Tab */}
             <TabsContent value="artifacts" className="flex-1 overflow-hidden m-0">
               <ArtifactViewer
                 projectId={projectId}
-                stagesCompleted={status?.completed_stages || project?.stages_completed || []}
+                stagesCompleted={pipelineState.stages_completed}
               />
             </TabsContent>
 
             {/* Metrics & Controls Tab */}
-            <TabsContent value="settings" className="flex-1 overflow-y-auto m-0 p-2">
+            <TabsContent value="settings" className="flex-1 overflow-y-auto m-0 p-2 space-y-4">
+              <MetricsPanel projectId={projectId} />
               <ProjectPanel
                 project={project}
-                status={status}
+                status={effectiveStatus}
                 onStartBuild={handleStartBuild}
                 onStopBuild={handleStopBuild}
                 onDeleteProject={handleProjectDeleted}
                 onOpenDesignReview={() => setDesignReviewOpen(true)}
+                onChangeApplied={refreshProject}
                 starting={starting}
                 stopping={stopping}
               />

@@ -1,17 +1,20 @@
 import { motion, AnimatePresence } from "framer-motion"
-import { CheckCircle2, Loader2, Circle, XCircle, ChevronDown } from "lucide-react"
-import { useState } from "react"
+import { CheckCircle2, Loader2, Circle, XCircle, ChevronDown, RefreshCw, AlertCircle } from "lucide-react"
+import { useEffect, useState } from "react"
 
 export interface PipelineStage {
   name: string
   label: string
   status: "complete" | "processing" | "pending" | "failed" | string
   attempt?: number
+  startedAt?: number
+  reviewerFeedback?: string
 }
 
 interface PipelineViewProps {
   pipeline: PipelineStage[]
   agentLogs?: Record<string, string[]>
+  onRetryStage?: (stage: string) => void
 }
 
 const stageIcons: Record<string, { icon: any; color: string; bg: string; spin?: boolean }> = {
@@ -21,8 +24,23 @@ const stageIcons: Record<string, { icon: any; color: string; bg: string; spin?: 
   failed: { icon: XCircle, color: "text-rose-400", bg: "bg-rose-500/10 border-rose-500/30" },
 }
 
-export function PipelineView({ pipeline, agentLogs = {} }: PipelineViewProps) {
+export function PipelineView({ pipeline, agentLogs = {}, onRetryStage }: PipelineViewProps) {
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [elapsedMap, setElapsedMap] = useState<Record<string, number>>({})
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now()
+      const nextMap: Record<string, number> = {}
+      for (const stage of pipeline) {
+        if (stage.status === "processing" && stage.startedAt) {
+          nextMap[stage.name] = Math.floor((now - stage.startedAt) / 1000)
+        }
+      }
+      setElapsedMap(nextMap)
+    }, 5000)
+    return () => clearInterval(timer)
+  }, [pipeline])
 
   return (
     <div className="space-y-3 p-4">
@@ -31,6 +49,7 @@ export function PipelineView({ pipeline, agentLogs = {} }: PipelineViewProps) {
         const Icon = config.icon
         const isExpanded = expanded === stage.name
         const logs = agentLogs[stage.name] || []
+        const elapsed = elapsedMap[stage.name] || 0
 
         return (
           <motion.div
@@ -39,7 +58,11 @@ export function PipelineView({ pipeline, agentLogs = {} }: PipelineViewProps) {
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: idx * 0.05 }}
             className={`glass-card overflow-hidden transition-all duration-300 ${
-              stage.status === "processing" ? "aurora-border" : ""
+              stage.status === "processing"
+                ? "aurora-border"
+                : stage.status === "failed"
+                ? "border-rose-500/40 bg-rose-500/5"
+                : ""
             }`}
           >
             {/* Stage header */}
@@ -54,17 +77,54 @@ export function PipelineView({ pipeline, agentLogs = {} }: PipelineViewProps) {
 
               {/* Stage info */}
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-sm text-white/90">{stage.label}</span>
-                  {stage.status === "complete" && (
-                    <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} className="text-xs text-emerald-400/60">
-                      ✓ approved on attempt {stage.attempt || 1}
-                    </motion.span>
-                  )}
-                  {stage.status === "processing" && (
-                    <span className="text-xs text-cyan-400/60 animate-pulse">generating...</span>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-sm text-white/90">{stage.label}</span>
+                    {stage.status === "complete" && (
+                      <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} className="text-xs text-emerald-400/60">
+                        ✓ approved on attempt {stage.attempt || 1}
+                      </motion.span>
+                    )}
+                    {stage.status === "processing" && (
+                      <span className="text-xs text-cyan-400/60 animate-pulse">generating...</span>
+                    )}
+                  </div>
+
+                  {/* FIX-DEMO-005: Retry Stage button on failure */}
+                  {stage.status === "failed" && onRetryStage && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onRetryStage(stage.name)
+                      }}
+                      className="px-2.5 py-1 rounded-md bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <RefreshCw size={12} /> Retry Stage
+                    </button>
                   )}
                 </div>
+
+                {/* FIX-DEMO-003: Timeout guidance messages */}
+                {stage.status === "processing" && (
+                  <div className="mt-1">
+                    {elapsed > 120 ? (
+                      <p className="text-[11px] text-amber-300/80 flex items-center gap-1 font-mono">
+                        <AlertCircle size={11} /> Taking longer than usual — local models may be slow
+                      </p>
+                    ) : elapsed > 60 ? (
+                      <p className="text-[11px] text-cyan-300/80 flex items-center gap-1 font-mono">
+                        <Loader2 size={11} className="animate-spin" /> Still generating... this stage is complex
+                      </p>
+                    ) : null}
+                  </div>
+                )}
+
+                {/* FIX-DEMO-005: Failure detail */}
+                {stage.status === "failed" && stage.reviewerFeedback && (
+                  <p className="mt-1 text-xs text-rose-300/80 line-clamp-2">
+                    Reviewer feedback: {stage.reviewerFeedback}
+                  </p>
+                )}
               </div>
 
               {/* Expand chevron */}
@@ -99,28 +159,6 @@ export function PipelineView({ pipeline, agentLogs = {} }: PipelineViewProps) {
                           <span className="text-white/50 font-mono">{log}</span>
                         </motion.div>
                       ))}
-                      {stage.status === "processing" && (
-                        <div className="flex items-center gap-2 text-xs mt-2">
-                          <span className="text-white/20">›</span>
-                          <span className="text-cyan-400/70 font-mono animate-pulse">
-                            generating with AI model...
-                          </span>
-                          <div className="flex gap-1">
-                            {[0, 1, 2].map((i) => (
-                              <motion.div
-                                key={i}
-                                animate={{ opacity: [0.3, 1, 0.3] }}
-                                transition={{
-                                  duration: 1,
-                                  repeat: Infinity,
-                                  delay: i * 0.2,
-                                }}
-                                className="w-1 h-1 rounded-full bg-cyan-400"
-                              />
-                            ))}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   </div>
                 </motion.div>

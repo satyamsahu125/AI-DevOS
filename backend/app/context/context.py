@@ -25,6 +25,7 @@ class AgentContext:
     past_patterns: list[str] = field(default_factory=list)
     agent_performance: dict[str, Any] = field(default_factory=dict)
     lessons: list[str] = field(default_factory=list)
+    additional_context: str = ""
 
 
 class ContextManager:
@@ -43,11 +44,17 @@ class ContextManager:
         memory_manager: MemoryManager | None = None,
         learning_loop: LearningLoop | None = None,
         lesson_store: LessonStore | None = None,
+        workspace_manager: Any | None = None,
     ) -> None:
         """Wire the MemoryManager, LearningLoop, and LessonStore used to load context."""
         self.memory_manager = memory_manager or MemoryManager()
         self.learning_loop = learning_loop or LearningLoop()
         self.lesson_store = lesson_store or LessonStore()
+        if workspace_manager is not None:
+            self.workspace = workspace_manager
+        else:
+            from ..workspace.manager import WorkspaceManager
+            self.workspace = WorkspaceManager()
 
     def build(self, request: str, **kwargs: Any) -> dict[str, Any]:
         """Build a raw context dict (kept for existing callers of the documented interface)."""
@@ -78,6 +85,23 @@ class ContextManager:
         if review_entry:
             memory_entries.append(review_entry)
 
+        pj = self.workspace.load_project_json(project_id) or {}
+        project_name = pj.get("name") or pj.get("title") or project_id
+        changes = pj.get("requirement_changes", [])
+
+        change_context = ""
+        if changes:
+            recent = changes[-3:]  # last 3 changes
+            change_context = "\n\nREQUIREMENT CHANGES APPLIED:\n"
+            for c in recent:
+                change_context += (
+                    f"  - {c.get('description', '')}"
+                    + (f" (context: {c['comment']})" if c.get("comment") else "")
+                    + "\n"
+                )
+            change_context += "Incorporate these changes in your output."
+            memory_entries.append(change_context)
+
         logger.debug("context memory loaded: project_id=%s entries=%s", project_id, len(memory_entries))
 
         resolved_task = task or stage_name
@@ -90,13 +114,14 @@ class ContextManager:
         logger.debug("lesson store loaded: stage=%s project_id=%s lessons=%s", stage_name, project_id, len(lesson_summaries))
 
         return AgentContext(
-            project_name=project_id,
+            project_name=project_name,
             agent_name=stage_name,
             task=resolved_task,
             memory=memory_entries,
             past_patterns=patterns,
             agent_performance=performance,
             lessons=lesson_summaries,
+            additional_context=change_context,
         )
 
 

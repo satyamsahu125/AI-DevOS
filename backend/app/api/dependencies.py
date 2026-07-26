@@ -70,3 +70,7 @@ def get_project_validator(container: Container = Depends(get_container)) -> Proj
 
 def get_chat_router(container: Container = Depends(get_container)) -> ChatRouter:
     return container.chat_router
+
+
+def get_cost_tracker(container: Container = Depends(get_container)):
+    return container.cost_tracker

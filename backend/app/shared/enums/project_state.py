@@ -22,7 +22,12 @@ class ProjectState(str, Enum):
     SPRINT_COMPLETE         = "sprint_complete"
     ALL_SPRINTS_COMPLETE    = "all_sprints_complete"
     AWAITING_HUMAN_APPROVAL = "awaiting_human_approval"
+    CHANGE_REQUESTED     = "change_requested"
+    IMPACT_ANALYZED      = "impact_analyzed"
+    REPLANNING           = "replanning"
+    RESUMING_FROM_CHANGE = "resuming_from_change"
     DEPLOYABLE              = "deployable"
     DONE                    = "done"
     FAILED                  = "failed"
     PAUSED                  = "paused"
+

@@ -58,7 +58,18 @@ class ProjectFileManager:
             raise SafetyException(decision.reason)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        return WrittenFile(path=safe_relative_path, absolute_path=target, bytes_written=len(content.encode("utf-8")))
+        bytes_count = len(content.encode("utf-8"))
+        try:
+            from ..events.broadcaster import broadcaster
+            broadcaster.file_added(
+                project_id=project_id,
+                file_path=f"{area}/{safe_relative_path}",
+                stage=area,
+                size_bytes=bytes_count,
+            )
+        except Exception:
+            pass
+        return WrittenFile(path=safe_relative_path, absolute_path=target, bytes_written=bytes_count)
 
     @staticmethod
     def _sanitize_relative_path(relative_path: str) -> str:

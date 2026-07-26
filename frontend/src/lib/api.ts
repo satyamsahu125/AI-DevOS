@@ -353,6 +353,23 @@ export const api = {
     }),
   completeQASession: (projectId: string) =>
     request<{ status: string; message: string }>(`/workflow/${projectId}/qa/complete`, { method: "POST" }),
+  submitRequirementChange: (projectId: string, description: string) =>
+    request<Record<string, unknown>>(`/workflow/${projectId}/change`, {
+      method: "POST",
+      body: JSON.stringify({ description }),
+    }),
+  confirmRequirementChange: (projectId: string, change_id: string, confirmed = true, comment = "") =>
+    request<Record<string, unknown>>(`/workflow/${projectId}/change/confirm`, {
+      method: "POST",
+      body: JSON.stringify({ change_id, confirmed, comment }),
+    }),
+  cancelRequirementChange: (projectId: string, change_id: string) =>
+    request<Record<string, unknown>>(`/workflow/${projectId}/change/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ change_id }),
+    }),
+  listRequirementChanges: (projectId: string) =>
+    request<{ project_id: string; changes: Record<string, unknown>[] }>(`/workflow/${projectId}/changes`),
 }
 
 

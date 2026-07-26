@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react"
 
 import { api, type LogEvent } from "@/lib/api"
 
-/** Polls GET /projects/{projectId}/logs, tailing from the last-seen event id (since_id). */
-export function useProjectLogs(projectId: string | null, intervalMs = 2500) {
+/** Fetches initial GET /projects/{projectId}/logs without periodic polling. */
+export function useProjectLogs(projectId: string | null) {
   const [events, setEvents] = useState<LogEvent[]>([])
   const sinceId = useRef(0)
 
@@ -13,25 +13,23 @@ export function useProjectLogs(projectId: string | null, intervalMs = 2500) {
     sinceId.current = 0
     setEvents([])
 
-    async function poll() {
+    async function fetchLogs() {
       try {
         const next = await api.getLogs(projectId!, sinceId.current)
         if (next.length && !cancelled) {
           sinceId.current = next[next.length - 1].id
-          setEvents((prev) => [...prev, ...next])
+          setEvents(next)
         }
       } catch {
-        // transient network hiccups shouldn't blow away the existing feed
+        // ignore network error
       }
     }
 
-    poll()
-    const timer = setInterval(poll, intervalMs)
+    fetchLogs()
     return () => {
       cancelled = true
-      clearInterval(timer)
     }
-  }, [projectId, intervalMs])
+  }, [projectId])
 
   return events
 }

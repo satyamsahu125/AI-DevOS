@@ -220,7 +220,7 @@ export function ArtifactViewer({ projectId, stagesCompleted = [] }: ArtifactView
           <div className="flex flex-col items-center justify-center h-40 text-center">
             <FileText size={28} className="text-white/15 mb-3" />
             <p className="text-sm text-white/40">
-              Select a completed stage to view its artifact
+              Complete stages to view their artifacts
             </p>
           </div>
         )}

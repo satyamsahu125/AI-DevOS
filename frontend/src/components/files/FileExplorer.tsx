@@ -58,8 +58,6 @@ export function FileExplorer({ projectId }: FileExplorerProps) {
 
   useEffect(() => {
     fetchFiles()
-    const interval = setInterval(fetchFiles, 4000)
-    return () => clearInterval(interval)
   }, [fetchFiles])
 
   const loadFileContent = async (filePath: string) => {
@@ -136,7 +134,7 @@ export function FileExplorer({ projectId }: FileExplorerProps) {
             <div className="text-center py-12 px-2">
               <FileCode size={24} className="text-white/15 mx-auto mb-2" />
               <p className="text-xs text-white/40 leading-relaxed">
-                Files appear here as<br />agents generate them
+                Backend and Frontend stages<br />will generate files here
               </p>
             </div>
           ) : (

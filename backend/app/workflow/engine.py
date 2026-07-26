@@ -91,6 +91,7 @@ class WorkflowEngine:
         retry_policy: RetryPolicy | None = None,
         event_log: ProjectEventLog | None = None,
         execution_state: ExecutionStateRegistry | None = None,
+        broadcaster: Any | None = None,
     ) -> None:
         """Wire up the collaborators needed to run a single workflow stage."""
         self.dependency = WorkflowDependency("ProductOwner")
@@ -108,6 +109,11 @@ class WorkflowEngine:
         self.lesson_store = lesson_store or LessonStore()
         self.event_log = event_log or ProjectEventLog()
         self.execution_state = execution_state or ExecutionStateRegistry()
+        if broadcaster is not None:
+            self.broadcaster = broadcaster
+        else:
+            from ..events.broadcaster import broadcaster as default_broadcaster
+            self.broadcaster = default_broadcaster
         self._llm_model = ConfigurationManager().load().llm.model
         self._report_incomplete_sessions()
 
@@ -146,12 +152,16 @@ class WorkflowEngine:
         base_content = self._with_relevant_patterns(base_content, stage_name, content, project_id)
         base_content = self._with_design_context(project_id, base_content, stage_name)
 
+        if hasattr(self.execution_manager, "llm_manager") and self.execution_manager.llm_manager:
+            self.execution_manager.llm_manager.set_context(project_id, stage_name)
+
         attempt = 0
         review_result = None
         reviewer_feedback = ""
         failed_approaches: list[str] = []
         last_artifact_summary = ""
         last_error = ""
+        stage_start_time = datetime.now(timezone.utc)
         while self.retry_policy.should_retry(attempt):
             if self.execution_state.is_stop_requested(project_id):
                 logger.info("workflow stage stopped by user: stage=%s attempt=%s", stage_name, attempt)
@@ -159,7 +169,9 @@ class WorkflowEngine:
                 self.session_manager.close_session(session)
                 return WorkflowResult(workflow=workflow, success=False, message="Stopped by user", stopped=True)
             logger.info("workflow stage attempt: stage=%s attempt=%s", stage_name, attempt)
+            self.broadcaster.stage_started(project_id, stage_name, attempt + 1)
             self.event_log.record(project_id, stage_name, f"Attempt {attempt + 1}: generating with the AI model...")
+            self.broadcaster.log_line(project_id, stage_name, f"Attempt {attempt + 1}: generating with the AI model...")
             effective_content = base_content if attempt == 0 else self._build_retry_content(base_content, reviewer_feedback, attempt)
             self._save_checkpoint(session.session_id, stage_name, project_id, attempt, failed_approaches, last_artifact_summary)
             try:
@@ -170,15 +182,6 @@ class WorkflowEngine:
                 review_result = self.reviewer.review(artifact, previous_content=previous_content)
                 self._record_trajectory(stage_name, content, artifact, attempt, review_result, project_id)
             except Exception as exc:
-                # An agent/provider failure (unreachable or misconfigured LLM, a
-                # timeout, a bad model id) used to propagate straight out of this
-                # loop. That skipped every remaining step: no retry despite
-                # RetryPolicy, no failure recorded to project.json, the session
-                # never closed and its checkpoint never deleted, and -- worst for
-                # the operator -- no event logged, so the live log simply stopped
-                # after "generating with the AI model..." with no reason given.
-                # Treat it as a failed attempt instead: log why, then let
-                # RetryPolicy decide whether to try again.
                 last_error = f"{type(exc).__name__}: {exc}"
                 logger.exception("workflow stage attempt raised: stage=%s attempt=%s", stage_name, attempt)
                 self.event_log.record(
@@ -186,6 +189,7 @@ class WorkflowEngine:
                     f"Attempt {attempt + 1} failed: {last_error}",
                     level="error",
                 )
+                self.broadcaster.stage_retry(project_id, stage_name, attempt + 2, last_error)
                 failed_approaches.append(last_error)
                 session.state = SessionState.Rejected
                 self.session_manager.increment_retry(session)
@@ -195,6 +199,8 @@ class WorkflowEngine:
             if review_result.approved:
                 logger.info("workflow stage approved: stage=%s attempt=%s", stage_name, attempt)
                 self.event_log.record(project_id, stage_name, f"{stage_name} approved on attempt {attempt + 1}")
+                duration_sec = (datetime.now(timezone.utc) - stage_start_time).total_seconds()
+                self.broadcaster.stage_complete(project_id, stage_name, attempt + 1, duration_sec)
                 workflow.state = self.transition.transition(WorkflowState.Approved)
                 self.state_machine.approve()
                 self.state_machine.complete()
@@ -214,6 +220,7 @@ class WorkflowEngine:
                 stage_name, attempt, reviewer_feedback,
             )
             self.event_log.record(project_id, stage_name, f"Attempt {attempt + 1} rejected: {review_result.overall_feedback}", level="warning")
+            self.broadcaster.stage_retry(project_id, stage_name, attempt + 2, reviewer_feedback)
             failed_approaches.append(reviewer_feedback)
             session.state = SessionState.Rejected
             self.session_manager.increment_retry(session)
@@ -221,6 +228,7 @@ class WorkflowEngine:
 
         logger.error("workflow stage exhausted retries: stage=%s attempts=%s", stage_name, attempt)
         self.event_log.record(project_id, stage_name, f"{stage_name} failed after {attempt} attempt(s)", level="error")
+        self.broadcaster.stage_failed(project_id, stage_name, f"Exhausted retries ({attempt} attempts)")
         workflow.state = self.transition.transition(WorkflowState.Failed)
         self.state_machine.fail()
         self.session_manager.close_session(session)

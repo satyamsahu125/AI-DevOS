@@ -1,18 +1,17 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 
 import { api, type WorkflowStatus } from "@/lib/api"
 
-/** Polls GET /workflow/{projectId} every few seconds while the pipeline is running. */
-export function useWorkflowStatus(projectId: string | null, intervalMs = 3000) {
+/** Fetches GET /workflow/{projectId} initial status without periodic polling. */
+export function useWorkflowStatus(projectId: string | null) {
   const [status, setStatus] = useState<WorkflowStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (!projectId) return
     let cancelled = false
 
-    async function poll() {
+    async function fetchStatus() {
       try {
         const next = await api.getWorkflowStatus(projectId!)
         if (!cancelled) {
@@ -24,13 +23,11 @@ export function useWorkflowStatus(projectId: string | null, intervalMs = 3000) {
       }
     }
 
-    poll()
-    timer.current = setInterval(poll, intervalMs)
+    fetchStatus()
     return () => {
       cancelled = true
-      if (timer.current) clearInterval(timer.current)
     }
-  }, [projectId, intervalMs])
+  }, [projectId])
 
   return { status, error }
 }

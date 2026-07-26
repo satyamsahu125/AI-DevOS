@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 
 from .api.exception_handler import application_exception_handler
 from .api.router import api_router
@@ -23,6 +23,14 @@ def create_application() -> FastAPI:
     app = FastAPI(lifespan=lifespan)
     app.include_router(api_router)
     app.add_exception_handler(ApplicationException, application_exception_handler)
+
+    @app.get("/ready")
+    def top_ready(response: Response):
+        from .api.health import ready
+        from .api.dependencies import get_llm_manager, get_memory_manager, get_container
+        c = get_container()
+        return ready(response, llm_manager=c.llm_manager, memory_manager=c.memory_manager)
+
     return app
 
 

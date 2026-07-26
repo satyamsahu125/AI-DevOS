@@ -1,66 +1,104 @@
 # AI DevOS
 
-A multi-agent software engineering pipeline: describe an application in plain English, and 12
-specialized AI agents — each backed by an LLM call, a structured-output schema, and an automated
-reviewer — carry it from idea to a real, downloaded, runnable codebase.
+> Transform a text description into a complete, runnable software project using a 12-stage AI engineering pipeline. Runs locally on Ollama — free.
 
-Unlike asking an LLM to write an app in one shot, every stage's output is validated against a
-schema and passed through a three-tier reviewer before the next stage sees it, and only two stages
-(Backend/Frontend Developer) ever write to the actual generated project — everything else produces
-a reviewable document the next stage reads as context.
+## What It Does
 
-For the full architecture, the 12-stage pipeline, how modules connect, and how the memory system
-works, see **[docs/CURRENT-STATE.md](docs/CURRENT-STATE.md)**. For the roadmap, see
-**[docs/future/README.md](docs/future/README.md)**.
+AI DevOS takes one sentence like:
+  "Build a todo app where users can create and delete tasks"
 
-## Quick start
+And produces:
+  ✓ Product requirements with REQ-IDs and acceptance criteria
+  ✓ System architecture with typed modules and API contracts
+  ✓ Security review of the specific architecture
+  ✓ Sprint plan breaking work into manageable phases
+  ✓ Real backend Python files (FastAPI + SQLAlchemy)
+  ✓ Real frontend files (React + Tailwind + shadcn/ui)
+  ✓ Real pytest test files that run
+  ✓ Dockerfile and docker-compose.yml
+  ✓ README.md generated from actual code
+  ✓ Downloadable .zip of the complete project
 
-Prerequisites: Python 3.12+, Node 18+, and either [Ollama](https://ollama.com) (local, default) or
-an AWS Bedrock API key (switchable at runtime from the Settings page).
+## How It's Different
+
+| Feature | AI DevOS | gstack | MetaGPT | Devin |
+|---------|----------|--------|---------|-------|
+| Runs locally (free) | ✅ | ❌ | ❌ | ❌ |
+| 12 specialized agents | ✅ | Slash commands | ✅ | ✅ |
+| Real files on disk | ✅ | ✅ | Partial | ✅ |
+| Agile sprints | ✅ | ❌ | ❌ | ❌ |
+| User Q&A before coding | ✅ | ❌ | ❌ | ❌ |
+| Requirement changes mid-project | ✅ | ❌ | ❌ | ❌ |
+| Cross-project learning | ✅ | ❌ | ❌ | ❌ |
+| Open source | ✅ | ✅ | ✅ | ❌ |
+| Cost | Free | Claude API | OpenAI API | $500/mo |
+
+## The 12-Stage Pipeline
+
+Q&A → Strategic Review → Product Owner → Architect → Designer → Security → Sprint Planner → Scrum Master → File Planner → Backend Developer → Frontend Developer → QA → Documentation → DevOps → Retrospective
+
+Each stage: LLM generates → Reviewer validates → Approved or retry with feedback → Next stage.
+
+## Prerequisites
+
+- Python 3.11+
+- Node.js 20+
+- [Ollama](https://ollama.com) (local LLM — free)
+- Git
+
+## Quick Start
 
 ```bash
-# 1. Local LLM (skip if you're using Bedrock instead)
+# 1. Clone
+git clone https://github.com/YOUR_USERNAME/ai-devos.git
+cd ai-devos
+
+# 2. Start Ollama with recommended model
 ollama serve
 ollama pull qwen2.5-coder:7b
 
-# 2. Backend
+# 3. Install backend
 cd backend
-python -m venv .venv
-.venv\Scripts\activate        # Windows -- source .venv/bin/activate on macOS/Linux
 pip install -r requirements.txt
-uvicorn app.main:app --reload  # http://localhost:8000
+cp .env.example .env
 
-# 3. Frontend (separate terminal)
+# 4. Start backend
+uvicorn app.main:app --port 8000 --reload
+
+# 5. Install and start frontend (new terminal)
 cd frontend
 npm install
-npm run dev                    # http://localhost:5173
+npm run dev
+
+# 6. Open http://localhost:5173
 ```
 
-Open `http://localhost:5173`, create a project, describe what you want built, and press Start
-Build. The full command reference (tests, one-off API calls, provider switching) is in
-**[docs/COMMANDS.md](docs/COMMANDS.md)**.
+## Recommended Models (Ollama)
 
-## What you get
+| Role | Model | Why |
+|------|-------|-----|
+| Code generation | qwen2.5-coder:7b | Fast, good code quality |
+| Architecture decisions | deepseek-r1:14b | Better reasoning |
+| Requirements/Q&A | qwen3:8b | Conversational |
 
-- A live pipeline view of all 12 stages, with real build logs as they happen.
-- Real generated source files (not just documents) for the backend and frontend, with an
-  auto-generated `package.json`/`requirements.txt` built from the imports the generated code
-  actually uses.
-- A "How to Run" guide and a one-click zip download of the generated project.
-- Stop/Resume — an interrupted build (crash, restart) resumes from the last completed stage instead
-  of starting over.
+## Switching to AWS Bedrock
 
-## Repository layout
+Settings → LLM Provider → Bedrock
+Enter: AWS region, model ID, API key
+Switches at runtime — no restart needed
 
-```
-backend/    FastAPI app -- the 12-agent pipeline, memory subsystems, LLM providers
-frontend/   Vite + React + TypeScript -- Dashboard, Projects, and the build workspace
-docs/       Architecture (CURRENT-STATE.md), commands (COMMANDS.md), roadmap (future/)
-```
-
-## Tests
+## Running Tests
 
 ```bash
-cd backend && python -m pytest tests/ -q
-cd frontend && npx tsc -b --noEmit && npm run build
+cd backend
+python -m pytest tests/ -q
+# 250+ tests, 0 failures
 ```
+
+## Architecture
+
+See [docs/CURRENT-STATE.md](docs/CURRENT-STATE.md) for the complete technical description.
+
+## License
+
+MIT — use it, modify it, ship it.

@@ -43,6 +43,7 @@ class WorkflowManager:
         execution_state: ExecutionStateRegistry | None = None,
         agent_factory: AgentFactory | None = None,
         project_validator: ProjectValidator | None = None,
+        impact_analyzer: Any | None = None,
     ) -> None:
         """Wire the engine, workspace_manager, execution_state registry, agent_factory, and project_validator."""
         self.engine = engine or WorkflowEngine()
@@ -57,6 +58,18 @@ class WorkflowManager:
         self.artifact_manager = getattr(self.engine, "artifact_manager", None) or ArtifactManager(
             workspace_manager=self.workspace_manager
         )
+        if impact_analyzer is not None:
+            self.impact_analyzer = impact_analyzer
+        else:
+            from .impact_analyzer import ImpactAnalyzer
+            self.impact_analyzer = ImpactAnalyzer(
+                llm_manager=getattr(self.engine, "llm_manager", None),
+                artifact_manager=self.artifact_manager,
+            )
+        self.broadcaster = getattr(self.engine, "broadcaster", None)
+        if self.broadcaster is None:
+            from ..events.broadcaster import broadcaster as default_broadcaster
+            self.broadcaster = default_broadcaster
 
     def _get_agent(self, stage_name: str) -> BaseAgent:
         """Resolve agent via factory — never instantiate directly."""
@@ -311,6 +324,25 @@ class WorkflowManager:
                     return self._fail(project_id, "Retro", result_retro)
                 self._transition(project_id, ProjectState.DEPLOYABLE)
 
+            elif state == ProjectState.RESUMING_FROM_CHANGE:
+                from datetime import datetime, timezone
+                pj = self.workspace.load_project_json(project_id) or {}
+                changes = pj.get("requirement_changes", [])
+                last_change = changes[-1] if changes else None
+
+                enriched_request = request
+                if last_change:
+                    enriched_request = (
+                        f"{request}\n\n"
+                        f"REQUIREMENT CHANGE APPLIED:\n"
+                        f"{last_change.get('description', '')}\n"
+                        + (f"Additional context: {last_change.get('comment')}"
+                           if last_change.get('comment') else "")
+                    )
+                    request = enriched_request
+
+                self._transition(project_id, ProjectState.SPRINT_IN_PROGRESS)
+
             elif state in [
                 ProjectState.DEPLOYABLE,
                 ProjectState.DONE,
@@ -327,10 +359,121 @@ class WorkflowManager:
                     completed_stages=completed_stages,
                 )
 
+    def submit_requirement_change(
+        self,
+        project_id: str,
+        change_description: str,
+    ):
+        """User submits a requirement change.
+
+        Analyzes impact and returns which stages will re-run.
+        Does NOT start re-running yet — waits for confirmation.
+        """
+        pj = self.workspace.load_project_json(project_id) or {}
+        stages_completed = pj.get("stages_completed", [])
+
+        analysis = self.impact_analyzer.analyze(
+            project_id=project_id,
+            change_description=change_description,
+            stages_completed=stages_completed,
+        )
+
+        self.workspace.update_project_json(project_id, {
+            "pending_change": {
+                "change_id": analysis.change_id,
+                "description": change_description,
+                "affected_stages": analysis.affected_stages,
+                "safe_stages": analysis.safe_stages,
+                "analyzed_at": analysis.analyzed_at.isoformat(),
+            }
+        })
+
+        self._transition(project_id, ProjectState.CHANGE_REQUESTED)
+        self.broadcaster.change_analyzed(
+            project_id=project_id,
+            affected_stages=analysis.affected_stages,
+            safe_stages=analysis.safe_stages,
+        )
+        logger.info(
+            "Requirement change submitted for %s: %s affected stages",
+            project_id, len(analysis.affected_stages)
+        )
+        return analysis
+
+    def apply_requirement_change(
+        self,
+        project_id: str,
+        change_id: str,
+        confirmed: bool,
+        user_comment: str = "",
+    ) -> dict:
+        """User confirmed they want to apply the change.
+
+        Removes affected stages from stages_completed.
+        Pipeline resumes from the first affected stage.
+        """
+        from datetime import datetime, timezone
+
+        if not confirmed:
+            self.workspace.update_project_json(project_id, {
+                "pending_change": None
+            })
+            self._transition(project_id, ProjectState.SPRINT_IN_PROGRESS)
+            return {"status": "cancelled"}
+
+        pj = self.workspace.load_project_json(project_id) or {}
+        pending = pj.get("pending_change", {})
+
+        if pending.get("change_id") != change_id:
+            raise ValueError(f"Change ID mismatch: {change_id}")
+
+        affected = pending.get("affected_stages", [])
+        safe_stages = pending.get("safe_stages", [])
+
+        changes = pj.get("requirement_changes", [])
+        changes.append({
+            "change_id": change_id,
+            "description": pending.get("description", ""),
+            "applied_at": datetime.now(timezone.utc).isoformat(),
+            "comment": user_comment,
+            "stages_rerun": affected,
+        })
+
+        self.workspace.update_project_json(project_id, {
+            "stages_completed": safe_stages,
+            "pending_change": None,
+            "requirement_changes": changes,
+            "current_stage": affected[0] if affected else None,
+        })
+
+        self._transition(project_id, ProjectState.RESUMING_FROM_CHANGE)
+
+        logger.info(
+            "Requirement change applied for %s. "
+            "Removed %d stages. Resuming from %s.",
+            project_id, len(affected),
+            affected[0] if affected else "end"
+        )
+
+        return {
+            "status": "applied",
+            "stages_removed": affected,
+            "stages_kept": safe_stages,
+            "resuming_from": affected[0] if affected else None,
+        }
+
     def _transition(self, project_id: str, new_state: ProjectState) -> None:
         """Persist state change immediately."""
         self.workspace.update_state(project_id, new_state)
         logger.info("State: %s -> %s", self.workspace.get_state(project_id), new_state)
+        data = self.workspace.load_project_json(project_id) or {}
+        st_val = new_state.value if hasattr(new_state, "value") else str(new_state)
+        self.broadcaster.status_update(
+            project_id=project_id,
+            state=st_val,
+            current_stage=data.get("current_stage"),
+            stages_completed=data.get("stages_completed", []),
+        )
 
     def _run_stage(self, project_id: str, stage_name: str, request: str) -> WorkflowResult:
         """Run a stage by name."""
