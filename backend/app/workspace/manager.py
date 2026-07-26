@@ -135,11 +135,21 @@ class WorkspaceManager:
         )
 
     def get_sprint_plan(self, project_id: str) -> SprintPlan | None:
-        """Retrieve SprintPlan from project.json if present."""
+        """Retrieve SprintPlan from project.json if present.
+
+        SprintPlanSchema.created_at is ``str = ""`` — the LLM often leaves it blank.
+        SprintPlan.created_at is ``datetime`` — Pydantic rejects an empty string.
+        Default the field to *now* before validating so an empty string never crashes
+        the sprint execution phase.
+        """
         data = self.load_project_json(project_id)
         if not data or not data.get("sprint_plan"):
             return None
-        return SprintPlan.model_validate(data["sprint_plan"])
+        sprint_data = dict(data["sprint_plan"])
+        if not sprint_data.get("created_at"):
+            from datetime import datetime, timezone
+            sprint_data["created_at"] = datetime.now(timezone.utc).isoformat()
+        return SprintPlan.model_validate(sprint_data)
 
     def set_current_sprint(self, project_id: str, sprint_number: int) -> None:
         """Set current sprint number and update sprint status in sprint_plan."""

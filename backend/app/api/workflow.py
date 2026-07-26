@@ -103,10 +103,18 @@ def get_design_review(
 def post_design_review(
     project_id: str,
     request: DesignApprovalRequest,
+    background_tasks: BackgroundTasks,
     workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
     artifact_manager: ArtifactManager = Depends(get_artifact_manager),
+    manager: WorkflowManager = Depends(get_workflow_manager),
 ) -> dict:
-    """Approve or request revision for the project design."""
+    """Approve or request revision for the project design.
+
+    On approval the pipeline auto-resumes as a background task so the user
+    never has to manually call /continue after approving the design.
+    On revision the pipeline pauses at DESIGN_READY; the user must call
+    /continue (or the UI triggers it) to re-run the Designer with feedback.
+    """
     workspace_state = workspace_manager.load_project_json(project_id)
     if workspace_state is None:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -130,20 +138,41 @@ def post_design_review(
                 )
         workspace_manager.update_design_review(project_id, "approved", request.feedback)
         workspace_manager.update_state(project_id, ProjectState.DESIGN_APPROVED)
+
+        # Auto-resume: fire pipeline continuation as a background task so the
+        # user does not need to call /continue manually after approval.
+        if not manager.execution_state.is_running(project_id):
+            original_req = (
+                workspace_state.get("original_request")
+                or workspace_state.get("description")
+                or f"Project {project_id}"
+            )
+            background_tasks.add_task(manager.run, project_id, original_req)
+
         return {
             "state": "design_approved",
-            "message": "Design approved",
-            "next": "Sprint planning will begin",
+            "message": "Design approved — sprint planning starting",
+            "next": "Sprint planning and coding will begin automatically",
         }
     else:
         workspace_manager.update_design_review(project_id, "revision_requested", request.feedback)
         workspace_manager.update_state(project_id, ProjectState.DESIGN_READY)
         updated_data = workspace_manager.load_project_json(project_id) or {}
         new_iteration = updated_data.get("design_review", {}).get("iteration", 2)
+
+        # Auto-resume for revision: re-run the Designer immediately with the new feedback.
+        if not manager.execution_state.is_running(project_id):
+            original_req = (
+                workspace_state.get("original_request")
+                or workspace_state.get("description")
+                or f"Project {project_id}"
+            )
+            background_tasks.add_task(manager.run, project_id, original_req)
+
         return {
             "state": "design_revision",
             "iteration": new_iteration,
-            "message": "Design revision requested. Call /workflow/{id}/continue to regenerate.",
+            "message": "Design revision requested — regenerating design with your feedback.",
         }
 
 

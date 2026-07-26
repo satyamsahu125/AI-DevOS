@@ -2,6 +2,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -11,6 +12,20 @@ from app.shared.enums.project_state import ProjectState
 from app.shared.enums.stage import Stage
 from app.shared.schemas.design_schema import ColorPalette, ComponentSpec, DesignArtifact, PageSpec, TypographySpec
 from app.workspace.manager import WorkspaceManager
+
+
+def _mock_bg() -> MagicMock:
+    """Return a BackgroundTasks stub that records add_task calls without executing them."""
+    bg = MagicMock()
+    bg.add_task = MagicMock()
+    return bg
+
+
+def _mock_manager() -> MagicMock:
+    """Return a WorkflowManager stub with is_running always returning False."""
+    m = MagicMock()
+    m.execution_state.is_running.return_value = False
+    return m
 
 
 class DesignReviewTests(unittest.TestCase):
@@ -47,7 +62,7 @@ class DesignReviewTests(unittest.TestCase):
         self.workspace_manager.update_state(proj_id, ProjectState.DESIGN_REVIEW_PENDING)
 
         req = DesignApprovalRequest(approved=False, feedback="Change theme to dark mode and add sidebar navigation.")
-        res = post_design_review(proj_id, req, workspace_manager=self.workspace_manager)
+        res = post_design_review(proj_id, req, background_tasks=_mock_bg(), workspace_manager=self.workspace_manager, manager=_mock_manager())
 
         self.assertEqual(res["state"], "design_revision")
         self.assertEqual(res["iteration"], 2)
@@ -72,7 +87,7 @@ class DesignReviewTests(unittest.TestCase):
         self.workspace_manager.update_state(proj_id, ProjectState.DESIGN_REVIEW_PENDING)
 
         req = DesignApprovalRequest(approved=True, feedback="Looks great!")
-        res = post_design_review(proj_id, req, workspace_manager=self.workspace_manager)
+        res = post_design_review(proj_id, req, background_tasks=_mock_bg(), workspace_manager=self.workspace_manager, manager=_mock_manager())
 
         self.assertEqual(res["state"], "design_approved")
         self.assertEqual(self.workspace_manager.get_state(proj_id), ProjectState.DESIGN_APPROVED)
@@ -88,7 +103,7 @@ class DesignReviewTests(unittest.TestCase):
             "user_modified": True,
         }
         req = DesignApprovalRequest(approved=True, feedback="Approved with custom Puck changes", modified_design=modified_design)
-        res = post_design_review(proj_id, req, workspace_manager=self.workspace_manager, artifact_manager=self.artifact_manager)
+        res = post_design_review(proj_id, req, background_tasks=_mock_bg(), workspace_manager=self.workspace_manager, artifact_manager=self.artifact_manager, manager=_mock_manager())
 
         self.assertEqual(res["state"], "design_approved")
         loaded = self.workspace_manager.load_approved_design(proj_id)

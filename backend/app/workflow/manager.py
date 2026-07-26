@@ -236,8 +236,19 @@ class WorkflowManager:
                         structured_content=struct,
                     )
                 self.workspace.mark_qa_complete(project_id)
+                # StrategicReview is processed inline via Q&A (not through engine.run),
+                # so _update_project_progress() is never called for it.  Write it into
+                # stages_completed now so the gap-sanitizer at the top of run() finds a
+                # continuous prefix on every subsequent resume — without this, the
+                # sanitizer sees StrategicReview missing and wipes all later stages.
+                _qa_data = self.workspace.load_project_json(project_id) or {}
+                _completed = list(_qa_data.get("stages_completed", []))
+                if Stage.StrategicReview.value not in _completed:
+                    _completed.insert(0, Stage.StrategicReview.value)
+                    self.workspace.update_project_json(
+                        project_id, {"stages_completed": _completed}
+                    )
                 self._transition(project_id, ProjectState.REQUIREMENTS_READY)
-
 
             elif state == ProjectState.REQUIREMENTS_READY:
                 result = self._run_stage(project_id, "ProductOwner", request)
