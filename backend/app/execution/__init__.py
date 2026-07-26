@@ -1,7 +1,6 @@
 __all__ = [
     "AgentRuntime",
     "ExecutionEngine",
-    "DocumentedExecutionEngine",
     "ExecutionMetrics",
     "ExecutionResult",
     "ExecutionStatus",
@@ -22,11 +21,10 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    if name in {"AgentRuntime", "ExecutionEngine", "DocumentedExecutionEngine"}:
+    if name in {"AgentRuntime", "ExecutionEngine"}:
         from .agent_runtime import AgentRuntime
         from .engine import ExecutionEngine
-        from .execution_engine import ExecutionEngine as DocumentedExecutionEngine
-        mapping = {"AgentRuntime": AgentRuntime, "ExecutionEngine": ExecutionEngine, "DocumentedExecutionEngine": DocumentedExecutionEngine}
+        mapping = {"AgentRuntime": AgentRuntime, "ExecutionEngine": ExecutionEngine}
         return mapping[name]
     if name == "ExecutionMetrics":
         from .execution_metrics import ExecutionMetrics

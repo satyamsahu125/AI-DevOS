@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from ..agents.backend import BackendDeveloperAgent
 from ..agents.chat_router import ChatRouter
@@ -78,7 +79,10 @@ class Container:
         self._dependencies.register_singleton("configuration_manager", lambda: self._configuration)
         self._dependencies.register_singleton("workspace_manager", WorkspaceManager)
         self._dependencies.register_singleton("memory_manager", MemoryManager)
-        self._dependencies.register_singleton("memory_orchestrator", MemoryOrchestrator)
+        # MemoryOrchestrator is not called anywhere in the live pipeline and has an
+        # internal name collision (self.store is both an attribute and a method).
+        # Disabled until it is redesigned and actually wired into the pipeline.
+        # self._dependencies.register_singleton("memory_orchestrator", MemoryOrchestrator)
         self._dependencies.register_singleton(
             "artifact_manager",
             lambda: ArtifactManager(workspace_manager=self._dependencies.resolve("workspace_manager")),
@@ -112,13 +116,16 @@ class Container:
                 db_path=Path(settings.learning_db),
             ),
         )
-        self._dependencies.register_singleton(
-            "context_manager",
-            lambda: ContextManager(
-                memory_manager=self._dependencies.resolve("memory_manager"),
-                learning_loop=self._dependencies.resolve("learning_loop"),
-            ),
-        )
+        # ContextManager is not called anywhere in the live pipeline (WorkflowEngine
+        # builds context directly via _with_predecessor_message / _with_relevant_patterns
+        # / _with_design_context). Disabled until the pipeline integrates it.
+        # self._dependencies.register_singleton(
+        #     "context_manager",
+        #     lambda: ContextManager(
+        #         memory_manager=self._dependencies.resolve("memory_manager"),
+        #         learning_loop=self._dependencies.resolve("learning_loop"),
+        #     ),
+        # )
         from ..llm.cost_tracker import CostTracker
         self._dependencies.register_singleton("cost_tracker", lambda: CostTracker("backend/app/memory/costs.db"))
         from ..learning.performance_scorer import AgentPerformanceScorer
@@ -223,6 +230,7 @@ class Container:
                 agent_factory=self._dependencies.resolve("agent_factory"),
                 project_validator=self._dependencies.resolve("project_validator"),
                 impact_analyzer=self._dependencies.resolve("impact_analyzer"),
+                container=self,  # gives _run_sprint() access to DI-wired developer agents
             ),
         )
         self._dependencies.register_singleton(
@@ -254,7 +262,8 @@ class Container:
         self._project_writer = self._dependencies.resolve("project_writer")
         self._file_validator = self._dependencies.resolve("file_validator")
         self._event_log = self._dependencies.resolve("event_log")
-        self._context = self._dependencies.resolve("context_manager")
+        # context_manager is disabled — not integrated in live pipeline yet
+        self._context = None
         self._llm = self._dependencies.resolve("llm_manager")
         self._execution = self._dependencies.resolve("execution_manager")
         self._workflow = self._dependencies.resolve("workflow_manager")
@@ -290,16 +299,13 @@ class Container:
         return self._session
 
     @property
-    def context_manager(self) -> ContextManager:
+    def context_manager(self) -> ContextManager | None:
+        """Returns None — ContextManager is not wired into the live pipeline yet."""
         return self._context
 
     @property
     def memory_manager(self) -> MemoryManager:
         return self._memory
-
-    @property
-    def memory_orchestrator(self) -> MemoryOrchestrator:
-        return self._dependencies.resolve("memory_orchestrator")
 
     @property
     def review_manager(self) -> ReviewManager:

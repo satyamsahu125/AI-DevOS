@@ -58,7 +58,7 @@ class RuntimeValidationGate:
         return "PASS" if not missing else "FAIL"
 
     def _check_imports(self, required_modules: list[str] | None = None) -> str:
-        modules = required_modules or ["app.core.runtime", "app.execution.execution_engine", "app.workflow.transition_manager", "app.prompt.prompt_builder_runtime"]
+        modules = required_modules or ["app.core.runtime", "app.workflow.transition_manager", "app.prompt.prompt_builder_runtime"]
         for module in modules:
             try:
                 importlib.import_module(module)

@@ -6,7 +6,16 @@ from typing import Any
 
 @dataclass(slots=True)
 class MemoryContext:
-    """A structured container for memory context sent to prompt builders."""
+    """Structured container for memory context passed to prompt builders.
+
+    Used by memory/memory_context_builder.py to assemble per-stage context
+    slices from WorkflowMemory, SessionMemory, and LongTermMemory.
+
+    NOTE: This class is NOT used in the live pipeline (WorkflowEngine.run() does
+    not call ContextManager or MemoryContextBuilder). It is retained because
+    memory_context_builder.py imports it. Once the pipeline integrates ContextManager,
+    this will become a live data carrier.
+    """
 
     context_id: str = ""
     workflow_memory: list[Any] = field(default_factory=list)

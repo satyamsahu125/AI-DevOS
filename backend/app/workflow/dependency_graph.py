@@ -49,7 +49,23 @@ class DependencyGraph:
     }
 
     def has_dependency(self, stage: str) -> bool:
-        return stage.lower() == "product_owner"
+        """Return True if stage has at least one prerequisite in STAGE_DEPENDENCIES.
+
+        Resolves the registry key string (e.g. ``"product_owner"``) to a Stage
+        enum via resolve_stage_name, then looks it up in STAGE_DEPENDENCIES.
+        The old implementation hardcoded ``stage == "product_owner"``, which made
+        every stage except ProductOwner look dependency-free — meaning the graph
+        was never consulted for any other stage.
+        """
+        try:
+            resolved = resolve_stage_name(stage)
+            stage_enum = Stage(resolved)
+            return bool(self.STAGE_DEPENDENCIES.get(stage_enum))
+        except Exception:
+            # resolve_stage_name raises ApplicationException for unknown keys;
+            # Stage() raises ValueError for unknown enum values. Either way —
+            # if we can't resolve it, it has no known dependency.
+            return False
 
     @classmethod
     def ordered_stages(cls) -> list[Stage]:

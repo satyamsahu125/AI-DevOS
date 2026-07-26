@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import Depends
 
+from ..artifact.manager import ArtifactManager
 from ..agents.chat_router import ChatRouter
 from ..execution.project_validator import ProjectValidator
 from ..execution.project_writer import ProjectWriter

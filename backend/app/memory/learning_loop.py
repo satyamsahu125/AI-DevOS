@@ -196,13 +196,12 @@ class LearningLoop:
         return f"{project_id}:{stage}" if project_id else stage
 
     def count_all_trajectories(self) -> int:
-        """Return the total number of trajectories recorded across every project/stage.
+        """Return the total number of trajectories recorded across every project and stage.
 
-        The trajectories table has no project_id column (trajectories are
-        attributed to a project only via the in-process Trajectory.project_id
-        field used to scope KnowledgeMemory pattern search, see
-        get_relevant_patterns) so this count is necessarily global, not
-        per-project.
+        The trajectories table includes a project_id column. This method returns
+        the global count across all projects; use get_relevant_patterns(project_id=...)
+        to scope semantic search to a specific project. A per-project count is not
+        exposed here because callers (tests, monitoring) only need the global total.
         """
         with self._lock:
             row = self._conn.execute("SELECT COUNT(*) FROM trajectories").fetchone()

@@ -44,8 +44,15 @@ class WorkflowManager:
         agent_factory: AgentFactory | None = None,
         project_validator: ProjectValidator | None = None,
         impact_analyzer: Any | None = None,
+        container: Any | None = None,
     ) -> None:
-        """Wire the engine, workspace_manager, execution_state registry, agent_factory, and project_validator."""
+        """Wire the engine, workspace_manager, execution_state registry, agent_factory, project_validator, and DI container.
+
+        ``container`` must be the live DI Container so that _run_sprint() can resolve
+        ``backend_developer_agent`` and ``frontend_developer_agent`` via the container
+        instead of bypassing DI by instantiating them through AgentFactory directly.
+        When None (unit-test paths), _run_sprint falls back to AgentFactory.
+        """
         self.engine = engine or WorkflowEngine()
         self.workspace_manager = workspace_manager or (
             getattr(self.engine, "workspace_manager", None) or WorkspaceManager()
@@ -53,6 +60,7 @@ class WorkflowManager:
         self.workspace = self.workspace_manager
         self.execution_state = execution_state or ExecutionStateRegistry()
         self._agent_factory = agent_factory or AgentFactory()
+        self._container = container  # None in unit tests — _run_sprint falls back to factory
         self.project_validator = project_validator or ProjectValidator(self.workspace_manager)
         self.project_writer = ProjectWriter(self.workspace_manager)
         self.artifact_manager = getattr(self.engine, "artifact_manager", None) or ArtifactManager(
@@ -106,6 +114,15 @@ class WorkflowManager:
         live log, competing writes to the same project.json and artifacts, and
         one blocked request thread held per run.
         """
+        if not project_id:
+            return PipelineResult(
+                project_id="",
+                state=ProjectState.FAILED,
+                success=False,
+                message="project_id is required and cannot be empty",
+                completed_stages=[],
+            )
+
         if self.execution_state.is_running(project_id):
             logger.warning("pipeline already running, refusing duplicate start: project_id=%s", project_id)
             data = self.workspace.load_project_json(project_id) or {}
@@ -287,11 +304,12 @@ class WorkflowManager:
                 if not result_sm.success:
                     return self._fail(project_id, "ScrumMaster", result_sm)
 
-                result_fplan = self._run_stage(project_id, "FileStructurePlanner", request)
-                if result_fplan.success:
-                    self._transition(project_id, ProjectState.SPRINT_PLAN_READY)
-                else:
-                    return self._fail(project_id, "FilePlanner", result_fplan)
+                # FileStructurePlanner runs per-sprint inside _run_sprint() so it
+                # has access to the per-sprint context (goal, features, tasks).
+                # Running it here globally (before any sprint starts) meant it had
+                # no sprint context and its output was immediately overwritten on
+                # the first sprint anyway — a pure duplicate that wasted one LLM call.
+                self._transition(project_id, ProjectState.SPRINT_PLAN_READY)
 
             elif state == ProjectState.SPRINT_PLAN_READY:
                 self._transition(project_id, ProjectState.SPRINT_IN_PROGRESS)
@@ -323,6 +341,24 @@ class WorkflowManager:
                 if not result_retro.success:
                     return self._fail(project_id, "Retro", result_retro)
                 self._transition(project_id, ProjectState.DEPLOYABLE)
+
+            elif state == ProjectState.CHANGE_REQUESTED:
+                # Waiting for the user to confirm or cancel via apply_requirement_change().
+                # Do NOT advance automatically — return and let the API caller decide.
+                data = self.workspace.load_project_json(project_id) or {}
+                pending = data.get("pending_change") or {}
+                completed_stages = list(data.get("stages_completed", []))
+                return PipelineResult(
+                    project_id=project_id,
+                    state=ProjectState.CHANGE_REQUESTED,
+                    requires_user_action=True,
+                    action_needed="confirm_change",
+                    message=(
+                        f"Requirement change pending — confirm or cancel to resume. "
+                        f"Change: {pending.get('description', '(no description)')}"
+                    ),
+                    completed_stages=completed_stages,
+                )
 
             elif state == ProjectState.RESUMING_FROM_CHANGE:
                 from datetime import datetime, timezone
@@ -357,6 +393,26 @@ class WorkflowManager:
                     success=state in [ProjectState.DEPLOYABLE, ProjectState.DONE],
                     message=f"Pipeline in state: {state.value}",
                     completed_stages=completed_stages,
+                )
+
+            else:
+                # Safety catch: any state not handled above (IMPACT_ANALYZED, REPLANNING,
+                # SPRINT_COMPLETE, AWAITING_HUMAN_APPROVAL, or any future additions)
+                # must not spin forever in this loop.
+                logger.error(
+                    "WorkflowManager.run(): unhandled state '%s' for project '%s' — halting pipeline",
+                    state, project_id,
+                )
+                data = self.workspace.load_project_json(project_id) or {}
+                return PipelineResult(
+                    project_id=project_id,
+                    state=state,
+                    success=False,
+                    message=(
+                        f"Unhandled pipeline state: "
+                        f"{state.value if hasattr(state, 'value') else state}"
+                    ),
+                    completed_stages=list(data.get("stages_completed", [])),
                 )
 
     def submit_requirement_change(
@@ -480,14 +536,43 @@ class WorkflowManager:
         return self.run_stage(project_id, stage_name, request)
 
     def _run_next_sprint(self, project_id: str) -> SprintResult:
-        """Load sprint plan, find next unstarted sprint, run it."""
+        """Load sprint plan, find next unstarted sprint, run it with up to 2 attempts."""
         plan = self.workspace.get_sprint_plan(project_id)
         if not plan or not plan.sprints:
             return self._run_default_sprint(project_id)
         for sprint in plan.sprints:
             if sprint.status == SprintStatus.PLANNED:
-                return self._run_sprint(project_id, sprint)
+                return self._run_sprint_with_retry(project_id, sprint, max_attempts=2)
         return SprintResult(all_sprints_complete=True)
+
+    def _run_sprint_with_retry(self, project_id: str, sprint: Sprint, max_attempts: int = 2) -> SprintResult:
+        """Run a sprint, retrying once on failure before giving up.
+
+        Sprint-level retry is distinct from stage-level retry (WorkflowEngine.run()
+        retries each LLM call up to RetryPolicy.max_retries times). This adds a
+        coarser outer retry: if the whole sprint (file plan + backend + frontend)
+        fails, we try the entire sprint once more before reporting failure.
+        This handles transient execution errors (e.g. file write race, LLM timeout)
+        that are unlikely to repeat on a second full attempt.
+        """
+        last_result: SprintResult | None = None
+        for attempt in range(1, max_attempts + 1):
+            last_result = self._run_sprint(project_id, sprint)
+            if last_result.sprint_complete:
+                if attempt > 1:
+                    logger.info(
+                        "Sprint %d succeeded on retry attempt %d/%d for %s",
+                        sprint.sprint_number, attempt, max_attempts, project_id,
+                    )
+                return last_result
+            logger.warning(
+                "Sprint %d attempt %d/%d failed for %s: %s",
+                sprint.sprint_number, attempt, max_attempts, project_id, last_result.message,
+            )
+        return last_result or SprintResult(
+            sprint_complete=False, success=False,
+            message=f"Sprint {sprint.sprint_number} failed after {max_attempts} attempts",
+        )
 
     def _run_default_sprint(self, project_id: str) -> SprintResult:
         """Fallback sprint when no explicit SprintPlan exists."""
@@ -502,13 +587,29 @@ class WorkflowManager:
         return SprintResult(all_sprints_complete=True, sprint_complete=True, success=True)
 
     def _build_sprint_context(self, project_id: str, sprint: Sprint, arch: object | None) -> str:
+        """Build the context string passed to developer agents for this sprint.
+
+        Injects Architecture spec AND the approved ScrumMaster plan so that
+        developer agents know sprint ceremonies, velocity targets, and team
+        assignments — not just the raw architecture. Without ScrumMaster context
+        the sprint execution effectively ignores the Agile planning layer.
+        """
         arch_text = getattr(arch, "content", str(arch)) if arch else ""
-        return (
-            f"Sprint {sprint.sprint_number}: {sprint.name}\n"
-            f"Goal: {sprint.goal}\n"
-            f"Features: {', '.join(sprint.features)}\n\n"
-            f"Architecture Spec:\n{arch_text}"
-        )
+
+        scrum_artifact = self.artifact_manager.get_artifact(project_id, Stage.ScrumMaster)
+        scrum_text = getattr(scrum_artifact, "content", "") if scrum_artifact else ""
+
+        parts = [
+            f"Sprint {sprint.sprint_number}: {sprint.name}",
+            f"Goal: {sprint.goal}",
+            f"Features: {', '.join(sprint.features)}",
+            "",
+            f"Architecture Spec:\n{arch_text}",
+        ]
+        if scrum_text:
+            parts.append(f"\nScrumMaster Plan:\n{scrum_text[:2000]}")
+
+        return "\n".join(parts)
 
     def _load_file_plan(self, project_id: str, sprint_number: int) -> FilePlan:
         artifacts_dir = self.workspace_manager.get_workspace_path(project_id) / "artifacts"
@@ -581,13 +682,24 @@ class WorkflowManager:
             self.project_writer.initialize_project(project_id, tech_stack)
 
         context_obj = SimpleNamespace(project_id=project_id)
-        backend_result = self._get_agent("backend").execute_sprint(
+
+        # Resolve developers from the DI container so they get their properly-wired
+        # singletons (llm_manager, project_writer, validator, workspace_manager).
+        # Fall back to AgentFactory only in unit-test paths where container is None.
+        if self._container is not None:
+            backend_agent = self._container.resolve("backend_developer_agent")
+            frontend_agent = self._container.resolve("frontend_developer_agent")
+        else:
+            backend_agent = self._get_agent("backend")
+            frontend_agent = self._get_agent("frontend")
+
+        backend_result = backend_agent.execute_sprint(
             project_id=project_id,
             file_plan=file_plan,
             context=context_obj,
         )
 
-        frontend_result = self._get_agent("frontend").execute_sprint(
+        frontend_result = frontend_agent.execute_sprint(
             project_id=project_id,
             file_plan=file_plan,
             context=context_obj,
@@ -658,7 +770,7 @@ class WorkflowManager:
         """Validate the generated project. If startup fails, feed the error to BackendDeveloperAgent
         for a targeted fix. Repeat up to max_healing_attempts times.
         """
-        result = self.project_validator.validate(project_id)
+        result = None
         for attempt in range(1, max_healing_attempts + 1):
             logger.info("Validation attempt %d/%d for project %s", attempt, max_healing_attempts, project_id)
             result = self.project_validator.validate(project_id)

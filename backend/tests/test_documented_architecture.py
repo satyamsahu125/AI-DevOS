@@ -16,7 +16,6 @@ from app.prompt.builder import PromptBuilder
 from app.prompt.product_owner_builder import ProductOwnerPromptBuilder
 from app.review.reviewer import Reviewer
 from app.shared.models.architecture_artifact import ArchitectureArtifact
-from app.workflow.transition import WorkflowTransition
 
 
 class DocumentedArchitectureTests(unittest.TestCase):
@@ -42,8 +41,8 @@ class DocumentedArchitectureTests(unittest.TestCase):
         reviewer = Reviewer()
         self.assertTrue(callable(reviewer.review))
 
-        transition = WorkflowTransition()
-        self.assertTrue(callable(transition.transition))
+        # WorkflowTransition was a pure no-op and has been removed (FIX-012).
+        # State is now assigned directly: workflow.state = WorkflowState.Approved
 
         architecture = ArchitectureArtifact(
             artifact_id="arch-1",

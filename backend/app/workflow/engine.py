@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from typing import Any
 from uuid import uuid4
 
 from ..artifact.manager import ArtifactManager
@@ -23,11 +24,9 @@ from ..shared.models.stage_artifact import StageArtifact
 from ..shared.models.workflow import Workflow
 from ..shared.schemas.message import AgentMessage
 from ..workspace.manager import WorkspaceManager
-from .dependency import WorkflowDependency
 from .execution_state import ExecutionStateRegistry
 from .retry_policy import RetryPolicy
 from .state_machine import WorkflowStateMachine
-from .transition import WorkflowTransition
 
 logger = logging.getLogger(__name__)
 
@@ -94,13 +93,11 @@ class WorkflowEngine:
         broadcaster: Any | None = None,
     ) -> None:
         """Wire up the collaborators needed to run a single workflow stage."""
-        self.dependency = WorkflowDependency("ProductOwner")
         self.state_machine = WorkflowStateMachine()
         self.artifact_manager = artifact_manager or ArtifactManager()
         self.execution_manager = execution_manager or ExecutionManager(self.artifact_manager)
         self.workspace_manager = workspace_manager or WorkspaceManager()
         self.session_manager = SessionManager()
-        self.transition = WorkflowTransition()
         self.memory_manager = memory_manager or MemoryManager()
         self.learning_loop = learning_loop or LearningLoop()
         self.retry_policy = retry_policy or RetryPolicy()
@@ -151,6 +148,7 @@ class WorkflowEngine:
         base_content = self._with_predecessor_message(project_id, content)
         base_content = self._with_relevant_patterns(base_content, stage_name, content, project_id)
         base_content = self._with_design_context(project_id, base_content, stage_name)
+        base_content = self._with_lessons(base_content, stage_name, project_id)
 
         if hasattr(self.execution_manager, "llm_manager") and self.execution_manager.llm_manager:
             self.execution_manager.llm_manager.set_context(project_id, stage_name)
@@ -201,7 +199,7 @@ class WorkflowEngine:
                 self.event_log.record(project_id, stage_name, f"{stage_name} approved on attempt {attempt + 1}")
                 duration_sec = (datetime.now(timezone.utc) - stage_start_time).total_seconds()
                 self.broadcaster.stage_complete(project_id, stage_name, attempt + 1, duration_sec)
-                workflow.state = self.transition.transition(WorkflowState.Approved)
+                workflow.state = WorkflowState.Approved
                 self.state_machine.approve()
                 self.state_machine.complete()
                 self.session_manager.close_session(session)
@@ -229,7 +227,7 @@ class WorkflowEngine:
         logger.error("workflow stage exhausted retries: stage=%s attempts=%s", stage_name, attempt)
         self.event_log.record(project_id, stage_name, f"{stage_name} failed after {attempt} attempt(s)", level="error")
         self.broadcaster.stage_failed(project_id, stage_name, f"Exhausted retries ({attempt} attempts)")
-        workflow.state = self.transition.transition(WorkflowState.Failed)
+        workflow.state = WorkflowState.Failed
         self.state_machine.fail()
         self.session_manager.close_session(session)
         # Close out the checkpoint on the failure path too. Previously only the
@@ -375,6 +373,28 @@ class WorkflowEngine:
         if not design_entry:
             return content
         return f"{content}\n\n### Approved Design Spec\n{design_entry}"
+
+    def _with_lessons(self, content: str, stage_name: str, project_id: str) -> str:
+        """Prepend human-readable lessons from LessonStore for this exact stage/project.
+
+        LessonStore (see memory/lesson_store.py) holds curated, human-readable lessons
+        learned from prior approvals for this stage — distinct from LearningLoop's
+        semantic vector search. Injecting them here means every retry attempt for a
+        stage benefits from what the reviewer explicitly approved before, not just
+        semantic similarity. Only the 3 most recent lessons are injected to keep
+        the prompt compact.
+        """
+        lessons = self.lesson_store.get_lessons(stage=stage_name, project_id=project_id, limit=3)
+        if not lessons:
+            return content
+        lines = [f"### Lessons Learned for {stage_name} (this project)"]
+        for lesson in lessons:
+            lines.append(f"- What worked: {lesson.what_worked[:200]}")
+            if lesson.what_failed:
+                lines.append(f"  What failed: {lesson.what_failed[:150]}")
+            if lesson.reviewer_said:
+                lines.append(f"  Reviewer said: {lesson.reviewer_said[:150]}")
+        return f"{content}\n\n" + "\n".join(lines)
 
     def _record_design(self, project_id: str, stage: Stage, artifact: StageArtifact) -> None:
         """Persist an approved Designer artifact to project_id's durable design memory slot."""
