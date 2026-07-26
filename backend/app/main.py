@@ -1,9 +1,11 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
 
 from .api.exception_handler import application_exception_handler
 from .api.router import api_router
+from .events.broadcaster import broadcaster
 from .kernel.kernel import AIKernel
 from .shared.exceptions.base import ApplicationException
 
@@ -12,6 +14,9 @@ kernel = AIKernel()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # FIX-B: Capture the uvicorn event loop so the broadcaster can schedule
+    # WebSocket sends from FastAPI BackgroundTask threads (which have no loop).
+    broadcaster.bind_loop(asyncio.get_running_loop())
     kernel.start()
     try:
         yield

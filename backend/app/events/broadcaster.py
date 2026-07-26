@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from typing import Any
 
 from ..api.websocket import ws_manager
 
@@ -14,20 +15,50 @@ class EventBroadcaster:
 
     Called by WorkflowEngine, WorkflowManager, and agents at key moments in the pipeline.
 
-    All methods are sync-safe — they schedule the async broadcast on the event loop without blocking the pipeline.
+    All methods are sync-safe — they schedule the async broadcast on the event loop without
+    blocking the pipeline thread.
+
+    Thread-safety: FastAPI runs sync BackgroundTasks in a threadpool executor — those threads
+    have NO asyncio event loop of their own. `asyncio.get_running_loop()` raises RuntimeError
+    in those threads, so we must capture the uvicorn event loop at startup and schedule
+    coroutines onto it via `loop.call_soon_threadsafe`.
     """
 
+    def __init__(self) -> None:
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Capture the running event loop at app startup for use in background threads.
+
+        Call this once from an async lifespan / startup hook, e.g.:
+            broadcaster.bind_loop(asyncio.get_running_loop())
+        """
+        self._loop = loop
+        logger.debug("EventBroadcaster bound to event loop %s", loop)
+
     def _send(self, project_id: str, message: dict) -> None:
-        """Schedule async broadcast from sync context."""
+        """Schedule async broadcast from any thread (sync-safe)."""
         message["timestamp"] = datetime.now(timezone.utc).isoformat()
-        try:
-            loop = asyncio.get_running_loop()
-            asyncio.ensure_future(ws_manager.broadcast(project_id, message), loop=loop)
-        except RuntimeError:
-            # No running event loop — skip broadcast (e.g. in tests)
-            logger.debug(
-                "No event loop — skipping broadcast: %s", message.get("type")
-            )
+
+        loop = self._loop
+        if loop is None:
+            # Fallback: try to grab a running loop (works when called directly from
+            # async context, e.g. tests or startup code before bind_loop is called).
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                logger.debug("EventBroadcaster: no loop bound and no running loop — dropping: %s", message.get("type"))
+                return
+
+        async def _do_broadcast() -> None:
+            await ws_manager.broadcast(project_id, message)
+
+        # call_soon_threadsafe is the ONLY safe way to schedule a coroutine onto an
+        # event loop from a non-async thread.  ensure_future / create_task must be
+        # called from within the loop thread.
+        loop.call_soon_threadsafe(
+            lambda: asyncio.ensure_future(_do_broadcast(), loop=loop)
+        )
 
     def stage_started(self, project_id: str, stage: str, attempt: int = 1) -> None:
         self._send(

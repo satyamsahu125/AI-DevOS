@@ -372,6 +372,18 @@ def complete_qa_session(
     if workspace_state is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    # FIX-C: Guard against duplicate starts. If the pipeline is already running
+    # (e.g. the frontend re-mounts QAPanel and calls qa/complete again), return
+    # the current state instead of enqueuing another background task and
+    # overwriting the state back to QA_IN_PROGRESS.
+    if manager.execution_state.is_running(project_id):
+        state = workspace_manager.get_state(project_id)
+        return {
+            "status": "running",
+            "state": state.value if hasattr(state, "value") else str(state),
+            "message": "Pipeline is already running",
+        }
+
     workspace_manager.update_state(project_id, ProjectState.QA_IN_PROGRESS)
     original_req = (
         workspace_state.get("original_request")

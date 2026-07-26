@@ -16,6 +16,7 @@ export default defineConfig({
       "/api": {
         target: "http://localhost:8000",
         changeOrigin: true,
+        ws: true, // FIX-A: forward WebSocket upgrade requests to the backend
         rewrite: (requestPath) => requestPath.replace(/^\/api/, ""),
       },
     },

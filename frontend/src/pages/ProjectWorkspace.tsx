@@ -42,6 +42,7 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
   const initialLogs = useProjectLogs(projectId ?? null)
   const initialFiles = useProjectFiles(projectId ?? null)
 
+  // State declarations must come before any callbacks that reference their setters.
   const [pipelineState, setPipelineState] = useState({
     state: "empty",
     current_stage: null as string | null,
@@ -53,6 +54,26 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
     backend: [],
     frontend: [],
   })
+
+  // FIX-D: refreshStatus fetches GET /workflow/{id} and syncs pipelineState.
+  // This is the single source of truth for UI state transitions — used after
+  // user actions (qa/complete, design-review approval) and as a polling fallback
+  // when WebSocket is offline.
+  const refreshStatus = useCallback(async () => {
+    if (!projectId) return
+    try {
+      const next = await api.getWorkflowStatus(projectId)
+      if (next) {
+        setPipelineState({
+          state: next.state || "empty",
+          current_stage: next.current_stage || null,
+          stages_completed: next.completed_stages || [],
+        })
+      }
+    } catch {
+      // ignore transient network errors
+    }
+  }, [projectId])
 
   // Sync initial state once fetched
   useEffect(() => {
@@ -77,6 +98,17 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
       setLiveFiles(initialFiles)
     }
   }, [initialFiles])
+
+  // FIX-D: Poll GET /workflow/{id} every 5 s when the pipeline is active.
+  // This is a safety-net fallback for when the WebSocket is offline or has not yet
+  // delivered a status_update (e.g. right after qa/complete fires the background task).
+  // The poll stops automatically once the pipeline reaches a terminal state.
+  useEffect(() => {
+    const TERMINAL_STATES = new Set(["done", "deployable", "failed", "empty"])
+    if (TERMINAL_STATES.has(pipelineState.state)) return
+    const id = setInterval(refreshStatus, 5000)
+    return () => clearInterval(id)
+  }, [pipelineState.state, refreshStatus])
 
   const handleWSMessage = useCallback((msg: WSMessage) => {
     switch (msg.type) {
@@ -313,7 +345,9 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
         {/* Center: Conversational AI Prompt Workspace / Interactive Q&A / Approval Panel */}
         <div className="min-w-0 flex-1 overflow-hidden flex flex-col">
           {pipelineState.state === "qa_pending" || pipelineState.state === "qa_in_progress" ? (
-            <QAPanel projectId={projectId} onComplete={refreshProject} />
+            // FIX-D: onComplete must refresh pipelineState (not just project metadata)
+            // so the center panel stops rendering QAPanel after qa/complete fires.
+            <QAPanel projectId={projectId} onComplete={async () => { refreshProject(); await refreshStatus() }} />
           ) : isAwaitingHumanApproval ? (
             <ApprovalPanel
               projectId={projectId}
@@ -390,11 +424,13 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
       </div>
 
       {/* Design Approval Modal Gate */}
+      {/* FIX-D: onActionCompleted must refresh pipelineState so the design-review
+          banner disappears and the pipeline advances in the UI */}
       <DesignReviewModal
         projectId={projectId}
         open={designReviewOpen}
         onOpenChange={setDesignReviewOpen}
-        onActionCompleted={refreshProject}
+        onActionCompleted={async () => { setDesignReviewOpen(false); refreshProject(); await refreshStatus() }}
       />
     </div>
   )
