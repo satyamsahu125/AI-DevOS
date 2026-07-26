@@ -26,18 +26,11 @@ class AgentContext:
     agent_performance: dict[str, Any] = field(default_factory=dict)
     lessons: list[str] = field(default_factory=list)
     additional_context: str = ""
+    cross_project_patterns: list[str] = field(default_factory=list)
 
 
 class ContextManager:
-    """Builds the context an agent needs for one stage execution.
-
-    build_context() is the documented entry point: it loads whatever
-    project, workflow, and review memory is available for the given
-    project/stage, plus LearningLoop's relevant past patterns and this
-    stage's performance stats, plus LessonStore's human-readable lessons,
-    and returns it all as part of the AgentContext, so agents never query
-    MemoryManager/LearningLoop/LessonStore directly.
-    """
+    """Builds the context an agent needs for one stage execution."""
 
     def __init__(
         self,
@@ -45,11 +38,13 @@ class ContextManager:
         learning_loop: LearningLoop | None = None,
         lesson_store: LessonStore | None = None,
         workspace_manager: Any | None = None,
+        prompt_analyzer: Any | None = None,
     ) -> None:
         """Wire the MemoryManager, LearningLoop, and LessonStore used to load context."""
         self.memory_manager = memory_manager or MemoryManager()
         self.learning_loop = learning_loop or LearningLoop()
         self.lesson_store = lesson_store or LessonStore()
+        self.prompt_analyzer = prompt_analyzer
         if workspace_manager is not None:
             self.workspace = workspace_manager
         else:
@@ -61,15 +56,7 @@ class ContextManager:
         return {"request": request, **kwargs}
 
     def build_context(self, project_id: str, stage_name: str, task: str = "") -> AgentContext:
-        """Build an AgentContext for stage_name, loading relevant memory for project_id.
-
-        Loads, in order: project memory, workflow-state memory, and past
-        review feedback for this stage -- each stored under its own
-        namespaced key in MemoryManager -- and includes whatever is found
-        in AgentContext.memory. Also loads LearningLoop's semantically
-        relevant past patterns and this stage's performance stats, plus
-        LessonStore's human-readable lessons for this project/stage.
-        """
+        """Build an AgentContext for stage_name, loading relevant memory for project_id."""
         logger.info("building context: project_id=%s stage=%s", project_id, stage_name)
         memory_entries: list[str] = []
 
@@ -113,6 +100,17 @@ class ContextManager:
         lesson_summaries = [f"Worked: {lesson.what_worked[:120]} | Failed: {lesson.what_failed[:120]}" for lesson in lessons]
         logger.debug("lesson store loaded: stage=%s project_id=%s lessons=%s", stage_name, project_id, len(lesson_summaries))
 
+        cross_project_patterns: list[str] = []
+        try:
+            analyzer = self.prompt_analyzer
+            if analyzer is None:
+                from ..learning.prompt_analyzer import PromptQualityAnalyzer
+                analyzer = PromptQualityAnalyzer()
+            search_results = analyzer.get_cross_project_patterns(query=f"{stage_name}: {resolved_task[:100]}", top_k=3)
+            cross_project_patterns = [p["content"] for p in search_results if p.get("score", 0.0) > 0.65]
+        except Exception as exc:
+            logger.debug("Pattern injection skipped: %s", exc)
+
         return AgentContext(
             project_name=project_name,
             agent_name=stage_name,
@@ -122,6 +120,7 @@ class ContextManager:
             agent_performance=performance,
             lessons=lesson_summaries,
             additional_context=change_context,
+            cross_project_patterns=cross_project_patterns,
         )
 
 

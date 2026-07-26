@@ -137,6 +137,10 @@ class LessonStore:
     def _row_to_lesson(self, row: tuple) -> Lesson:
         (lesson_id, stage, project_id, what_worked, what_failed, reviewer_said,
          retry_count_when_learned, created_at) = row
+        try:
+            dt = datetime.fromisoformat(created_at)
+        except Exception:
+            dt = datetime.now(timezone.utc)
         return Lesson(
             lesson_id=lesson_id,
             stage=stage,
@@ -145,7 +149,7 @@ class LessonStore:
             what_failed=what_failed,
             reviewer_said=reviewer_said,
             retry_count_when_learned=retry_count_when_learned,
-            created_at=datetime.fromisoformat(created_at),
+            created_at=dt,
         )
 
 

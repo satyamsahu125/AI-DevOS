@@ -121,6 +121,28 @@ class Container:
         )
         from ..llm.cost_tracker import CostTracker
         self._dependencies.register_singleton("cost_tracker", lambda: CostTracker("backend/app/memory/costs.db"))
+        from ..learning.performance_scorer import AgentPerformanceScorer
+        self._dependencies.register_singleton(
+            "performance_scorer",
+            lambda: AgentPerformanceScorer(
+                learning_loop=self._dependencies.resolve("learning_loop"),
+                cost_tracker=self._dependencies.resolve("cost_tracker"),
+            ),
+        )
+        from ..learning.prompt_analyzer import PromptQualityAnalyzer
+
+        def _build_prompt_analyzer():
+            try:
+                ls = self._dependencies.resolve("lesson_store")
+            except Exception:
+                ls = None
+            try:
+                km = self._dependencies.resolve("knowledge_memory")
+            except Exception:
+                km = None
+            return PromptQualityAnalyzer(lesson_store=ls, knowledge_memory=km)
+
+        self._dependencies.register_singleton("prompt_analyzer", _build_prompt_analyzer)
         self._dependencies.register_singleton(
             "llm_manager",
             lambda: LLMManager(
@@ -241,8 +263,10 @@ class Container:
         logger.debug("container built: services=%s", self._dependencies.registry.list_services())
         return self
 
-    def resolve(self) -> "Container":
-        """Return this already-built container (present for documented-interface compatibility)."""
+    def resolve(self, service_name: str | None = None) -> Any:
+        """Return this container or resolve a named service."""
+        if service_name is not None:
+            return self._dependencies.resolve(service_name)
         return self
 
     @property
@@ -316,6 +340,14 @@ class Container:
     @property
     def cost_tracker(self):
         return self._dependencies.resolve("cost_tracker")
+
+    @property
+    def performance_scorer(self):
+        return self._dependencies.resolve("performance_scorer")
+
+    @property
+    def prompt_analyzer(self):
+        return self._dependencies.resolve("prompt_analyzer")
 
     @property
     def impact_analyzer(self):
