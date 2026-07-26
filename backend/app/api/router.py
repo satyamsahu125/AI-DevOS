@@ -5,6 +5,7 @@ from .artifacts import router as artifacts_router
 from .chat import router as chat_router
 from .files import router as files_router
 from .health import router as health_router
+from .intelligence import router as intelligence_router
 from .learning import router as learning_router
 from .logs import router as logs_router
 from .memory import router as memory_router
@@ -26,3 +27,4 @@ api_router.include_router(learning_router)
 api_router.include_router(files_router)
 api_router.include_router(logs_router)
 api_router.include_router(settings_router)
+api_router.include_router(intelligence_router)

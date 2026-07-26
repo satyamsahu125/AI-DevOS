@@ -20,6 +20,10 @@ from ..execution.manager import ExecutionManager
 from ..execution.project_reader import ProjectReader
 from ..execution.project_validator import ProjectValidator
 from ..execution.project_writer import ProjectWriter
+from ..intelligence.code_summarizer import CodeSummarizer
+from ..intelligence.context_orchestrator import ContextOrchestrator
+from ..intelligence.dependency_graph import ProjectDependencyGraph
+from ..intelligence.file_indexer import FileIndexer
 from ..llm.manager import LLMManager
 from ..memory.knowledge_memory import KnowledgeMemory
 from ..memory.learning_loop import LearningLoop
@@ -95,7 +99,10 @@ class Container:
         )
         self._dependencies.register_singleton(
             "project_writer",
-            lambda: ProjectWriter(self._dependencies.resolve("workspace_manager")),
+            lambda: ProjectWriter(
+                self._dependencies.resolve("workspace_manager"),
+                file_indexer=self._dependencies.resolve("file_indexer"),
+            ),
         )
         self._dependencies.register_singleton(
             "project_reader",
@@ -128,6 +135,37 @@ class Container:
         # )
         from ..llm.cost_tracker import CostTracker
         self._dependencies.register_singleton("cost_tracker", lambda: CostTracker("backend/app/memory/costs.db"))
+
+        # ── Intelligence Layer ────────────────────────────────────────────────
+        self._dependencies.register_singleton(
+            "file_indexer",
+            lambda: FileIndexer(db_path="backend/app/memory/file_index.db"),
+        )
+        self._dependencies.register_singleton(
+            "dependency_graph",
+            lambda: ProjectDependencyGraph(
+                file_indexer=self._dependencies.resolve("file_indexer"),
+            ),
+        )
+        self._dependencies.register_singleton(
+            "code_summarizer",
+            lambda: CodeSummarizer(
+                file_indexer=self._dependencies.resolve("file_indexer"),
+            ),
+        )
+        self._dependencies.register_singleton(
+            "context_orchestrator",
+            lambda: ContextOrchestrator(
+                file_indexer=self._dependencies.resolve("file_indexer"),
+                dependency_graph=self._dependencies.resolve("dependency_graph"),
+                code_summarizer=self._dependencies.resolve("code_summarizer"),
+                knowledge_memory=self._dependencies.resolve("knowledge_memory"),
+                lesson_store=self._dependencies.resolve("lesson_store") if self._dependencies.registry.has("lesson_store") else None,
+                artifact_manager=self._dependencies.resolve("artifact_manager"),
+                workspace_manager=self._dependencies.resolve("workspace_manager"),
+            ),
+        )
+        # ─────────────────────────────────────────────────────────────────────
         from ..learning.performance_scorer import AgentPerformanceScorer
         self._dependencies.register_singleton(
             "performance_scorer",
@@ -206,6 +244,7 @@ class Container:
                 event_log=self._dependencies.resolve("event_log"),
                 execution_state=self._dependencies.resolve("execution_state"),
                 broadcaster=self._dependencies.resolve("broadcaster"),
+                context_orchestrator=self._dependencies.resolve("context_orchestrator"),
             ),
         )
         self._dependencies.register_singleton("agent_factory", AgentFactory)

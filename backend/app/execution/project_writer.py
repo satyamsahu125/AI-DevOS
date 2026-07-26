@@ -3,9 +3,13 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from ..workspace.manager import WorkspaceManager
+
+if TYPE_CHECKING:
+    from ..intelligence.file_indexer import FileIndexer
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +31,14 @@ class ProjectWriter:
     component that makes code real.
     """
 
-    def __init__(self, workspace_manager: WorkspaceManager | None = None) -> None:
+    def __init__(
+        self,
+        workspace_manager: WorkspaceManager | None = None,
+        file_indexer: "FileIndexer | None" = None,
+    ) -> None:
         self.workspace = workspace_manager or WorkspaceManager()
+        self._file_indexer = file_indexer
+        self._current_sprint: int = 0
 
     def get_project_dir(self, project_id: str) -> Path:
         """Returns temp-workspace/{project_id}/project/"""
@@ -54,6 +64,18 @@ class ProjectWriter:
         history_path.write_text(content, encoding="utf-8")
 
         logger.info("Written: %s (%d bytes)", full_path, len(content))
+
+        # Auto-index via FileIndexer (no LLM — pure AST/regex)
+        if self._file_indexer is not None:
+            try:
+                self._file_indexer.index_file(
+                    project_id=project_id,
+                    file_path=file_path,
+                    content=content,
+                    sprint_number=self._current_sprint,
+                )
+            except Exception as _idx_exc:
+                logger.debug("FileIndexer.index_file skipped: %s", _idx_exc)
 
         return WrittenFile(
             file_path=file_path,

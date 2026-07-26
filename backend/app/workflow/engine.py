@@ -91,6 +91,7 @@ class WorkflowEngine:
         event_log: ProjectEventLog | None = None,
         execution_state: ExecutionStateRegistry | None = None,
         broadcaster: Any | None = None,
+        context_orchestrator: Any | None = None,
     ) -> None:
         """Wire up the collaborators needed to run a single workflow stage."""
         self.state_machine = WorkflowStateMachine()
@@ -106,6 +107,7 @@ class WorkflowEngine:
         self.lesson_store = lesson_store or LessonStore()
         self.event_log = event_log or ProjectEventLog()
         self.execution_state = execution_state or ExecutionStateRegistry()
+        self.context_orchestrator = context_orchestrator  # None = intelligence layer disabled
         if broadcaster is not None:
             self.broadcaster = broadcaster
         else:
@@ -149,6 +151,7 @@ class WorkflowEngine:
         base_content = self._with_relevant_patterns(base_content, stage_name, content, project_id)
         base_content = self._with_design_context(project_id, base_content, stage_name)
         base_content = self._with_lessons(base_content, stage_name, project_id)
+        base_content = self._with_intelligence_context(project_id, stage_name, base_content)
 
         if hasattr(self.execution_manager, "llm_manager") and self.execution_manager.llm_manager:
             self.execution_manager.llm_manager.set_context(project_id, stage_name)
@@ -395,6 +398,27 @@ class WorkflowEngine:
             if lesson.reviewer_said:
                 lines.append(f"  Reviewer said: {lesson.reviewer_said[:150]}")
         return f"{content}\n\n" + "\n".join(lines)
+
+    def _with_intelligence_context(self, project_id: str, stage_name: str, content: str) -> str:
+        """Prepend intelligence context (file index, dependency graph, project overview) via ContextOrchestrator.
+
+        Only runs when ``self.context_orchestrator`` is set (registered in Container).
+        Gracefully skips on any error so it never blocks the main pipeline.
+        """
+        if self.context_orchestrator is None:
+            return content
+        try:
+            package = self.context_orchestrator.build(
+                project_id=project_id,
+                stage=stage_name,
+                task_description=content[:200],  # keyword hint only — keep it fast
+            )
+            prefix = self.context_orchestrator.format_as_prompt_section(package)
+            if prefix:
+                return f"{prefix}\n\n━━━ YOUR TASK ━━━\n{content}"
+        except Exception as exc:
+            logger.debug("ContextOrchestrator skipped for %s/%s: %s", project_id, stage_name, exc)
+        return content
 
     def _record_design(self, project_id: str, stage: Stage, artifact: StageArtifact) -> None:
         """Persist an approved Designer artifact to project_id's durable design memory slot."""
