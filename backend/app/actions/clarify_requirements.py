@@ -26,13 +26,17 @@ class GenerateQuestionsAction(LLMAction):
     def __init__(self, prompt_builder: ClarificationPromptBuilder | None = None) -> None:
         super().__init__(prompt_builder or ClarificationPromptBuilder())
 
-    def run_generate(self, request: str, llm_manager: Any) -> QuestionSet:
+    def run_generate(self, request: str, llm_manager: Any, domain_brief: dict | None = None) -> QuestionSet:
         builder = self.prompt_builder
-        prompt = (
-            builder.build_generate_prompt(request)
-            if hasattr(builder, "build_generate_prompt")
-            else f"Generate questions for request: {request}"
-        )
+        if hasattr(builder, "build_generate_prompt"):
+            import inspect
+            sig = inspect.signature(builder.build_generate_prompt)
+            if "domain_brief" in sig.parameters:
+                prompt = builder.build_generate_prompt(request, domain_brief=domain_brief)
+            else:
+                prompt = builder.build_generate_prompt(request)
+        else:
+            prompt = f"Generate questions for request: {request}"
         response = llm_manager.generate_text(prompt=prompt, system_prompt=self.system_prompt)
         content = response.content if hasattr(response, "content") else str(response)
         parsed = self._parse_structured(content)

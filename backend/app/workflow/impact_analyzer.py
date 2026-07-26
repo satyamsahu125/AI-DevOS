@@ -78,11 +78,24 @@ class ImpactAnalyzer:
     """Analyzes which stages need to re-run when a requirement changes between sprints.
 
     Uses LLM to classify change type, then applies dependency rules to find affected stages.
+
+    For post-sprint partial changes, ``analyze_file_impact()`` uses FileIndexer +
+    DependencyGraph to identify specific files rather than whole stages.
     """
 
-    def __init__(self, llm_manager, artifact_manager) -> None:
+    def __init__(
+        self,
+        llm_manager,
+        artifact_manager,
+        file_indexer=None,
+        dep_graph=None,
+        code_summarizer=None,
+    ) -> None:
         self.llm = llm_manager
         self.artifacts = artifact_manager
+        self._file_indexer = file_indexer
+        self._dep_graph = dep_graph
+        self._code_summarizer = code_summarizer
 
     def analyze(
         self,
@@ -161,6 +174,75 @@ class ImpactAnalyzer:
             project_id,
         )
         return analysis
+
+    def analyze_file_impact(
+        self,
+        project_id: str,
+        change_description: str,
+    ) -> dict:
+        """File-level impact analysis for partial changes within a sprint.
+
+        Uses FileIndexer + DependencyGraph to identify specific files to regenerate
+        rather than whole stages. Appropriate when code files already exist on disk
+        (i.e. at least one sprint has completed).
+
+        Returns a dict with:
+          files_to_regenerate  — files touched by this change
+          files_safe           — files unaffected
+          total_affected       — count of files to regenerate
+          total_preserved      — count of safe files
+          explanation          — human-readable summary
+        """
+        if self._code_summarizer is None or self._dep_graph is None or self._file_indexer is None:
+            return {
+                "change_description": change_description,
+                "files_to_regenerate": [],
+                "files_safe": [],
+                "total_affected": 0,
+                "total_preserved": 0,
+                "explanation": "File-level analysis not available (intelligence layer not wired).",
+            }
+
+        try:
+            # Find files relevant to this change by keyword
+            relevant = self._code_summarizer.get_relevant_files(
+                project_id=project_id,
+                task_description=change_description,
+                max_files=10,
+            )
+
+            # Expand to all transitive dependents (BFS)
+            all_affected: set[str] = set(relevant)
+            for fp in relevant:
+                dependents = self._dep_graph.get_impact(project_id, fp)
+                all_affected.update(dependents)
+
+            # Separate built vs safe
+            built_paths = {f.file_path for f in self._file_indexer.get_project_index(project_id)}
+            files_to_regenerate = sorted(all_affected & built_paths)
+            files_safe = sorted(built_paths - all_affected)
+
+            return {
+                "change_description": change_description,
+                "files_to_regenerate": files_to_regenerate,
+                "files_safe": files_safe,
+                "total_affected": len(files_to_regenerate),
+                "total_preserved": len(files_safe),
+                "explanation": (
+                    f"Change affects {len(files_to_regenerate)} file(s). "
+                    f"{len(files_safe)} file(s) are unchanged."
+                ),
+            }
+        except Exception as exc:
+            logger.warning("analyze_file_impact failed: %s", exc)
+            return {
+                "change_description": change_description,
+                "files_to_regenerate": [],
+                "files_safe": [],
+                "total_affected": 0,
+                "total_preserved": 0,
+                "explanation": f"File-level analysis error: {exc}",
+            }
 
     def _classify_change(self, description: str) -> str:
         """Use LLM to classify the change type."""

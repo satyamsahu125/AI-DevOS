@@ -38,12 +38,14 @@ class FrontendDeveloperAgent(BaseAgent):
         project_writer: ProjectWriter | None = None,
         validator: FileValidator | None = None,
         workspace_manager: WorkspaceManager | None = None,
+        file_indexer: object | None = None,
     ) -> None:
         self._prompt_builder = prompt_builder
         self._artifact_manager = artifact_manager
         self._project_file_manager = project_file_manager
         self.project_writer = project_writer or ProjectWriter(workspace_manager)
         self.validator = validator or FileValidator()
+        self._file_indexer = file_indexer  # FIX 5: use summaries for large dependency files
         super().__init__(llm_manager=llm_manager, primary_action=primary_action)
 
     def _build_default_action(self) -> BaseAction:
@@ -167,15 +169,26 @@ class FrontendDeveloperAgent(BaseAgent):
         previous_error: str,
         attempt: int,
         design_artifact: dict | str | None = None,
+        sprint_brief: str = "",
     ) -> str:
-        """Build prompt for ONE file generation, including the approved design spec."""
+        """Build prompt for ONE file generation, including the approved design spec.
+
+        FIX 5: Uses FileIndexer summaries for large dependency files.
+        """
+        _FULL_CONTENT_THRESHOLD = 1500
         design_context = self._build_design_context(design_artifact)
         dependency_context = ""
         deps = getattr(file_spec, "depends_on", []) or []
         for dep_path in deps[:3]:
             dep_content = self.project_writer.read_file(project_id, dep_path)
-            if dep_content:
+            if dep_content and len(dep_content) <= _FULL_CONTENT_THRESHOLD:
                 dependency_context += f"\n\n// {dep_path}:\n{dep_content}"
+            elif self._file_indexer is not None:
+                summary = self._file_indexer.get_file_summary(project_id, dep_path)
+                if summary:
+                    dependency_context += f"\n\n// {dep_path} (summary):\n{summary}"
+            elif dep_content:
+                dependency_context += f"\n\n// {dep_path} (first 1500 chars):\n{dep_content[:1500]}"
 
         error_context = ""
         if previous_error:
@@ -183,8 +196,8 @@ class FrontendDeveloperAgent(BaseAgent):
 
         req_imports = "\n".join(f"  - {imp}" for imp in (getattr(file_spec, "required_imports", []) or []))
 
-        return f"""
-Generate the file: {file_spec.file_path}
+        sprint_context = f"{sprint_brief}\n\n" if sprint_brief else ""
+        return f"""{sprint_context}Generate the file: {file_spec.file_path}
 
 Purpose: {file_spec.purpose}
 Language: {file_spec.language}

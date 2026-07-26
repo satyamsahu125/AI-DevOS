@@ -24,9 +24,14 @@ class ClarificationAgent(BaseAgent):
     def _build_default_action(self) -> BaseAction:
         return ClarifyRequirementsAction()
 
-    def generate_questions(self, request: str) -> QuestionSet:
-        """Phase A: Analyze request and generate up to 7 targeted questions."""
-        return self.generate_action.run_generate(request, self.llm_manager)
+    def generate_questions(self, request: str, domain_brief: dict | None = None) -> QuestionSet:
+        """Phase A: Analyze request and generate up to 7 targeted questions.
+
+        When ``domain_brief`` is provided (from DomainResearcherAgent), the prompt
+        is enriched with domain-specific smart questions and a list of obvious
+        questions to skip, so the Q&A is domain-aware from the start.
+        """
+        return self.generate_action.run_generate(request, self.llm_manager, domain_brief=domain_brief)
 
     def process_answers(self, original_request: str, qa_session: dict[str, Any]) -> ClarificationArtifact:
         """Phase B: Combine request + user answers into ClarificationArtifact."""

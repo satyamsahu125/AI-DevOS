@@ -7,6 +7,7 @@ from typing import Any
 from ..agents.backend import BackendDeveloperAgent
 from ..agents.chat_router import ChatRouter
 from ..agents.clarification import ClarificationAgent
+from ..agents.domain_researcher import DomainResearcherAgent
 from ..agents.factory import AgentFactory
 from ..agents.file_planner import FilePlannerAgent
 from ..agents.frontend import FrontendDeveloperAgent
@@ -24,6 +25,7 @@ from ..intelligence.code_summarizer import CodeSummarizer
 from ..intelligence.context_orchestrator import ContextOrchestrator
 from ..intelligence.dependency_graph import ProjectDependencyGraph
 from ..intelligence.file_indexer import FileIndexer
+from ..intelligence.sprint_monitor import SprintMonitor
 from ..llm.manager import LLMManager
 from ..memory.knowledge_memory import KnowledgeMemory
 from ..memory.learning_loop import LearningLoop
@@ -165,6 +167,19 @@ class Container:
                 workspace_manager=self._dependencies.resolve("workspace_manager"),
             ),
         )
+        self._dependencies.register_singleton(
+            "sprint_monitor",
+            lambda: SprintMonitor(
+                file_indexer=self._dependencies.resolve("file_indexer"),
+                dependency_graph=self._dependencies.resolve("dependency_graph"),
+                artifact_manager=self._dependencies.resolve("artifact_manager"),
+                workspace_manager=self._dependencies.resolve("workspace_manager"),
+            ),
+        )
+        self._dependencies.register_singleton(
+            "domain_researcher_agent",
+            lambda: DomainResearcherAgent(llm_manager=self._dependencies.resolve("llm_manager")),
+        )
         # ─────────────────────────────────────────────────────────────────────
         from ..learning.performance_scorer import AgentPerformanceScorer
         self._dependencies.register_singleton(
@@ -216,6 +231,7 @@ class Container:
                 project_writer=self._dependencies.resolve("project_writer"),
                 validator=self._dependencies.resolve("file_validator"),
                 workspace_manager=self._dependencies.resolve("workspace_manager"),
+                file_indexer=self._dependencies.resolve("file_indexer"),
             ),
         )
         self._dependencies.register_singleton(
@@ -225,6 +241,7 @@ class Container:
                 project_writer=self._dependencies.resolve("project_writer"),
                 validator=self._dependencies.resolve("file_validator"),
                 workspace_manager=self._dependencies.resolve("workspace_manager"),
+                file_indexer=self._dependencies.resolve("file_indexer"),
             ),
         )
 
@@ -258,6 +275,9 @@ class Container:
             lambda: ImpactAnalyzer(
                 llm_manager=self._dependencies.resolve("llm_manager"),
                 artifact_manager=self._dependencies.resolve("artifact_manager"),
+                file_indexer=self._dependencies.resolve("file_indexer"),
+                dep_graph=self._dependencies.resolve("dependency_graph"),
+                code_summarizer=self._dependencies.resolve("code_summarizer"),
             ),
         )
         self._dependencies.register_singleton(
@@ -270,6 +290,8 @@ class Container:
                 project_validator=self._dependencies.resolve("project_validator"),
                 impact_analyzer=self._dependencies.resolve("impact_analyzer"),
                 container=self,  # gives _run_sprint() access to DI-wired developer agents
+                sprint_monitor=self._dependencies.resolve("sprint_monitor"),
+                domain_researcher=self._dependencies.resolve("domain_researcher_agent"),
             ),
         )
         self._dependencies.register_singleton(

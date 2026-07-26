@@ -4,6 +4,8 @@ import json
 import logging
 from types import SimpleNamespace
 
+from typing import Any
+
 from ..agents.base_agent import BaseAgent
 from ..agents.factory import AgentFactory
 from ..artifact.manager import ArtifactManager
@@ -45,6 +47,8 @@ class WorkflowManager:
         project_validator: ProjectValidator | None = None,
         impact_analyzer: Any | None = None,
         container: Any | None = None,
+        sprint_monitor: Any | None = None,
+        domain_researcher: Any | None = None,
     ) -> None:
         """Wire the engine, workspace_manager, execution_state registry, agent_factory, project_validator, and DI container.
 
@@ -78,6 +82,8 @@ class WorkflowManager:
         if self.broadcaster is None:
             from ..events.broadcaster import broadcaster as default_broadcaster
             self.broadcaster = default_broadcaster
+        self.sprint_monitor = sprint_monitor   # None = feature disabled
+        self.domain_researcher = domain_researcher  # None = feature disabled
 
     def _get_agent(self, stage_name: str) -> BaseAgent:
         """Resolve agent via factory — never instantiate directly."""
@@ -169,9 +175,11 @@ class WorkflowManager:
                         return self._fail(project_id, "StrategicReview", result)
                 else:
                     from ..agents.clarification import ClarificationAgent
+                    # Run domain research BEFORE generating questions so Q&A is domain-aware
+                    domain_brief = self._run_domain_research(project_id, request)
                     agent = self._get_agent("clarification")
                     if isinstance(agent, ClarificationAgent):
-                        q_set = agent.generate_questions(request)
+                        q_set = agent.generate_questions(request, domain_brief=domain_brief)
                         questions = [q.model_dump(mode="json") if hasattr(q, "model_dump") else q for q in q_set.questions]
                     else:
                         questions = []
@@ -428,6 +436,23 @@ class WorkflowManager:
         pj = self.workspace.load_project_json(project_id) or {}
         stages_completed = pj.get("stages_completed", [])
 
+        # FIX 4: Use file-level impact analysis when code files already exist
+        code_stages = {"backend", "frontend", "BackendDeveloper", "FrontendDeveloper"}
+        use_file_level = any(s in code_stages for s in stages_completed)
+        if use_file_level and hasattr(self.impact_analyzer, "analyze_file_impact"):
+            file_impact = self.impact_analyzer.analyze_file_impact(
+                project_id=project_id,
+                change_description=change_description,
+            )
+            logger.info(
+                "File-level impact analysis for %s: %d files affected, %d preserved",
+                project_id, file_impact.get("total_affected", 0), file_impact.get("total_preserved", 0),
+            )
+            # Store file-level analysis in project.json for UI display
+            self.workspace.update_project_json(project_id, {
+                "file_impact_analysis": file_impact
+            })
+
         analysis = self.impact_analyzer.analyze(
             project_id=project_id,
             change_description=change_description,
@@ -531,6 +556,34 @@ class WorkflowManager:
             stages_completed=data.get("stages_completed", []),
         )
 
+    def _run_domain_research(self, project_id: str, request: str) -> dict | None:
+        """Run DomainResearcherAgent before Q&A to get domain-specific context.
+
+        Returns the DomainBrief as a dict, or None if the agent is not
+        wired in or if it fails (non-fatal — Q&A proceeds without enrichment).
+        """
+        if self.domain_researcher is None:
+            return None
+        try:
+            brief = self.domain_researcher.research(request)
+            brief_dict = brief.model_dump(mode="json") if hasattr(brief, "model_dump") else {}
+            # Persist as a stage artifact so downstream agents can reference it
+            from ..shared.enums.stage import Stage
+            self.artifact_manager.save_artifact(
+                project_id=project_id,
+                stage=Stage.DomainResearch,
+                content=str(brief_dict),
+                structured_content=brief_dict,
+            )
+            logger.info(
+                "Domain research complete for %s: domain=%s complexity=%s",
+                project_id, brief_dict.get("domain"), brief_dict.get("complexity"),
+            )
+            return brief_dict
+        except Exception as exc:
+            logger.warning("Domain research failed (non-fatal): %s", exc)
+            return None
+
     def _run_stage(self, project_id: str, stage_name: str, request: str) -> WorkflowResult:
         """Run a stage by name."""
         return self.run_stage(project_id, stage_name, request)
@@ -589,23 +642,38 @@ class WorkflowManager:
     def _build_sprint_context(self, project_id: str, sprint: Sprint, arch: object | None) -> str:
         """Build the context string passed to developer agents for this sprint.
 
-        Injects Architecture spec AND the approved ScrumMaster plan so that
-        developer agents know sprint ceremonies, velocity targets, and team
-        assignments — not just the raw architecture. Without ScrumMaster context
-        the sprint execution effectively ignores the Agile planning layer.
+        Injects:
+          - SprintMonitor brief (file-level context from all previous sprints) — FIX 5
+          - Architecture spec
+          - ScrumMaster plan
         """
-        arch_text = getattr(arch, "content", str(arch)) if arch else ""
+        # FIX 5: Sprint brief from SprintMonitor includes previous-sprint file summaries
+        sprint_brief = ""
+        if self.sprint_monitor is not None:
+            try:
+                sprint_brief = self.sprint_monitor.generate_sprint_brief(
+                    project_id=project_id,
+                    sprint_number=sprint.sprint_number,
+                    sprint_goal=sprint.goal,
+                )
+            except Exception as exc:
+                logger.debug("SprintMonitor.generate_sprint_brief failed (non-fatal): %s", exc)
 
+        arch_text = getattr(arch, "content", str(arch)) if arch else ""
         scrum_artifact = self.artifact_manager.get_artifact(project_id, Stage.ScrumMaster)
         scrum_text = getattr(scrum_artifact, "content", "") if scrum_artifact else ""
 
-        parts = [
-            f"Sprint {sprint.sprint_number}: {sprint.name}",
-            f"Goal: {sprint.goal}",
-            f"Features: {', '.join(sprint.features)}",
-            "",
-            f"Architecture Spec:\n{arch_text}",
-        ]
+        parts: list[str] = []
+        if sprint_brief:
+            parts.append(sprint_brief)
+        else:
+            parts.extend([
+                f"Sprint {sprint.sprint_number}: {sprint.name}",
+                f"Goal: {sprint.goal}",
+                f"Features: {', '.join(sprint.features)}",
+            ])
+
+        parts.append(f"\nArchitecture Spec:\n{arch_text[:1500]}")
         if scrum_text:
             parts.append(f"\nScrumMaster Plan:\n{scrum_text[:2000]}")
 
@@ -709,6 +777,22 @@ class WorkflowManager:
         all_success = bool(backend_result.success and frontend_result.success)
         if all_success:
             self.workspace.mark_sprint_complete(project_id, sprint.sprint_number)
+            # FIX 3: Validate sprint output against architecture contracts (non-blocking)
+            if self.sprint_monitor is not None:
+                try:
+                    issues = self.sprint_monitor.validate_sprint_output(
+                        project_id, sprint.sprint_number
+                    )
+                    if issues:
+                        logger.warning(
+                            "Sprint %d validation issues for %s: %s",
+                            sprint.sprint_number, project_id, issues,
+                        )
+                        self.workspace.update_project_json(project_id, {
+                            f"sprint_{sprint.sprint_number}_issues": issues
+                        })
+                except Exception as exc:
+                    logger.debug("SprintMonitor.validate_sprint_output failed (non-fatal): %s", exc)
 
         return SprintResult(
             sprint_complete=all_success,

@@ -266,8 +266,36 @@ class ClarificationPromptBuilder(PromptBuilder):
         body = f"Clarification Prompt:\n{base}" if base else "Clarification Prompt"
         return f"{SYSTEM_PROMPT}\n\n{body}"
 
-    def build_generate_prompt(self, request: str) -> str:
+    def build_generate_prompt(self, request: str, domain_brief: dict | None = None) -> str:
+        domain_section = ""
+        if domain_brief and domain_brief.get("domain"):
+            q_to_ask = domain_brief.get("questions_to_ask", [])
+            q_not_ask = domain_brief.get("questions_not_to_ask", [])
+            modules = domain_brief.get("standard_modules", [])
+            actors = domain_brief.get("standard_actors", [])
+            pitfalls = domain_brief.get("common_pitfalls", [])
+            domain_section = (
+                f"\n\nDOMAIN RESEARCH FOR THIS PROJECT:\n"
+                f"  Domain: {domain_brief['domain']}\n"
+                f"  Complexity: {domain_brief.get('complexity', 'medium')}\n"
+                f"  Standard modules: {', '.join(modules[:8])}\n"
+                f"  Standard actors: {', '.join(actors[:6])}\n"
+                f"  Common pitfalls: {', '.join(pitfalls[:4])}\n"
+                f"\n  SMART QUESTIONS TO ASK (domain-specific, from domain research):\n"
+                + "".join(f"    - {q}\n" for q in q_to_ask[:6])
+                + f"\n  DO NOT ASK THESE (domain makes them obvious):\n"
+                + "".join(f"    - {q}\n" for q in q_not_ask[:4])
+            )
         return (
+            f"{GENERATE_SYSTEM_PROMPT}"
+            f"{domain_section}\n\n"
+            f"Analyze this request and generate questions:\n\n"
+            f"{request}\n\n"
+            f"Focus on: what type of app, who uses it, "
+            f"what scale, what features are needed, "
+            f"what is explicitly NOT needed.\n"
+            f"Use the domain research above to ask SMART, domain-specific questions."
+            if domain_section else
             f"{GENERATE_SYSTEM_PROMPT}\n\n"
             f"Analyze this request and generate questions:\n\n"
             f"{request}\n\n"
