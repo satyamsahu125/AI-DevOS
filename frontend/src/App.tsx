@@ -1,28 +1,16 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
+import { ProjectsPage } from "./pages/ProjectsPage"
+import { WorkspacePage } from "./pages/WorkspacePage"
 
-import { AppShell } from "@/layouts/AppShell"
-import { Dashboard } from "@/pages/Dashboard"
-import { Projects } from "@/pages/Projects"
-import { AgentsPage } from "@/pages/AgentsPage"
-import { MemoryPage } from "@/pages/MemoryPage"
-import { SettingsPage } from "@/pages/SettingsPage"
-
-function App() {
+export function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route element={<AppShell />}>
-          <Route index element={<Dashboard />} />
-          <Route path="/projects" element={<Projects />} />
-          <Route path="/projects/:projectId" element={<Projects />} />
-          <Route path="/agents" element={<AgentsPage />} />
-          <Route path="/memory" element={<MemoryPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
+        <Route path="/" element={<Navigate to="/projects" replace />} />
+        <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/projects/:projectId" element={<WorkspacePage />} />
+        <Route path="*" element={<Navigate to="/projects" replace />} />
       </Routes>
     </BrowserRouter>
   )
 }
-
-export default App

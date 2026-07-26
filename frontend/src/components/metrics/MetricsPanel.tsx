@@ -1,139 +1,123 @@
 import { useEffect, useState } from "react"
-import { motion } from "framer-motion"
-import { Zap, Clock, Hash, DollarSign, TrendingUp, AlertCircle } from "lucide-react"
+import { api, type CostSummary, type MemorySummary, type AgentInfo } from "../../lib/api"
+import { Spinner } from "../ui/Spinner"
 
-export function MetricsPanel({ projectId }: { projectId: string }) {
-  const [metrics, setMetrics] = useState<any>(null)
+interface Props { projectId: string }
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-zinc-800/60 bg-zinc-900/40 p-4">
+      <h4 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">{title}</h4>
+      {children}
+    </div>
+  )
+}
+
+function Stat({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
+  return (
+    <div className="flex items-start justify-between py-1.5 text-xs">
+      <span className="text-zinc-500">{label}</span>
+      <div className="text-right">
+        <span className="font-mono text-zinc-200">{value}</span>
+        {sub && <div className="text-[10px] text-zinc-600">{sub}</div>}
+      </div>
+    </div>
+  )
+}
+
+export function MetricsPanel({ projectId }: Props) {
+  const [cost, setCost] = useState<CostSummary | null>(null)
+  const [memory, setMemory] = useState<MemorySummary | null>(null)
+  const [agents, setAgents] = useState<AgentInfo[]>([])
   const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState<"cost" | "memory" | "agents">("cost")
 
   useEffect(() => {
-    if (!projectId) return
-    fetch(`/api/projects/${projectId}/metrics`)
-      .then((r) => r.json())
-      .then((data) => {
-        setMetrics(data)
-        setLoading(false)
-      })
-      .catch(() => setLoading(false))
+    setLoading(true)
+    Promise.allSettled([
+      api.getCost(projectId),
+      api.getMemory(projectId),
+      api.listAgents(),
+    ]).then(([c, m, a]) => {
+      if (c.status === "fulfilled") setCost(c.value)
+      if (m.status === "fulfilled") setMemory(m.value)
+      if (a.status === "fulfilled") setAgents(a.value)
+    }).finally(() => setLoading(false))
   }, [projectId])
 
-  if (loading) {
-    return (
-      <div className="p-4 space-y-3">
-        {[1, 2, 3].map((i) => (
-          <div key={i} className="h-16 glass-card animate-pulse rounded-xl border border-white/5" />
-        ))}
-      </div>
-    )
-  }
-
-  if (!metrics || metrics.total_llm_calls === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-40 text-center p-4">
-        <TrendingUp size={24} className="text-white/15 mb-3" />
-        <p className="text-sm text-white/40">Metrics appear after pipeline runs</p>
-      </div>
-    )
-  }
-
-  const stats = [
-    {
-      icon: Hash,
-      label: "Total LLM Calls",
-      value: metrics.total_llm_calls,
-      color: "text-violet-400",
-    },
-    {
-      icon: Zap,
-      label: "Total Tokens",
-      value: metrics.total_tokens?.toLocaleString() || 0,
-      color: "text-cyan-400",
-    },
-    {
-      icon: Clock,
-      label: "Pipeline Time",
-      value: `${metrics.total_latency_seconds}s`,
-      color: "text-amber-400",
-    },
-    {
-      icon: DollarSign,
-      label: "Estimated Cost",
-      value: metrics.estimated_cost_usd === 0 ? "Free (local)" : `$${metrics.estimated_cost_usd}`,
-      color: "text-emerald-400",
-    },
-  ]
+  const fmtMs = (ms: number) => ms >= 60000 ? `${(ms / 60000).toFixed(1)}m` : `${(ms / 1000).toFixed(1)}s`
+  const fmtK  = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 
   return (
-    <div className="p-4 space-y-4">
-      {/* Summary stats */}
-      <div className="grid grid-cols-2 gap-3">
-        {stats.map((stat) => {
-          const Icon = stat.icon
-          return (
-            <motion.div
-              key={stat.label}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="glass-card p-3 rounded-xl border border-white/10"
-            >
-              <div className="flex items-center gap-1.5 mb-1">
-                <Icon size={12} className={stat.color} />
-                <span className="text-xs text-white/40">{stat.label}</span>
-              </div>
-              <p className={`text-lg font-bold ${stat.color}`}>{stat.value}</p>
-            </motion.div>
-          )
-        })}
+    <div className="flex h-full flex-col">
+      <div className="flex shrink-0 gap-1 border-b border-zinc-800/60 px-3 py-1.5">
+        {(["cost", "memory", "agents"] as const).map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            className={`rounded px-2.5 py-1 text-[11px] capitalize ${tab === t ? "bg-zinc-700 text-zinc-100" : "text-zinc-500 hover:text-zinc-300"}`}>
+            {t}
+          </button>
+        ))}
       </div>
 
-      {/* Per-stage breakdown */}
-      <div>
-        <p className="text-xs text-white/30 uppercase tracking-wider mb-2 font-mono">
-          Per Stage Breakdown
-        </p>
-        <div className="space-y-2">
-          {metrics.stages?.map((stage: any) => {
-            const retried = stage.retries > 0
-            const maxTokens = Math.max(...metrics.stages.map((s: any) => s.total_tokens))
-            const width = maxTokens > 0 ? (stage.total_tokens / maxTokens) * 100 : 0
-
-            return (
-              <div key={stage.stage} className="glass-card p-3 rounded-lg border border-white/10">
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-white/80 font-medium capitalize">
-                      {stage.stage.replace(/_/g, " ")}
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {loading ? (
+          <div className="flex h-32 items-center justify-center"><Spinner size={18} className="text-indigo-500" /></div>
+        ) : tab === "cost" ? (
+          cost ? (
+            <>
+              <Section title="Token usage">
+                <Stat label="API calls" value={cost.calls} />
+                <Stat label="Prompt tokens" value={fmtK(cost.prompt_tokens)} />
+                <Stat label="Completion tokens" value={fmtK(cost.completion_tokens)} />
+                <Stat label="Total tokens" value={fmtK(cost.total_tokens)} />
+              </Section>
+              <Section title="Latency">
+                <Stat label="Total LLM time" value={fmtMs(cost.total_latency_ms)} />
+                <Stat label="Avg per call" value={cost.calls > 0 ? fmtMs(cost.total_latency_ms / cost.calls) : "—"} />
+              </Section>
+            </>
+          ) : <p className="text-xs text-zinc-600 text-center py-8">No cost data yet</p>
+        ) : tab === "memory" ? (
+          memory ? (
+            <>
+              <Section title="Memory store">
+                <Stat label="Lessons" value={memory.lesson_count} />
+                <Stat label="Trajectories" value={memory.trajectory_count} />
+                <Stat label="Knowledge entries" value={memory.knowledge_entry_count} />
+              </Section>
+              {memory.records.length > 0 && (
+                <Section title="Recent records">
+                  <div className="space-y-2">
+                    {memory.records.slice(0, 8).map((r, i) => (
+                      <div key={i} className="rounded border border-zinc-800 bg-zinc-950/40 p-2.5">
+                        <p className="text-[10px] font-mono text-zinc-500 truncate">{r.key}</p>
+                        <p className="mt-1 text-[11px] text-zinc-400 line-clamp-2">{r.value_preview}</p>
+                      </div>
+                    ))}
+                  </div>
+                </Section>
+              )}
+            </>
+          ) : <p className="text-xs text-zinc-600 text-center py-8">No memory data yet</p>
+        ) : (
+          agents.length > 0 ? (
+            <Section title="Registered agents">
+              <div className="space-y-2">
+                {agents.map((a, i) => (
+                  <div key={i} className="flex items-start justify-between rounded border border-zinc-800 bg-zinc-950/40 p-2.5">
+                    <div>
+                      <p className="text-xs font-medium text-zinc-300">{a.agent}</p>
+                      <p className="text-[10px] text-zinc-600">{a.stage}</p>
+                    </div>
+                    <span className={`rounded px-1.5 py-0.5 text-[9px] ${a.llm_backed ? "bg-indigo-500/10 text-indigo-400" : "bg-zinc-800 text-zinc-500"}`}>
+                      {a.llm_backed ? "LLM" : "rule"}
                     </span>
-                    {retried && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400">
-                        {stage.retries} retry
-                      </span>
-                    )}
                   </div>
-                  <div className="flex items-center gap-3 text-xs text-white/40 font-mono">
-                    <span>{stage.total_tokens.toLocaleString()} tokens</span>
-                    <span>{Math.round(stage.avg_latency_ms / 1000)}s</span>
-                  </div>
-                </div>
-                {/* Token bar */}
-                <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${width}%` }}
-                    transition={{ duration: 0.6, ease: "easeOut" }}
-                    className="h-full bg-indigo-500 rounded-full"
-                  />
-                </div>
-                {stage.success_rate < 1 && (
-                  <p className="text-xs text-rose-400/60 mt-1 flex items-center gap-1">
-                    <AlertCircle size={10} />
-                    {Math.round((1 - stage.success_rate) * 100)}% failure rate
-                  </p>
-                )}
+                ))}
               </div>
-            )
-          })}
-        </div>
+            </Section>
+          ) : <p className="text-xs text-zinc-600 text-center py-8">No agents registered</p>
+        )}
       </div>
     </div>
   )
