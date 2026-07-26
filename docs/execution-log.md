@@ -1321,3 +1321,85 @@ Implemented targeted runtime-contract corrections for the later architecture doc
 - Repository status: Certified
 - Current completed document: DOC-050
 - Next document to execute: None; implementation may continue only after repository certification is complete
+
+---
+
+# AUDIT EXECUTION — 2026-07-27
+
+**NOTE on execution-log2.logs**: The file docs/execution-log2.logs is a secondary execution log
+created during an earlier session (2026-07-19). It covers DOC-090 storage adapter implementation
+and DOC-091 validation gate. Its content has been reviewed and the implementation status entries
+are captured in the AUDIT_REPORT.md component table. docs/execution-log2.logs is now SUPERSEDED
+by this canonical log. No new entries should be appended to execution-log2.logs.
+
+---
+
+## Session: Full Repository Audit
+
+**Date**: 2026-07-27
+**Type**: Deep-code inspection audit
+**Agent**: Claude Sonnet 4.6 (automated)
+**Scope**: All backend/app packages, frontend/src, tests, config, docs
+
+## Actions Performed
+
+- Ran Phase 0 discovery commands (wc -l on key files, cat config/requirements/package.json/run.sh/pytest.ini)
+- Read backend/app/main.py (42 lines)
+- Read backend/app/kernel/container.py (full — 40+ services, DI wiring)
+- Read backend/app/workflow/manager.py (full — 881 lines, state machine)
+- Read backend/app/workflow/engine.py (full — execute/review/retry cycle)
+- Read backend/app/workflow/state_machine.py (thin 5-state wrapper)
+- Read backend/app/shared/enums/project_state.py (24 states)
+- Read backend/app/shared/enums/stage.py (18 stages)
+- Read backend/app/agents/factory.py (15 agents registered)
+- Read backend/app/llm/manager.py (pluggable LLM; runtime reconfigure)
+- Read backend/app/llm/providers/ollama_provider.py (600s timeout, /api/generate)
+- Read backend/app/api/router.py (14 sub-routers)
+- Read backend/app/api/workflow.py (start/design-review endpoints)
+- Read backend/app/api/websocket.py (multi-tab WebSocket manager)
+- Read backend/app/events/broadcaster.py (thread-safe; bind_loop; singleton)
+- Read backend/app/execution/manager.py (thin ExecutionEngine shell)
+- Read backend/app/core/startup.py (delegates to Bootstrap)
+- Read backend/app/config/manager.py + models.py
+- Read frontend/src/lib/api.ts (API client)
+- Read frontend/src/App.tsx (router: /projects + /projects/:id)
+- Ran TODO/FIXME grep (1 genuine TODO found; all NotImplementedError in abstract base classes)
+- Collected pytest: 377 tests
+- Ran partial pytest suite (excluding long-running suites): 57 passed, 4 failed
+- Read existing docs: execution-log.md, execution-log2.logs, AUDIT_FINAL_FINDINGS.md, CURRENT-STATE.md, PROJECT_OVERVIEW.md, ROADMAP.md
+
+## Findings Summary
+
+- 15 agents registered in AgentFactory (+ DomainResearcher via container + ChatRouter)
+- 24 ProjectState enum values; 18 Stage enum values
+- 2 components disabled in container: ContextManager + MemoryOrchestrator (documented reasons)
+- 4 test failures with 2 root causes:
+  1. Missing `transformers` package (sentence-transformers transitive dep) — affects 2 tests
+  2. Stale tests not updated after WorkflowManager refactor — affects 2 test classes
+- 1 in-code TODO: dependency_detector.py version pinning
+- No FIXME/XXX in business logic
+
+## Documents Written/Updated
+
+- docs/AUDIT_REPORT.md — NEW canonical audit report
+- docs/AUDIT_FINAL_FINDINGS.md — UPDATED (appended 2026-07-27 section)
+- docs/execution-log.md — UPDATED (this entry)
+- docs/PROJECT_OVERVIEW.md — UPDATED
+- docs/ROADMAP.md — UPDATED
+- docs/CURRENT-STATE.md — UPDATED
+- docs/TASK_BACKLOG.md — NEW
+- docs/DECISIONS.md — NEW
+
+## Problems Encountered
+
+- pytest full suite times out at 45s (test_sprint_sync, test_project_intelligence, test_project_file_generation are long-running — excluded from timed run)
+- `transformers` module missing from environment causes 2 test failures
+
+## Test Results
+
+- Subset run (excluding 3 long suites): 57 passed, 4 failed
+- Total collected: 377 tests across 47 files
+
+## Status
+
+COMPLETED

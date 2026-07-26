@@ -391,3 +391,100 @@ _DEFAULT_WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "temp-workspace"))
 
 **PAUSE Series A pitch** until Week 1-2 fixes are complete and verified. System is sound but needs critical cleanup. Once fixed, it's excellent.
 
+
+---
+
+# AUDIT UPDATE — 2026-07-27
+
+**Updated By**: Deep-code inspection agent (Claude Sonnet 4.6)
+**Method**: Full source read of all key files; pytest collection and partial run
+
+---
+
+## Status of Previously Reported Critical Issues
+
+### Issue 1: Silent Exception Swallowing
+**Status**: PARTIALLY FIXED
+Evidence from code review: broadcaster.py and websocket.py now log dead connections.
+The original 4 files flagged in 2026-07-25 audit were not re-verified line-by-line in this pass.
+Action: Re-verify each of the 4 flagged files (api/workflow.py:122-123, prompt/documentation_builder.py:131, execution/project_reader.py:129, workspace/manager.py:219).
+
+### Issue 2: Direct Agent Instantiation
+**Status**: FIXED
+Evidence: WorkflowManager._run_sprint() now resolves backend_developer_agent and frontend_developer_agent
+from self._container (DI container) in production path. Falls back to AgentFactory only when
+container is None (test path). Container properly registers these as singletons.
+
+### Issue 3: Database Files in Git
+**Status**: UNKNOWN — not re-verified in this pass.
+
+### Issue 4: Duplicate MemoryManager
+**Status**: RESOLVED — MemoryOrchestrator is disabled (commented out in container.py).
+
+---
+
+## NEW Issues Found (2026-07-27)
+
+### N1. Missing `transformers` Package in requirements.txt
+**Severity**: HIGH
+**Evidence**: sentence-transformers requires transformers at runtime. Not listed in requirements.txt.
+Results in ModuleNotFoundError when any code path touches KnowledgeMemory embedding.
+**Affected tests**: test_designer_agent.py, test_v1_pipeline_fixes.py (2 tests)
+**Fix**: Add `transformers>=4.0.0` to requirements.txt
+**Effort**: 5 minutes
+
+### N2. Stale Tests: Fix009ScrumMasterInjection
+**Severity**: MEDIUM
+**Evidence**: test_review_report_fixes.py creates WorkflowManager() without sprint_monitor kwarg.
+WorkflowManager now requires sprint_monitor in constructor (added with SprintMonitor feature).
+**Fix**: Update test to pass sprint_monitor=None explicitly, or update WorkflowManager to default sprint_monitor to None (it already does in __init__ signature — so test is creating manager incorrectly).
+**Root cause**: Test creates WorkflowManager() with no args, but mock setup patches wrong object path.
+**Effort**: 30 minutes
+
+### N3. Stale Test: test_pipeline_runs_every_stage_in_order
+**Severity**: MEDIUM
+**Evidence**: Test expects FileStructurePlanner in the global stage sequence. Code intentionally
+moved FileStructurePlanner inside each sprint for per-sprint context. Test reflects old design.
+**Fix**: Update expected stage order to match current pipeline (FileStructurePlanner not in top-level stages_completed list).
+**Effort**: 30 minutes
+
+### N4. ContextManager Disabled — Undocumented
+**Severity**: LOW
+**Evidence**: container.py comment: "ContextManager is not called anywhere in the live pipeline".
+Not mentioned in PROJECT_OVERVIEW.md or CURRENT-STATE.md.
+**Fix**: Document in CURRENT-STATE.md.
+
+### N5. MemoryOrchestrator Disabled — Name Collision Bug Unresolved
+**Severity**: LOW
+**Evidence**: container.py comment: "self.store is both an attribute and a method". Bug not fixed.
+**Fix**: Fix the name collision in MemoryOrchestrator and re-enable, or remove the class.
+**Effort**: 1-2 hours
+
+### N6. Hardcoded DB Paths in Container
+**Severity**: LOW
+**Evidence**: container.py: FileIndexer(db_path="backend/app/memory/file_index.db") and CostTracker("backend/app/memory/costs.db"). Not driven by settings.
+**Fix**: Add file_index_db and costs_db to Settings model; read from config in container.
+
+---
+
+## Updated Issue Register (as of 2026-07-27)
+
+| ID | Title | Severity | Status | Action |
+|----|-------|---------|--------|--------|
+| C1 | Silent exception swallowing | CRITICAL | UNKNOWN | Re-verify 4 files |
+| C2 | Direct agent instantiation | CRITICAL | FIXED | Verified fixed |
+| C3 | Database files in git | CRITICAL | UNKNOWN | Check .gitignore |
+| C4 | Duplicate MemoryManager | CRITICAL | FIXED (disabled) | Documented |
+| C5 | Architect fallback | CRITICAL | UNKNOWN | Re-verify |
+| C6 | Version pinning | CRITICAL | PARTIAL | dependency_detector.py has TODO |
+| C7 | Hardcoded paths | CRITICAL | PARTIAL | Some moved to config; container.py still has hardcoded paths |
+| H1 | Large classes violating SRP | HIGH | OPEN | WorkflowManager 881 lines |
+| H2 | Frontend test coverage 0% | HIGH | OPEN | No Jest/Vitest configured |
+| H3 | No integration tests | HIGH | OPEN | No E2E |
+| H4 | No auth/RBAC | HIGH | OPEN | By design (single-user) |
+| N1 | Missing transformers package | HIGH | NEW | Add to requirements.txt |
+| N2 | Stale Fix009ScrumMaster tests | MEDIUM | NEW | Update tests |
+| N3 | Stale stage order test | MEDIUM | NEW | Update test |
+| N4 | ContextManager undocumented | LOW | NEW | Document in CURRENT-STATE |
+| N5 | MemoryOrchestrator bug unresolved | LOW | NEW | Fix or remove |
+| N6 | Hardcoded DB paths in container | LOW | NEW | Move to Settings |

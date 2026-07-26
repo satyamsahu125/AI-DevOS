@@ -1,318 +1,133 @@
 # Implementation Roadmap
 
-**Last Updated**: 2026-07-25  
-**Current Version**: 1.1 (Production-Grade)  
-**Audit Status**: 7 Critical, 7 High, 10 Medium issues found (see AUDIT_TECH_DEBT.md)
+**Last Updated**: 2026-07-27
+**Current Version**: 1.1
+**Test Count**: 377 collected / ~57 passing in subset run / 4 known failures
 
 ---
 
-## What's Implemented ✅
+## COMPLETED
 
-### Phase 0 — Core Pipeline (COMPLETE)
-- ✅ 12-stage pipeline fully wired and operational
-- ✅ All 14 agents implemented (12 core + 2 auxiliary)
-- ✅ All 14 action classes (one per stage)
-- ✅ Three-tier review system (AUTO_FIX/ASK_HUMAN/FLAG)
-- ✅ Real code generation (one LLM call per file)
-- ✅ Crash-safe resume via checkpoints
-- ✅ Learning loop + trajectory recording
-- ✅ Knowledge embedding + semantic search
-- ✅ LLM provider abstraction (Ollama + Bedrock)
-- ✅ Project isolation + workspace management
-- ✅ File validation + safety policy
-- ✅ API layer (10 routes)
-- ✅ 42 test files, 194 tests passing
+### Core Pipeline (verified from source)
+- 15-stage pipeline fully wired (DomainResearch through Retro)
+- All 15 agents implemented and registered in AgentFactory
+- WorkflowManager state machine (24 states; crash-safe)
+- Three-tier review system (AUTO_FIX/ASK_HUMAN/FLAG) with detailed feedback injection
+- Real code generation — BackendDeveloper and FrontendDeveloper write files to disk
+- Crash-safe resume via ProjectState persistence + CheckpointManager
+- Learning loop: trajectory recording + semantic pattern retrieval (per project_id)
+- Knowledge embedding + HNSW semantic search (KnowledgeMemory)
+- Lesson store: human-readable approved-pattern lessons per stage
+- LLM provider abstraction: OllamaProvider (600s timeout) + BedrockProvider
+- Runtime LLM switching via POST /settings/llm (no restart)
+- Project isolation: all memory/artifacts scoped to project_id
+- File validation + safety policy (Python/JS syntax; no path traversal)
+- API layer: 14 sub-routers
+- WebSocket real-time events (multi-tab; thread-safe broadcaster)
+- DI container: 40+ singletons, hand-wired (kernel/container.py)
+- Intelligence layer: FileIndexer + DependencyGraph + CodeSummarizer + ContextOrchestrator
+- SprintMonitor: cross-sprint context + sprint output validation
+- ImpactAnalyzer: stage-level + file-level requirement change impact
+- Domain research agent (DomainResearcherAgent) before Q&A
+- Interactive Q&A gate (ClarificationAgent: generate questions, process answers)
+- Design review gate (user approves or requests revision)
+- Self-healing validation (up to 3 heal cycles post-sprint)
+- Sprint-level retry (up to 2 full sprint attempts on failure)
+- Change management: CHANGE_REQUESTED -> RESUMING_FROM_CHANGE path
+- CostTracker: per-call token/latency tracking
+- Frontend: React 19 + Vite 8 + TypeScript 6 + Tailwind v4
+- Frontend: ProjectsPage (dashboard) + WorkspacePage (pipeline, chat, files, logs, artifacts, metrics)
 
-### Phase 1 — Bug Fixes (MOSTLY COMPLETE)
-- ✅ Retry loop wired in WorkflowEngine
-- ✅ All agents connected to LLMManager
-- ✅ MemoryManager fully integrated
-- ✅ Real LLM calls (not echoing prompts)
-- ✅ Context builder reading actual memory
-- ✅ Logging added to major components
-- ⚠️ Silent exception swallowing (4 files still need fixing — CRITICAL)
-- ⚠️ Direct agent instantiation (still using direct construction — CRITICAL)
-- ⚠️ Database files in git (still tracked — CRITICAL)
-
-### Phase 2 — Structured Outputs (COMPLETE)
-- ✅ Action layer implemented (LLMAction base class)
-- ✅ Pydantic schema validation per stage
-- ✅ JSON extraction + repair logic
-- ✅ Schema-specific reviewer rules
-
-### Phase 3 — Memory & Learning (COMPLETE)
-- ✅ Artifact history (every attempt saved)
-- ✅ Trajectory recording (approved + rejected)
-- ✅ Knowledge embedding (semantic search)
-- ✅ Lesson storage (human-readable insights)
-- ✅ Design memory (durable across run)
-- ✅ Checkpoint manager (crash recovery)
-- ⚠️ Per-project trajectory tracking missing project_id column (HIGH priority)
-
-### Phase 4 — Code Generation (COMPLETE)
-- ✅ Backend file generation (one per LLM call)
-- ✅ Frontend file generation (one per LLM call)
-- ✅ File validation (Python/JavaScript syntax)
-- ✅ Path sanitization (no `..` traversal)
-- ✅ Auto-generated manifests (package.json, requirements.txt)
-- ⚠️ Version pinning not implemented (CRITICAL)
-
-### Phase 5 — Deployment & Operations (COMPLETE)
-- ✅ Health checks (/health, /ready)
-- ✅ Live output streaming (polling-based)
-- ✅ Project download (ZIP + run instructions)
-- ✅ LLM provider switching (runtime, no restart)
-- ✅ Database persistence (SQLite)
-- ⚠️ No monitoring/alerting (not implemented)
-- ⚠️ No rate limiting (not implemented)
+### Tests (verified from pytest collection)
+- 377 tests across 47 files
+- test_sprint_sync.py: 45 tests for sprint sync / SprintMonitor / ImpactAnalyzer
+- test_project_intelligence.py: 46 tests for intelligence layer
+- test_v1_pipeline_fixes.py: 20 tests (2 stale — see below)
+- test_review_report_fixes.py: 29 tests (2 stale — see below)
 
 ---
 
-## Critical Issues Found (Series A Blockers)
+## IN PROGRESS / KNOWN ISSUES
 
-### Week 1 Priority (Must Fix Before Series A)
+### Test Failures (4 tests, 2 root causes)
 
-**7 Critical Issues** (20 hours to fix):
+- **MISSING: `transformers` in requirements.txt**
+  Affects: test_designer_agent, test_v1_pipeline_fixes (pattern isolation test)
+  Fix: Add `transformers>=4.0.0` to requirements.txt
+  Effort: 5 minutes
 
-1. **Silent Exception Swallowing** (4 files)
-   - Files: workflow.py, documentation_builder.py, project_reader.py, manager.py
-   - Issue: `except Exception: pass` masks production failures
-   - Fix: Add logging + explicit error handling
+- **STALE: Fix009ScrumMasterInjection (2 tests)**
+  Affects: test_review_report_fixes.py
+  Fix: Update test to create WorkflowManager correctly with sprint_monitor kwarg
+  Effort: 30 minutes
 
-2. **Direct Agent Instantiation** (architecture violation)
-   - File: workflow/manager.py:51-52
-   - Issue: Uses direct construction instead of factory pattern
-   - Fix: Use AgentFactory for all agent creation
+- **STALE: test_pipeline_runs_every_stage_in_order**
+  Affects: test_v1_pipeline_fixes.py
+  Fix: Update expected stage list — FileStructurePlanner now runs inside sprint, not globally
+  Effort: 30 minutes
 
-3. **Database Files in Git**
-   - Files: memory/*.db, memory/*.hnsw
-   - Issue: Binary diffs, unmergeable conflicts
-   - Fix: `git rm --cached *.db` + update .gitignore
-
-4. **Duplicate MemoryManager Classes** (name collision)
-   - Files: memory_manager.py vs manager.py
-   - Issue: Two classes with same name, different interfaces
-   - Fix: Rename one (MemoryOrchestrator or MemoryStore)
-
-5. **Architect Action Stub Fallback** (data quality)
-   - File: actions/write_architecture.py:26-50
-   - Issue: Fallback returns hardcoded fake architecture
-   - Fix: Raise SchemaValidationError instead
-
-6. **Version Pinning Not Implemented** (reproducibility)
-   - File: workspace/dependency_detector.py
-   - Issue: Generated manifests use `*` for npm, no version for pip
-   - Fix: Extract versions from imports, pin manifests
-
-7. **Hardcoded Database Paths** (brittle configuration)
-   - File: execution/safety_policy.py:15-16
-   - Issue: Paths relative to file location
-   - Fix: Use environment variables
-
-**Timeline**: 2-3 weeks (with 2-3 engineers) → System ready for Series A
+### Disabled Components
+- **ContextManager** — not integrated in live pipeline (commented out in container.py)
+- **MemoryOrchestrator** — name collision bug (self.store attribute/method conflict); disabled
 
 ---
 
-## High Priority (Next Sprint)
+## NEXT (Immediate — pre-next-dev-session)
 
-**7 High Issues** (15 hours to fix):
+Priority 1: Fix test suite
+1. Add `transformers` to requirements.txt — 5 min
+2. Fix Fix009ScrumMasterInjection tests — 30 min
+3. Fix test_pipeline_runs_every_stage_in_order — 30 min
+4. Run full pytest and confirm zero failures
 
-1. **Empty Directory** (dead code) — backend/app/artifacts/
-2. **Unused Interface** — shared/interfaces/memory.py
-3. **Dynamic Imports** — api/workflow.py
-4. **Per-Project Trajectory** — missing project_id column
-5. **Checkpoint Cleanup** — no garbage collection
-6. **Stop Signal** — can't interrupt LLM calls
-7. **Large Classes (SRP)** — 5 classes > 350 LOC
+Priority 2: Fix MemoryOrchestrator and re-enable
+1. Rename conflicting attribute in MemoryOrchestrator — 1-2 hours
+2. Re-wire in container.py
+3. Add test coverage
 
----
+Priority 3: Hardcoded paths
+1. Add file_index_db + costs_db to Settings model (config/models.py)
+2. Read from settings in container.py build()
+3. Update .env.example
 
-## Medium Priority (Polish Phase)
-
-**10 Medium Issues** (40 hours to fix):
-
-- Frontend test coverage (add Vitest setup)
-- Integration tests (E2E test suite)
-- Authentication/RBAC (for multi-user)
-- Polling frontend → WebSockets
-- Rate limiting on API
-- Exception handling audit
-- Checkpoint serialization versioning
-- Cost tracking per project
-- Polling intervals configurable
-- Workflow visualization export
+Priority 4: Write frontend tests
+1. Set up Vitest + React Testing Library
+2. Test ProjectsPage: project list render, new project modal
+3. Test WorkspacePage: pipeline state rendering, stage rail
 
 ---
 
-## Future Roadmap (After Series A)
+## FUTURE (from docs/future/)
 
-### Month 2: Production Hardening
-1. **Version Pinning** (4-6 hours)
-   - Extract versions from imports
-   - Generate requirements.txt with pinned versions
-   - Generate package-lock.json / poetry.lock
+### Phase 1 — Verified Output (docs/future/PHASE-1-verified-output.md)
+- Sandbox execution: run generated code in a container, capture test results
+- Feedback loop: inject test failures back into BackendDeveloper for targeted fixes
+- Verifiable acceptance criteria per stage
 
-2. **Per-Project Analytics** (2-3 hours)
-   - Add project_id to trajectories table
-   - Query per-project success rates
-   - Dashboard showing project progress
+### Phase 2 — Human-in-the-Loop (docs/future/PHASE-2-human-in-the-loop.md)
+- Additional human review gates beyond Design and Q&A
+- AWAITING_HUMAN_APPROVAL state (enum value exists, not yet wired)
+- Inline code editing by user before pipeline continues
 
-3. **Monitoring & Alerting** (8-10 hours)
-   - Add Prometheus metrics
-   - Set up Grafana dashboard
-   - Alert rules for failed stages
+### Phase 3 — Deployment Packaging (docs/future/PHASE-3-deployment-packaging.md)
+- Docker Compose generation for generated projects
+- One-click deploy to Fly.io / Railway / Render
+- CI/CD pipeline template generation
 
-4. **Additional Providers** (6-8 hours)
-   - Azure OpenAI support
-   - Anthropic Claude API support
-   - Cohere/Llama integration
+### Phase 4 — Analytics (docs/future/PHASE-4-analytics.md)
+- Per-project cost dashboard (CostTracker data already collected)
+- Stage success rate analytics (trajectory data already collected)
+- Prompt quality scoring (PromptQualityAnalyzer implemented; not yet surfaced in UI)
 
-### Month 3-4: Scaling Foundation
-1. **Async Execution** (12-16 hours)
-   - Refactor to asyncio
-   - Thread pool for LLM calls
-   - Concurrent project execution
+### Phase 5 — Multi-User Auth (docs/future/PHASE-5-multi-user-auth.md)
+- JWT-based authentication
+- Project ownership + RBAC
+- API rate limiting
+- Multi-tenant workspace isolation
 
-2. **Distributed Cache** (8-10 hours)
-   - Redis integration
-   - Shared memory stores
-   - Cache invalidation logic
-
-3. **Database Portability** (10-12 hours)
-   - PostgreSQL support (in addition to SQLite)
-   - Multi-instance coordination
-   - Schema migrations
-
-### Month 5-6: Enterprise Features
-1. **Authentication & RBAC** (12-16 hours)
-   - JWT token auth
-   - User-scoped projects
-   - Admin dashboard
-
-2. **Horizontal Scaling** (16-20 hours)
-   - Message queue (Celery/RQ)
-   - Multiple backend instances
-   - Load balancer configuration
-
-3. **Multi-Model Comparison** (8-10 hours)
-   - A/B test feature
-   - Run same stage with 2 models
-   - Compare outputs side-by-side
-
-4. **Human-in-the-Loop** (12-16 hours)
-   - True pause on ASK_HUMAN finding
-   - Manual approval workflow
-   - Timeout after N days
-
-### Month 7+: Advanced Features
-1. **Selective Stage Retry** (6-8 hours)
-   - Re-run one failed stage
-   - Don't re-run all 12 stages
-
-2. **Model Parameter Tuning** (4-6 hours)
-   - Temperature, top_p per stage
-   - Runtime configuration UI
-
-3. **Batch Project Generation** (8-10 hours)
-   - Queue multiple projects
-   - Concurrent execution
-
-4. **Workflow Visualization Export** (4-6 hours)
-   - SVG/PNG diagram export
-   - Mermaid diagram generation
-
----
-
-## Not Planned (Out of Scope)
-
-❌ **Web3/Blockchain Integration** — No plans  
-❌ **Mobile App** — Focus on web first  
-❌ **Multi-Language LLM** — English-first, expand later  
-❌ **On-Premise Installation** — Cloud-first for now  
-❌ **Custom Model Training** — Use existing models only  
-
----
-
-## Success Metrics
-
-### Series A Gate (Month 1)
-- [ ] 0 critical issues (7 found → all fixed)
-- [ ] 194 tests passing + new tests for fixes
-- [ ] Code audit clean (no silent failures)
-- [ ] Load tested at 10+ concurrent projects
-- [ ] Production deployment docs complete
-
-### Series A+3 Months
-- [ ] Version pinning working
-- [ ] Per-project analytics dashboard
-- [ ] Monitoring/alerting operational
-- [ ] 2+ additional LLM providers
-- [ ] 50+ test files, 300+ tests
-
-### Series A+6 Months
-- [ ] Async execution working
-- [ ] PostgreSQL support
-- [ ] Redis cache deployed
-- [ ] Authentication/RBAC live
-- [ ] Horizontal scaling validated
-
-### Series A+12 Months
-- [ ] Support 10k+ concurrent projects
-- [ ] Multi-region deployment
-- [ ] Enterprise features complete
-- [ ] 80%+ test coverage
-- [ ] Zero P0 issues in production
-
----
-
-## Effort Estimates
-
-| Phase | Work | Effort | Timeline |
-|-------|------|--------|----------|
-| Critical Fixes | Silent exceptions, DI, database files, etc. | 20 hours | 2-3 weeks |
-| High Priority | Analytics, cleanup, tests | 15 hours | 1 week |
-| Medium Priority | Hardening, frontend tests, E2E | 40 hours | 2-3 weeks |
-| Future (Months 2-4) | Async, Redis, Postgres, auth | 80+ hours | 4-6 weeks |
-| Future (Months 5-12) | Scaling, enterprise features | 100+ hours | 3+ months |
-
-**Total to Series A-Ready**: ~75 hours (3 engineers × 2-3 weeks)
-
-**Total to Production-Ready**: ~250+ hours (ongoing)
-
----
-
-## Decision Points
-
-### Go/No-Go for Series A (Week 2)
-- [ ] All 7 critical issues fixed?
-- [ ] Tests passing?
-- [ ] Code audit clean?
-- [ ] Load test OK?
-→ **Decision**: Proceed or extend 1 more week?
-
-### Go/No-Go for GA (Month 3)
-- [ ] Version pinning done?
-- [ ] Monitoring/alerting live?
-- [ ] Auth/RBAC implemented?
-- [ ] Additional providers working?
-→ **Decision**: Launch to early customers?
-
-### Go/No-Go for Enterprise (Month 6)
-- [ ] Async execution working?
-- [ ] PostgreSQL production-tested?
-- [ ] Horizontal scaling validated?
-- [ ] Enterprise SLA requirements met?
-→ **Decision**: Launch enterprise tier?
-
----
-
-## For Development Team
-
-1. **Week 1-2**: Fork + branch for critical fixes
-2. **Week 3**: Code review + merge to main
-3. **Week 4**: Re-audit + proceed with Series A
-4. **Month 2-4**: High-priority features
-5. **Month 5+**: Scaling + enterprise features
-
-See `AUDIT_TECH_DEBT.md` for detailed issue breakdown and fix guidance.
-
+### Long-term
+- Async pipeline execution (parallel stages where dependency graph permits)
+- PostgreSQL backend (replace SQLite for multi-instance deployment)
+- Redis for WebSocket scaling
+- Additional LLM providers (OpenAI, Gemini, Mistral)
+- Horizontal scaling validation

@@ -1,24 +1,26 @@
-# Project Overview — AI DevOS v1.1
+# Project Overview — AI DevOS
 
-**Last Updated**: 2026-07-25  
-**Status**: Production-Ready (v1.1)  
-**System Maturity**: Multi-agent pipeline generating real code (12 stages)
+**Last Updated**: 2026-07-27
+**Status**: Functionally complete multi-agent pipeline
+**System Version**: 1.1 (post-sprint-sync, post-intelligence-layer)
 
 ---
 
 ## What This Project Does
 
-AI DevOS is a **production-grade, 12-stage multi-agent software engineering pipeline** that transforms natural-language project descriptions into real, downloadable, runnable source code.
+AI DevOS is a **multi-agent software engineering pipeline** that transforms natural-language project
+descriptions into real, downloadable, runnable source code.
 
-### Key Capability
-Describe an application in plain English → 12 specialized AI agents (each backed by LLM + schema validation + automated reviewer) → Download real source files → Run the generated project
+Describe an application in plain English -> 15 specialized AI agents (each backed by LLM + schema
+validation + automated reviewer) -> download real source files -> run the generated project.
 
 Unlike asking an LLM to write an app in one shot, AI DevOS:
-- **Stages the work** across 12 specialized agents, each with a clear responsibility
+- **Stages the work** across 15 specialized agents with clear responsibility separation
 - **Reviews each stage** with a three-tier gate (AUTO_FIX/ASK_HUMAN/FLAG) before the next stage runs
-- **Generates real files**, not JSON artifacts — Backend/Frontend code is actually written to disk
+- **Generates real files** — Backend/Frontend code written to disk, not JSON artifacts
 - **Learns from experience** via trajectory recording, knowledge embedding, and lesson storage
-- **Resumes on crash** — if the backend restarts mid-pipeline, resume from the last completed stage
+- **Resumes on crash** — ProjectState persisted on every transition; resumes from last saved state
+- **Manages requirement changes** — Impact analysis identifies affected stages; only re-runs what changed
 
 ---
 
@@ -28,256 +30,198 @@ Unlike asking an LLM to write an app in one shot, AI DevOS:
 
 ```
 Frontend (Vite + React 19 + TypeScript, :5173)
-  ↓ (HTTP via Vite proxy, no CORS needed)
+  | HTTP via Vite proxy to localhost:8000 — no CORS config needed
+  v
 Backend (FastAPI, :8000)
-  ├─ DI Container (singletons: managers, registries)
-  ├─ 12-Stage Workflow Engine (execute → review → retry)
-  │   ├─ Agent Factory (creates agents per stage)
-  │   ├─ LLM Manager (routes to Ollama or AWS Bedrock)
-  │   ├─ Reviewer (three-tier quality gates)
-  │   ├─ Memory System (6 distinct stores)
-  │   └─ Project Workspace (isolated per project_id)
-  └─ SQLite (artifacts, memory, trajectories, lessons)
+  +- DI Container (kernel/container.py)
+  |    Singletons: WorkflowManager, LLMManager, ArtifactManager,
+  |                MemoryManager, KnowledgeMemory, LearningLoop,
+  |                WorkflowEngine, SprintMonitor, ContextOrchestrator, ...
+  +- 15-Stage WorkflowManager (workflow/manager.py)
+  |    -> WorkflowEngine: execute -> review -> retry
+  |         -> AgentFactory: creates agent per stage
+  |         -> LLMManager: routes to Ollama or AWS Bedrock
+  |         -> Reviewer: three-tier quality gates
+  +- Memory System
+  |    MemoryManager (SQLite), KnowledgeMemory (HNSW vectors),
+  |    LearningLoop (trajectories), LessonStore, CheckpointManager
+  +- Intelligence Layer
+  |    FileIndexer, DependencyGraph, CodeSummarizer, ContextOrchestrator
+  +- Events
+       EventBroadcaster -> WebSocket /ws/{project_id}
 ```
 
 ### Technology Stack
 
 | Layer | Technology |
 |-------|-----------|
-| **Backend** | Python 3.12, FastAPI (synchronous end-to-end) |
-| **Frontend** | Vite, React 19, TypeScript, Tailwind CSS v4 |
-| **LLM Providers** | Ollama (local, default qwen2.5-coder:7b) or AWS Bedrock (switchable at runtime) |
-| **Storage** | SQLite (single-instance), HNSW vector index for knowledge embeddings |
-| **Architecture** | Synchronous pipeline (deliberate choice, no asyncio in execution path) |
+| Backend runtime | Python 3.10+, FastAPI (fully synchronous pipeline path) |
+| Frontend | Vite 8, React 19, TypeScript 6, Tailwind CSS v4 |
+| LLM (default) | Ollama local server, model: qwen2.5-coder:7b |
+| LLM (alternate) | AWS Bedrock Runtime Converse API (Claude 3.5 Sonnet) |
+| Storage | SQLite (artifacts, memory, trajectories, lessons, file index, costs) |
+| Vector search | HNSW (hnswlib) for knowledge embedding |
+| Package manager | pip (backend), npm/vite (frontend) |
 
 ---
 
-## The 12-Stage Pipeline
+## The Pipeline: 15 Stages + State Machine
 
-Each stage is a specialized agent that transforms its input into validated output:
+### Pipeline States (ProjectState enum — 24 values)
 
-| # | Stage | Agent | Input | Output | Purpose |
-|---|-------|-------|-------|--------|---------|
-| 1 | **Strategic Review** | StrategicReviewAgent | Raw request | Go/no-go assessment | Validate request viability |
-| 2 | **Product Owner** | ProductOwnerAgent | Requirements analysis | User stories, acceptance criteria | Extract product vision |
-| 3 | **Architect** | ArchitectAgent | Requirements | System architecture, APIs, data models | Design system blueprint |
-| 4 | **Designer** | DesignerAgent | Architecture | UI/UX design spec, pages, components | Define user experience |
-| 5 | **Security** | SecurityAgent | Design | Security review, threats, mitigations | Identify security risks |
-| 6 | **File Planner** | FileStructurePlannerAgent | All above | Concrete file list (path, module, purpose) | Plan file generation |
-| 7 | **Backend Developer** | BackendDeveloperAgent | File plan + context | Real backend source files | Generate backend code |
-| 8 | **Frontend Developer** | FrontendDeveloperAgent | File plan + design | Real frontend source files | Generate frontend code |
-| 9 | **QA** | QAAgent | Generated code | Test plan, bug list | Plan testing |
-| 10 | **Document** | DocumentAgent | All artifacts | Project documentation | Write user guides |
-| 11 | **DevOps** | DevOpsAgent | Code + security review | Deployment guidance | Plan deployment |
-| 12 | **Retro** | RetroAgent | All above | Lessons learned | Extract insights |
+```
+EMPTY -> CLARIFYING -> QA_PENDING -> QA_IN_PROGRESS -> REQUIREMENTS_READY
+  -> ARCHITECTURE_READY -> DESIGN_READY -> DESIGN_REVIEW_PENDING -> DESIGN_APPROVED
+  -> SPRINT_PLAN_READY -> SPRINT_IN_PROGRESS -> ALL_SPRINTS_COMPLETE
+  -> QA_COMPLETE -> DEPLOYABLE | DONE | FAILED | PAUSED
+Change path: CHANGE_REQUESTED -> RESUMING_FROM_CHANGE -> SPRINT_IN_PROGRESS
+```
 
-**Key Design**: Only stages 7-8 write to disk. All others produce reviewable documents that downstream stages read as context.
+### Stages (verified from agents/factory.py and shared/enums/stage.py)
 
----
+| # | Stage Name | Agent | Purpose |
+|---|-----------|-------|---------|
+| 0 | DomainResearch | DomainResearcherAgent | Research domain before Q&A |
+| 1 | Clarification | ClarificationAgent | Generate Q&A; process answers |
+| 2 | StrategicReview | StrategicReviewAgent | Validate project feasibility |
+| 3 | ProductOwner | ProductOwnerAgent | Draft structured requirements |
+| 4 | Architect | ArchitectAgent | System architecture spec |
+| 5 | Designer | DesignerAgent | UI/UX design spec (user gate) |
+| 6 | Security | SecurityAgent | Security review |
+| 7 | SprintPlanning | SprintPlannerAgent | Sprint breakdown |
+| 8 | ScrumMaster | ScrumMasterAgent | Task breakdown per sprint |
+| 9 | FileStructurePlanner | FileStructurePlannerAgent | File plan per sprint |
+| 10 | BackendDeveloper | BackendDeveloperAgent | Generate backend source files |
+| 11 | FrontendDeveloper | FrontendDeveloperAgent | Generate frontend source files |
+| 12 | QA | QAAgent | Test plan and QA report |
+| 13 | DevOps | DevOpsAgent | Deployment configuration |
+| 14 | Document | DocumentAgent | Project documentation |
+| 15 | Retro | RetroAgent | Sprint retrospective |
 
-## Core Components
+Note: DomainResearch and Clarification are pre-planning stages. Stages 9-11 run inside each sprint loop.
 
-### Workflow Management
-- **WorkflowEngine**: Execute → Review → Retry cycle (3 retries max per stage)
-- **WorkflowManager**: State machine orchestrator (resume-safe)
-- **DependencyGraph**: Stage ordering (12-stage DAG)
-- **ExecutionStateRegistry**: Tracks running/paused/stopped status
+### User Interaction Gates
 
-### Quality Assurance
-- **Reviewer**: Three-tier (AUTO_FIX mechanical / ASK_HUMAN blocks approval / FLAG advisory)
-- **ReviewRules**: 23+ validation checkpoints
-- **SafetyPolicy**: Prevents writes outside workspace_root
-
-### Memory System (6 Stores)
-1. **MemoryManager**: Latest predecessor message handoff (per-key single-slot)
-2. **ArtifactManager**: Every attempt history + approval status (permanent)
-3. **LearningLoop**: Trajectory stats (permanent)
-4. **KnowledgeMemory**: Semantic search over approved trajectories (HNSW vector index)
-5. **LessonStore**: Human-readable learned lessons (permanent, prunable at 90d)
-6. **ProjectEventLog**: Live output stream (operational log)
-
-### LLM Integration
-- **LLMManager**: Provider abstraction + cost tracking
-- **OllamaProvider**: HTTP to local Ollama (default)
-- **BedrockProvider**: AWS Bedrock Runtime (runtime-switchable via `/settings/llm`)
-- **ProviderHealth**: Model availability checks
-
-### Project Isolation
-- **ProjectManager**: Create + initialize projects
-- **WorkspaceManager**: Per-project `temp-workspace/{id}/` isolation
-- **ProjectFileManager**: Sanitized path writes + `..` traversal protection
-- **DependencyDetector**: Auto-generates `package.json`/`requirements.txt` from imports
-
-### API Layer (10 Routes)
-- `/health`, `/ready` — Health checks
-- `/projects` — CRUD operations
-- `/workflow/start`, `/workflow/{id}/stop` — Pipeline control
-- `/artifacts` — View approved outputs
-- `/agents` — Introspection
-- `/memory/{project_id}` — Query memory stores
-- `/files`, `/download`, `/run-instructions` — Download generated code
-- `/logs` — Live output tailing
-- `/settings/llm` — Provider switching
+1. **Q&A Gate** (QA_PENDING): Pipeline pauses; user answers clarifying questions
+2. **Design Review Gate** (DESIGN_REVIEW_PENDING): User approves or requests design revisions
+3. **Change Request Gate** (CHANGE_REQUESTED): User confirms or cancels requirement changes
 
 ---
 
-## Key Features
+## Agents (15 registered in AgentFactory + 2 additional)
 
-✅ **Real Code Generation**
-- One LLM call per file (not one call for entire app)
-- Syntax validation before writing
-- Auto-generated dependency manifests (package.json, requirements.txt)
+From agents/factory.py:
+- product_owner, architect, backend, frontend, qa, devops
+- strategic_review, designer, security, file_planner, document
+- retro, clarification, sprint_planner, scrum_master
 
-✅ **Staged Review**
-- Three-tier gates (AUTO_FIX/ASK_HUMAN/FLAG)
-- 23+ validation rules
-- Feedback injected into retry prompts
+From container (not in factory):
+- DomainResearcherAgent (resolved as domain_researcher_agent)
+- ChatRouter (resolved as chat_router — not a pipeline agent)
 
-✅ **Crash-Safe Resume**
-- Checkpoint manager saves pre-execution state
-- Pipeline resumes from last completed stage
-- No need to re-run all 12 stages after interruption
+---
 
-✅ **Learning System**
-- Every attempt (approved/rejected) logged to trajectories
-- Approved trajectories embedded into knowledge base
-- Semantic search surfaces "what worked before"
-- Human-readable lessons extracted per approval
+## LLM Configuration
 
-✅ **LLM Provider Flexibility**
-- Ollama (local model, default qwen2.5-coder:7b)
-- AWS Bedrock (cloud-based alternatives)
-- Runtime switching via `/settings/llm` (no restart needed)
-- Provider switch persisted to `.env`
+Default: `config/config.yaml`
+```yaml
+llm:
+  provider: ollama
+  model: qwen2.5-coder:7b
+  base_url: http://localhost:11434
+  temperature: 0.1
+  max_tokens: 4096
+```
 
-✅ **Project Isolation**
-- Every project gets isolated workspace, memory namespace, artifact directory
-- Two projects never see each other's state
-- Supports concurrent project runs
+Override via `.env`:
+```
+LLM_PROVIDER=bedrock
+AWS_REGION=us-east-1
+AWS_BEDROCK_MODEL=anthropic.claude-3-5-sonnet-20241022-v2:0
+AWS_BEARER_TOKEN_BEDROCK=...
+```
 
-✅ **Comprehensive Testing**
-- 42 test files, ~194 tests passing
-- Coverage: workflow pipeline, agents, memory, LLM integration, file operations, API endpoints
+Switch at runtime (no restart): `POST /settings/llm`
+
+---
+
+## Memory System (6 stores)
+
+| Store | Purpose | Backend |
+|-------|---------|---------|
+| MemoryManager | Project-scoped key-value (predecessor messages, design) | SQLite |
+| KnowledgeMemory | Semantic vector search (HNSW) | SQLite + hnswlib |
+| LearningLoop | Trajectory recording (approved/rejected per stage) | SQLite |
+| LessonStore | Human-readable lessons per stage/project | SQLite |
+| CheckpointManager | Crash recovery checkpoints | SQLite/JSON |
+| CostTracker | Token usage and latency per call | SQLite |
+
+Note: ContextManager and MemoryOrchestrator are implemented but DISABLED in the live container.
+
+---
+
+## API Routes (14 routers)
+
+| Router | Prefix | Key Endpoints |
+|--------|--------|---------------|
+| health | / | GET /ready, GET /health |
+| project | /projects | CRUD projects |
+| workflow | /workflow | POST /start, GET/POST /design-review, POST /stop |
+| websocket | /ws, /api/ws | WebSocket /ws/{project_id} |
+| chat | /chat | POST chat messages |
+| artifacts | /artifacts | GET artifacts per project/stage |
+| agents | /agents | Agent info |
+| memory | /memory | Memory store access |
+| learning | /learning | Learning stats |
+| files | /files | Generated project file browsing |
+| logs | /logs | Pipeline execution logs |
+| settings | /settings | LLM settings + runtime config |
+| intelligence | /intelligence | File index, dependency graph, code summaries |
+
+---
+
+## Frontend Structure
+
+```
+frontend/src/
+  App.tsx              — Router: /projects + /projects/:projectId
+  main.tsx             — React 19 root
+  pages/
+    ProjectsPage.tsx   — Dashboard + new project modal
+    WorkspacePage.tsx  — Full workspace UI
+  components/          — chat/, design/, files/, logview/, metrics/, pipeline/, qa/, ui/
+  hooks/               — useLogs.ts, usePipeline.ts, useWebSocket.ts
+  lib/api.ts           — Typed API client (all calls via /api prefix)
+```
 
 ---
 
 ## Known Limitations
 
-⚠️ **Version Pinning Not Implemented**
-- Generated `package.json` uses `*` (npm), `requirements.txt` has no versions
-- Builds not reproducible across time
-- Workaround: Use lockfiles (package-lock.json, poetry.lock)
-
-⚠️ **Single-Process Only**
-- No horizontal scaling built-in
-- Synchronous LLM calls block (not async)
-- Scale via clustering/multiple instances (future work)
-
-⚠️ **No Authentication/RBAC**
-- Single-user deployments only
-- No multi-tenant isolation
-- Auth layer planned for future
-
-⚠️ **Stop Signal Limitations**
-- Can't interrupt in-flight LLM calls (blocking HTTP)
-- Takes effect between retry attempts/stages
-- Workaround: Restart backend (resumes from checkpoint)
-
-⚠️ **Polling-Based Frontend**
-- Live updates via polling (3-4s latency)
-- WebSockets not yet implemented
-- Works fine for single-user, not ideal for many concurrent users
+1. **Single-user only** — no authentication or RBAC
+2. **Synchronous pipeline** — one LLM call at a time; cannot parallelize stages
+3. **Local SQLite** — no multi-instance or horizontal scaling
+4. **No frontend tests** — zero Jest/Vitest test files
+5. **Missing `transformers` package** — causes test failures when touching KnowledgeMemory embedding
+6. **ContextManager disabled** — intelligence context injection not active in some paths
+7. **Version pinning** — auto-detected dependencies in generated projects have `# TODO: pin version`
 
 ---
 
-## Development Status
+## Running the System
 
-**Version 1.1** (Current)
-- ✅ All 12 stages fully implemented and wired
-- ✅ Real code generation (Backend/Frontend agents)
-- ✅ Three-tier review gates
-- ✅ Crash-safe resume via checkpoints
-- ✅ Learning loop + knowledge embedding
-- ✅ AWS Bedrock provider support
-- ✅ Project isolation
-- ✅ Comprehensive testing
-- ⚠️ 7 critical issues found in audit (see AUDIT_FINAL_FINDINGS.md)
+```bash
+# Prerequisites
+ollama serve
+ollama pull qwen2.5-coder:7b
 
-**Series A Readiness**
-- System is fundamentally sound
-- 7 critical issues must be fixed before Series A (2-3 weeks)
-- High-priority improvements planned for next sprint
+# Install + test
+pip install -r backend/requirements.txt
+cd backend && python -m pytest tests/ -q
 
----
-
-## Folder Overview
-
-```
-backend/               # Python FastAPI application
-├── app/
-│   ├── agents/       # 12 stage agents + 2 auxiliary
-│   ├── actions/      # LLM-backed action classes
-│   ├── api/          # 10 HTTP route modules
-│   ├── workflow/     # Pipeline orchestration
-│   ├── memory/       # 6 memory stores
-│   ├── llm/          # LLM provider abstraction
-│   ├── prompt/       # 12 stage-specific prompt builders
-│   ├── execution/    # Stage execution engine
-│   ├── review/       # Three-tier review system
-│   ├── project/      # Project management
-│   ├── workspace/    # File I/O + isolation
-│   ├── kernel/       # Bootstrap + DI container
-│   └── shared/       # Schemas, DTOs, exceptions, enums
-├── tests/            # 42 test files
-└── requirements.txt  # Dependencies
-
-frontend/             # Vite + React application
-├── src/
-│   ├── components/   # UI components
-│   ├── pages/        # Route pages
-│   ├── hooks/        # Custom hooks
-│   ├── lib/          # API client + utilities
-│   └── styles/       # CSS
-├── public/
-└── package.json
-
-docs/                 # Project documentation
-├── CURRENT-STATE.md          # Authoritative system description ✅
-├── COMMANDS.md               # Setup, run, test commands
-├── AUDIT_*.md               # Architecture audit reports (new)
-├── PROJECT_OVERVIEW.md       # This file
-├── STAGE-FLOW.md            # Stage definitions (outdated)
-├── ROADMAP.md               # Implementation roadmap (outdated)
-└── ...other docs
+# Start
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload  # backend
+npm run dev                                                  # frontend (separate terminal)
 ```
 
----
-
-## Getting Started
-
-See `COMMANDS.md` for:
-- Prerequisites (Python 3.12+, Node 18+, Ollama or AWS Bedrock)
-- Backend setup + startup
-- Frontend setup + startup
-- Running tests
-- One-off API calls
-
----
-
-## For More Details
-
-- **Architecture Deep Dive**: Read `CURRENT-STATE.md` (the authoritative description)
-- **Critical Issues Found**: Read `AUDIT_FINAL_FINDINGS.md` (7 issues, 2-3 week fix timeline)
-- **Technical Debt Inventory**: Read `AUDIT_TECH_DEBT.md` (31 issues total)
-- **Component Status Matrix**: Read `AUDIT_COMPONENT_INDEX.md` (52 components catalogued)
-
----
-
-## Next Steps
-
-**For Series A**: Fix 7 critical issues (2-3 weeks) → Re-audit → Proceed with funding
-
-**For Production Scale**: Add async execution, PostgreSQL, Redis cache, horizontal scaling
-
-**For Enterprise Features**: Add authentication/RBAC, multi-model support, advanced analytics
-
+Or use `run.sh` (checks Ollama, installs deps, runs tests, starts server).
