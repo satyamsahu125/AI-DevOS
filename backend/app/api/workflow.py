@@ -258,7 +258,12 @@ def workflow_status(
     else:
         status_str = "paused"
 
-    requires_action = state in [ProjectState.DESIGN_REVIEW_PENDING, ProjectState.QA_PENDING, ProjectState.QA_IN_PROGRESS]
+    # clarifying/paused = pipeline kicked off but LLM timed out before generating Q&A.
+    # Treat it as needing user action so the frontend shows the Continue prompt.
+    clarifying_paused = (state == ProjectState.CLARIFYING and not is_running)
+    requires_action = clarifying_paused or state in [
+        ProjectState.DESIGN_REVIEW_PENDING, ProjectState.QA_PENDING, ProjectState.QA_IN_PROGRESS
+    ]
 
     return {
         "project_id": project_id,

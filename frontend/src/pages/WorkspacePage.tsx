@@ -70,6 +70,8 @@ export function WorkspacePage() {
   const s = pipeline.state.toLowerCase()
   const showQA = s === "qa_pending" || s === "qa_in_progress"
   const showEmpty = s === "empty" || !project
+  // "clarifying" = pipeline kicked off but paused before Q&A (usually an LLM timeout)
+  const showStarting = s === "clarifying" && pipeline.status === "paused"
 
   // Status chip
   const chipColor =
@@ -201,6 +203,27 @@ export function WorkspacePage() {
               projectId={projectId!}
               onComplete={async () => { loadProject(); await refresh() }}
             />
+          ) : showStarting ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-500/10 border border-indigo-500/20">
+                <svg className="h-6 w-6 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2m6-2a10 10 0 11-20 0 10 10 0 0120 0z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-zinc-200">Pipeline initialising</p>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Domain research paused — usually an LLM timeout.<br />
+                  Click <span className="text-indigo-400 font-medium">Continue</span> to retry.
+                </p>
+              </div>
+              <button
+                onClick={handleContinue}
+                className="mt-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-medium text-white hover:bg-indigo-500"
+              >
+                ▶ Continue
+              </button>
+            </div>
           ) : showEmpty ? (
             <EmptyState onStart={handleStart} starting={starting} />
           ) : (
