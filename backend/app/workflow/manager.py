@@ -10,9 +10,11 @@ from typing import Any
 from ..agents.base_agent import BaseAgent
 from ..agents.factory import AgentFactory
 from ..artifact.manager import ArtifactManager
+from ..config.manager import ConfigurationManager
 from ..execution.project_reader import ProjectReader
 from ..execution.project_validator import ProjectValidator, ValidationResult
 from ..execution.project_writer import ProjectWriter
+from ..llm.manager import LLMManager
 from ..shared.dto.pipeline_result import PipelineResult
 from ..shared.dto.workflow_result import WorkflowResult
 from ..shared.enums.project_state import ProjectState
@@ -22,6 +24,8 @@ from ..shared.schemas.file_plan_schema import FilePlan
 from ..workspace.manager import WorkspaceManager
 from .engine import WorkflowEngine
 from .execution_state import ExecutionStateRegistry
+from .pipeline_supervisor import PipelineSupervisor
+from .sprint_supervisor import SprintSupervisor
 from .stage_lookup import resolve_stage_name
 
 logger = logging.getLogger(__name__)
@@ -85,6 +89,21 @@ class WorkflowManager:
             self.broadcaster = default_broadcaster
         self.sprint_monitor = sprint_monitor   # None = feature disabled
         self.domain_researcher = domain_researcher  # None = feature disabled
+
+        # Wire up Phase 3: PipelineSupervisor and SprintSupervisor
+        self._settings = ConfigurationManager().load()
+        self._llm_manager = getattr(self.engine, "llm_manager", None) or LLMManager()
+        self._sprint_supervisor = SprintSupervisor(
+            workspace_manager=self.workspace_manager,
+            llm_manager=self._llm_manager,
+            settings=self._settings,
+        )
+        self._pipeline_supervisor = PipelineSupervisor(
+            workspace=self.workspace_manager,
+            engine=self.engine,
+            sprint_supervisor=self._sprint_supervisor,
+            settings=self._settings,
+        )
 
     def _get_agent(self, stage_name: str) -> BaseAgent:
         """Resolve agent via factory — never instantiate directly."""
@@ -157,6 +176,10 @@ class WorkflowManager:
         over the same workspace: duplicate "<stage> started" entries in the
         live log, competing writes to the same project.json and artifacts, and
         one blocked request thread held per run.
+
+        Uses PipelineSupervisor (Phase 3) to orchestrate the 3-phase pipeline
+        (Discovery → Sprints → Release). Delegates to the old state machine
+        only for CLARIFYING state to maintain Q&A flow compatibility.
         """
         if not project_id:
             return PipelineResult(
@@ -199,313 +222,152 @@ class WorkflowManager:
                 project_id, {"stages_completed": stages_completed}
             )
 
-        while True:
-            state = self.workspace.get_state(project_id)
+        state = self.workspace.get_state(project_id)
 
-            if state == ProjectState.EMPTY:
-                self._transition(project_id, ProjectState.CLARIFYING)
+        # Handle CLARIFYING state separately — Q&A flow is retained for now
+        if state == ProjectState.CLARIFYING:
+            return self._handle_clarifying_state(project_id, request, skip_qa)
 
-            elif state == ProjectState.CLARIFYING:
-                if skip_qa:
-                    result = self._run_stage(project_id, "StrategicReview", request)
-                    if result.success:
-                        self._transition(project_id, ProjectState.REQUIREMENTS_READY)
-                    else:
-                        return self._fail(project_id, "StrategicReview", result)
-                else:
-                    from ..agents.clarification import ClarificationAgent
-                    # Run domain research BEFORE generating questions so Q&A is domain-aware
-                    domain_brief = self._run_domain_research(project_id, request)
-                    agent = self._get_agent("clarification")
-                    if isinstance(agent, ClarificationAgent):
-                        q_set = agent.generate_questions(request, domain_brief=domain_brief)
-                        questions = [q.model_dump(mode="json") if hasattr(q, "model_dump") else q for q in q_set.questions]
-                    else:
-                        questions = []
-                    if questions:
-                        self.workspace.save_qa_questions(project_id, questions)
-                        self._transition(project_id, ProjectState.QA_PENDING)
-                        data = self.workspace.load_project_json(project_id) or {}
-                        completed_stages = list(data.get("stages_completed", []))
-                        return PipelineResult(
-                            project_id=project_id,
-                            state=ProjectState.QA_PENDING,
-                            requires_user_action=True,
-                            action_needed="answer_questions",
-                            message=f"I have {len(questions)} questions to help me understand your project better.",
-                            completed_stages=completed_stages,
-                        )
-                    else:
-                        result = self._run_stage(project_id, "StrategicReview", request)
-                        if result.success:
-                            self._transition(project_id, ProjectState.REQUIREMENTS_READY)
-                        else:
-                            return self._fail(project_id, "StrategicReview", result)
+        # Handle Q&A states (pre-discovery)
+        if state in [ProjectState.QA_PENDING, ProjectState.QA_IN_PROGRESS]:
+            return self._handle_qa_flow(project_id, request)
 
-            elif state == ProjectState.QA_PENDING:
-                qa = self.workspace.get_qa_session(project_id)
-                answered = len(qa.get("answers", []))
-                total = len(qa.get("questions", []))
-                if total > 0 and answered < total:
-                    data = self.workspace.load_project_json(project_id) or {}
-                    completed_stages = list(data.get("stages_completed", []))
-                    return PipelineResult(
-                        project_id=project_id,
-                        state=ProjectState.QA_PENDING,
-                        requires_user_action=True,
-                        action_needed="answer_questions",
-                        message=f"Answered {answered}/{total} questions. Please answer remaining questions.",
-                        completed_stages=completed_stages,
-                    )
-                else:
-                    self._transition(project_id, ProjectState.QA_IN_PROGRESS)
+        # For all other states, use PipelineSupervisor (Phase 3)
+        self.execution_state.mark_running(project_id)
+        self.workspace.update_project_json(project_id, {"stopped": False})
+        try:
+            return self._pipeline_supervisor.run(project_id, request)
+        finally:
+            self.execution_state.mark_stopped(project_id)
 
-            elif state == ProjectState.QA_IN_PROGRESS:
-                from ..agents.clarification import ClarificationAgent
-                agent = self._get_agent("clarification")
-                qa = self.workspace.get_qa_session(project_id)
-                if isinstance(agent, ClarificationAgent):
-                    artifact_obj = agent.process_answers(request, qa)
-                    struct = artifact_obj.model_dump(mode="json") if hasattr(artifact_obj, "model_dump") else {}
-                    content_str = getattr(artifact_obj, "clarified_requirement", "") or request
-                    self.artifact_manager.save_artifact(
-                        project_id=project_id,
-                        stage=Stage.StrategicReview,
-                        content=content_str,
-                        structured_content=struct,
-                    )
-                self.workspace.mark_qa_complete(project_id)
-                # StrategicReview is processed inline via Q&A (not through engine.run),
-                # so _update_project_progress() is never called for it.  Write it into
-                # stages_completed now so the gap-sanitizer at the top of run() finds a
-                # continuous prefix on every subsequent resume — without this, the
-                # sanitizer sees StrategicReview missing and wipes all later stages.
-                _qa_data = self.workspace.load_project_json(project_id) or {}
-                _completed = list(_qa_data.get("stages_completed", []))
-                if Stage.StrategicReview.value not in _completed:
-                    _completed.insert(0, Stage.StrategicReview.value)
-                    self.workspace.update_project_json(
-                        project_id, {"stages_completed": _completed}
-                    )
+    def _handle_clarifying_state(
+        self, project_id: str, request: str, skip_qa: bool
+    ) -> PipelineResult:
+        """Handle CLARIFYING state Q&A flow (retained for backwards compatibility).
+
+        This is kept separate from PipelineSupervisor to maintain the existing Q&A
+        user interaction pattern. Once CLARIFYING completes (via Q&A or skip_qa),
+        control passes to PipelineSupervisor for the rest of the pipeline.
+        """
+        if skip_qa:
+            result = self._run_stage(project_id, "StrategicReview", request)
+            if result.success:
                 self._transition(project_id, ProjectState.REQUIREMENTS_READY)
-
-            elif state == ProjectState.REQUIREMENTS_READY:
-                result = self._run_stage(project_id, "ProductOwner", request)
-                if result.success:
-                    self._persist_to_artifact_store(
-                        project_id, Stage.ProductOwner, "project", "user_stories"
-                    )
-                    self._transition(project_id, ProjectState.ARCHITECTURE_READY)
-                else:
-                    return self._fail(project_id, "Requirements", result)
-
-            elif state == ProjectState.ARCHITECTURE_READY:
-                result = self._run_stage(project_id, "Architect", request)
-                if result.success:
-                    self._persist_to_artifact_store(
-                        project_id, Stage.Architect, "project", "architecture"
-                    )
-                    self._transition(project_id, ProjectState.DESIGN_READY)
-                else:
-                    return self._fail(project_id, "Architecture", result)
-
-            elif state == ProjectState.DESIGN_READY:
-                p_data = self.workspace.load_project_json(project_id) or {}
-                dr = p_data.get("design_review") or {}
-                design_req = request
-                if dr.get("status") == "revision_requested":
-                    iteration = dr.get("iteration", 2)
-                    fb = dr.get("user_feedback") or dr.get("feedback", "")
-                    if fb:
-                        design_req = (
-                            f"{request}\n\n━━━━ USER FEEDBACK ON DESIGN ITERATION {iteration - 1} ━━━━\n"
-                            f"{fb}\nYou MUST address every point in this feedback."
-                        )
-
-                result = self._run_stage(project_id, "Designer", design_req)
-                if result.success:
-                    self._persist_to_artifact_store(
-                        project_id, Stage.Designer, "project", "design"
-                    )
-                    self._transition(project_id, ProjectState.DESIGN_REVIEW_PENDING)
-                    data = self.workspace.load_project_json(project_id) or {}
-                    completed_stages = list(data.get("stages_completed", []))
-                    return PipelineResult(
-                        project_id=project_id,
-                        state=ProjectState.DESIGN_REVIEW_PENDING,
-                        message="Design ready for review",
-                        requires_user_action=True,
-                        action_needed="review_design",
-                        completed_stages=completed_stages,
-                    )
-                else:
-                    return self._fail(project_id, "Design", result)
-
-            elif state == ProjectState.DESIGN_REVIEW_PENDING:
-                data = self.workspace.load_project_json(project_id) or {}
-                dr = data.get("design_review") or {}
-                if dr.get("status") == "approved":
-                    self._transition(project_id, ProjectState.DESIGN_APPROVED)
-                else:
-                    completed_stages = list(data.get("stages_completed", []))
-                    return PipelineResult(
-                        project_id=project_id,
-                        state=ProjectState.DESIGN_REVIEW_PENDING,
-                        message="Waiting for design approval",
-                        requires_user_action=True,
-                        action_needed="review_design",
-                        completed_stages=completed_stages,
-                    )
-
-            elif state == ProjectState.DESIGN_APPROVED:
-                result_sec = self._run_stage(project_id, "Security", request)
-                if not result_sec.success:
-                    return self._fail(project_id, "Security", result_sec)
-                self._persist_to_artifact_store(
-                    project_id, Stage.Security, "project", "security_rules"
-                )
-
-                result_sp = self._run_stage(project_id, "SprintPlanner", request)
-                if not result_sp.success:
-                    return self._fail(project_id, "SprintPlanning", result_sp)
-                self._handle_sprint_planner_approval(project_id, result_sp)
-                self._persist_to_artifact_store(
-                    project_id, Stage.SprintPlanning, "project", "sprint_plan"
-                )
-
-                result_sm = self._run_stage(project_id, "ScrumMaster", request)
-                if not result_sm.success:
-                    return self._fail(project_id, "ScrumMaster", result_sm)
-                self._persist_to_artifact_store(
-                    project_id, Stage.ScrumMaster, "project", "sprint_plan_tasks"
-                )
-
-                # FileStructurePlanner runs per-sprint inside _run_sprint() so it
-                # has access to the per-sprint context (goal, features, tasks).
-                # Running it here globally (before any sprint starts) meant it had
-                # no sprint context and its output was immediately overwritten on
-                # the first sprint anyway — a pure duplicate that wasted one LLM call.
-                self._transition(project_id, ProjectState.SPRINT_PLAN_READY)
-
-            elif state == ProjectState.SPRINT_PLAN_READY:
-                self._transition(project_id, ProjectState.SPRINT_IN_PROGRESS)
-
-            elif state == ProjectState.SPRINT_IN_PROGRESS:
-                result = self._run_next_sprint(project_id)
-                if result.all_sprints_complete:
-                    self._run_validation_with_healing(project_id, request)
-                    self._transition(project_id, ProjectState.ALL_SPRINTS_COMPLETE)
-                elif result.sprint_complete:
-                    pass
-                else:
-                    return self._fail(project_id, "Sprint", result)
-
-            elif state == ProjectState.ALL_SPRINTS_COMPLETE:
-                # QA, DevOps, Document are all "best-effort" post-sprint stages.
-                # A failure in any of them is recorded and logged but does NOT
-                # stop the pipeline — the project is still deployable without a
-                # perfect QA report or DevOps manifest.  This matches the user
-                # expectation: "Retro should still run; we can retry failed stages
-                # individually via /workflow/stage."
-                #
-                # HOWEVER, we no longer silently ignore failures — each failure is
-                # logged at WARNING level with the stage name so it shows up in the
-                # live log and can be diagnosed.
-                for stage_name in ("QA", "DevOps", "Document"):
-                    stage_result = self._run_stage(project_id, stage_name, request)
-                    if stage_result.success:
-                        logger.info("%s completed successfully", stage_name)
-                        # Mirror QA output into release-scoped ArtifactStore.
-                        if stage_name == "QA":
-                            self._persist_to_artifact_store(
-                                project_id, Stage.QA, "release", "qa_findings"
-                            )
-                    else:
-                        logger.warning(
-                            "%s failed (non-fatal, pipeline continues): %s",
-                            stage_name, stage_result.message,
-                        )
-
-                self._transition(project_id, ProjectState.QA_COMPLETE)
-
-            elif state == ProjectState.QA_COMPLETE:
-                result_retro = self._run_stage(project_id, "Retro", request)
-                if not result_retro.success:
-                    return self._fail(project_id, "Retro", result_retro)
-                self._transition(project_id, ProjectState.DEPLOYABLE)
-
-            elif state == ProjectState.CHANGE_REQUESTED:
-                # Waiting for the user to confirm or cancel via apply_requirement_change().
-                # Do NOT advance automatically — return and let the API caller decide.
-                data = self.workspace.load_project_json(project_id) or {}
-                pending = data.get("pending_change") or {}
-                completed_stages = list(data.get("stages_completed", []))
-                return PipelineResult(
-                    project_id=project_id,
-                    state=ProjectState.CHANGE_REQUESTED,
-                    requires_user_action=True,
-                    action_needed="confirm_change",
-                    message=(
-                        f"Requirement change pending — confirm or cancel to resume. "
-                        f"Change: {pending.get('description', '(no description)')}"
-                    ),
-                    completed_stages=completed_stages,
-                )
-
-            elif state == ProjectState.RESUMING_FROM_CHANGE:
-                from datetime import datetime, timezone
-                pj = self.workspace.load_project_json(project_id) or {}
-                changes = pj.get("requirement_changes", [])
-                last_change = changes[-1] if changes else None
-
-                enriched_request = request
-                if last_change:
-                    enriched_request = (
-                        f"{request}\n\n"
-                        f"REQUIREMENT CHANGE APPLIED:\n"
-                        f"{last_change.get('description', '')}\n"
-                        + (f"Additional context: {last_change.get('comment')}"
-                           if last_change.get('comment') else "")
-                    )
-                    request = enriched_request
-
-                self._transition(project_id, ProjectState.SPRINT_IN_PROGRESS)
-
-            elif state in [
-                ProjectState.DEPLOYABLE,
-                ProjectState.DONE,
-                ProjectState.FAILED,
-                ProjectState.PAUSED,
-            ]:
-                data = self.workspace.load_project_json(project_id) or {}
-                completed_stages = list(data.get("stages_completed", []))
-                return PipelineResult(
-                    project_id=project_id,
-                    state=state,
-                    success=state in [ProjectState.DEPLOYABLE, ProjectState.DONE],
-                    message=f"Pipeline in state: {state.value}",
-                    completed_stages=completed_stages,
-                )
-
+                # Continue pipeline via PipelineSupervisor
+                self.execution_state.mark_running(project_id)
+                self.workspace.update_project_json(project_id, {"stopped": False})
+                try:
+                    return self._pipeline_supervisor.run(project_id, request)
+                finally:
+                    self.execution_state.mark_stopped(project_id)
             else:
-                # Safety catch: any state not handled above (IMPACT_ANALYZED, REPLANNING,
-                # SPRINT_COMPLETE, AWAITING_HUMAN_APPROVAL, or any future additions)
-                # must not spin forever in this loop.
-                logger.error(
-                    "WorkflowManager.run(): unhandled state '%s' for project '%s' — halting pipeline",
-                    state, project_id,
-                )
+                return self._fail(project_id, "StrategicReview", result)
+        else:
+            from ..agents.clarification import ClarificationAgent
+            # Run domain research BEFORE generating questions so Q&A is domain-aware
+            domain_brief = self._run_domain_research(project_id, request)
+            agent = self._get_agent("clarification")
+            if isinstance(agent, ClarificationAgent):
+                q_set = agent.generate_questions(request, domain_brief=domain_brief)
+                questions = [q.model_dump(mode="json") if hasattr(q, "model_dump") else q for q in q_set.questions]
+            else:
+                questions = []
+            if questions:
+                self.workspace.save_qa_questions(project_id, questions)
+                self._transition(project_id, ProjectState.QA_PENDING)
                 data = self.workspace.load_project_json(project_id) or {}
+                completed_stages = list(data.get("stages_completed", []))
                 return PipelineResult(
                     project_id=project_id,
-                    state=state,
-                    success=False,
-                    message=(
-                        f"Unhandled pipeline state: "
-                        f"{state.value if hasattr(state, 'value') else state}"
-                    ),
-                    completed_stages=list(data.get("stages_completed", [])),
+                    state=ProjectState.QA_PENDING,
+                    requires_user_action=True,
+                    action_needed="answer_questions",
+                    message=f"I have {len(questions)} questions to help me understand your project better.",
+                    completed_stages=completed_stages,
                 )
+            else:
+                result = self._run_stage(project_id, "StrategicReview", request)
+                if result.success:
+                    self._transition(project_id, ProjectState.REQUIREMENTS_READY)
+                    # Continue pipeline via PipelineSupervisor
+                    self.execution_state.mark_running(project_id)
+                    self.workspace.update_project_json(project_id, {"stopped": False})
+                    try:
+                        return self._pipeline_supervisor.run(project_id, request)
+                    finally:
+                        self.execution_state.mark_stopped(project_id)
+                else:
+                    return self._fail(project_id, "StrategicReview", result)
+
+    def _handle_qa_flow(self, project_id: str, request: str) -> PipelineResult:
+        """Handle Q&A states (QA_PENDING, QA_IN_PROGRESS).
+
+        Once Q&A completes, transitions to REQUIREMENTS_READY and continues
+        the pipeline via PipelineSupervisor.
+        """
+        state = self.workspace.get_state(project_id)
+
+        if state == ProjectState.QA_PENDING:
+            qa = self.workspace.get_qa_session(project_id)
+            answered = len(qa.get("answers", []))
+            total = len(qa.get("questions", []))
+            if total > 0 and answered < total:
+                data = self.workspace.load_project_json(project_id) or {}
+                completed_stages = list(data.get("stages_completed", []))
+                return PipelineResult(
+                    project_id=project_id,
+                    state=ProjectState.QA_PENDING,
+                    requires_user_action=True,
+                    action_needed="answer_questions",
+                    message=f"Answered {answered}/{total} questions. Please answer remaining questions.",
+                    completed_stages=completed_stages,
+                )
+            else:
+                self._transition(project_id, ProjectState.QA_IN_PROGRESS)
+
+        if state == ProjectState.QA_IN_PROGRESS:
+            from ..agents.clarification import ClarificationAgent
+            agent = self._get_agent("clarification")
+            qa = self.workspace.get_qa_session(project_id)
+            if isinstance(agent, ClarificationAgent):
+                artifact_obj = agent.process_answers(request, qa)
+                struct = artifact_obj.model_dump(mode="json") if hasattr(artifact_obj, "model_dump") else {}
+                content_str = getattr(artifact_obj, "clarified_requirement", "") or request
+                self.artifact_manager.save_artifact(
+                    project_id=project_id,
+                    stage=Stage.StrategicReview,
+                    content=content_str,
+                    structured_content=struct,
+                )
+            self.workspace.mark_qa_complete(project_id)
+            # StrategicReview is processed inline via Q&A (not through engine.run),
+            # so _update_project_progress() is never called for it.  Write it into
+            # stages_completed now so the gap-sanitizer at the top of run() finds a
+            # continuous prefix on every subsequent resume — without this, the
+            # sanitizer sees StrategicReview missing and wipes all later stages.
+            _qa_data = self.workspace.load_project_json(project_id) or {}
+            _completed = list(_qa_data.get("stages_completed", []))
+            if Stage.StrategicReview.value not in _completed:
+                _completed.insert(0, Stage.StrategicReview.value)
+                self.workspace.update_project_json(
+                    project_id, {"stages_completed": _completed}
+                )
+            self._transition(project_id, ProjectState.REQUIREMENTS_READY)
+            # Continue pipeline via PipelineSupervisor
+            self.execution_state.mark_running(project_id)
+            self.workspace.update_project_json(project_id, {"stopped": False})
+            try:
+                return self._pipeline_supervisor.run(project_id, request)
+            finally:
+                self.execution_state.mark_stopped(project_id)
+
+        # Shouldn't reach here
+        return PipelineResult(
+            project_id=project_id,
+            state=state,
+            success=False,
+            message="Unexpected state in QA flow",
+        )
 
     def submit_requirement_change(
         self,
