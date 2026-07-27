@@ -308,17 +308,17 @@ temp-workspace/{project_id}/
 ### Phase 4 — New Per-Sprint Agents
 | Task | Status | Notes |
 |---|---|---|
-| Split `agents/retro.py` → SprintRetroAgent + ProjectRetroAgent | ⏳ PENDING | |
-| Rename DevOpsAgent → ProductionDeployAgent | ⏳ PENDING | |
-| Add UPDATE mode to ProductOwnerAgent | ⏳ PENDING | Takes bug_analysis, updates user_stories |
-| Add UPDATE mode to ArchitectAgent | ⏳ PENDING | Takes bug_analysis, updates architecture |
+| Split `agents/retro.py` → SprintRetroAgent + ProjectRetroAgent | ✅ DONE | Added run_sprint_retro() and run_project_retro() methods |
+| Rename DevOpsAgent → ProductionDeployAgent | ✅ DONE | Added alias, registered as "production_deploy" in factory |
+| Add UPDATE mode to ProductOwnerAgent | ✅ DONE | update_user_stories() called on spec_bug, writes versioned artifact |
+| Add UPDATE mode to ArchitectAgent | ✅ DONE | update_architecture() called on architecture_bug, writes versioned artifact |
 
 ### Phase 5 — Artifact Versioning
 | Task | Status | Notes |
 |---|---|---|
-| Version user_stories.json on spec update | ⏳ PENDING | user_stories_v2.json + reason logged |
-| Version architecture.json on arch update | ⏳ PENDING | Same |
-| Audit log: why artifact was versioned | ⏳ PENDING | Written by BugAnalyst at time of update |
+| Version user_stories.json on spec update | ✅ DONE | Writes user_stories_v2.json, v3, etc. |
+| Version architecture.json on arch update | ✅ DONE | Writes architecture_v2.json, v3, etc. |
+| Audit log: why artifact was versioned | ✅ DONE | append_version_audit() records all version changes to version_history.json |
 
 ---
 
@@ -551,7 +551,7 @@ temp-workspace/{project_id}/
 
 **Commit:** `9e89652`
 
-**Next:** Phase 3 -- PipelineSupervisor replaces WorkflowManager state machine
+**Next:** Phase 4+5 -- agent UPDATE modes and artifact versioning audit
 
 ---
 
@@ -653,6 +653,79 @@ temp-workspace/{project_id}/
 - `workflow/sprint_graph.py` + `workflow/pipeline_supervisor.py` + manager updates + tests
 
 **Next:** Phase 4 -- Agent splits (RetroAgent, DevOpsAgent) + ProductOwner/Architect UPDATE mode
+
+---
+
+### [2026-07-27] PASS — Phase 4+5: agent UPDATE modes, artifact versioning, complete feedback loop
+
+**Done:**
+
+**Phase 4 — Agent UPDATE Modes:**
+- RetroAgent split (methods added, not separate classes):
+  - `run_sprint_retro()`: summarises per-sprint lessons (what worked, didn't, improvements)
+  - `run_project_retro()`: synthesises patterns across all sprints
+  - Writes to ArtifactStore(scope="sprint_N") and scope="release"
+  - Also appends sprint summary to retro_log.txt for audit trail
+  
+- ProductOwnerAgent UPDATE mode:
+  - `update_user_stories(project_id, current_stories, bug_analysis, iteration)` → dict
+  - Called by SprintSupervisor when BugAnalyst classifies failure as spec_bug
+  - Updates user stories based on QA gap, writes versioned artifact
+  - Calls artifact_store.append_version_audit() for traceability
+  
+- ArchitectAgent UPDATE mode:
+  - `update_architecture(project_id, current_architecture, bug_analysis, iteration)` → dict
+  - Called by SprintSupervisor when BugAnalyst classifies failure as architecture_bug
+  - Updates architecture based on design gap, writes versioned artifact
+  - Calls artifact_store.append_version_audit() for traceability
+  
+- DevOpsAgent alias:
+  - Added ProductionDeployAgent = DevOpsAgent at module level
+  - Registered as "production_deploy" in factory.py (same implementation)
+
+**Phase 5 — Artifact Versioning Audit:**
+- ArtifactStore.append_version_audit() new method:
+  - Appends entry to artifacts/project/version_history.json
+  - Records: artifact name, new version, reason, bug_type, sprint, iteration, timestamp
+  - Non-fatal: logs warning if write fails, continues pipeline
+  - Enables traceability: which bugs triggered which spec/arch updates
+  
+**SprintSupervisor Integration — Complete Feedback Loop:**
+- spec_bug routing:
+  1. Load current user_stories from ArtifactStore(project scope)
+  2. Call ProductOwnerAgent.update_user_stories() with bug_analysis
+  3. Agent writes versioned artifact + audit entry
+  4. Re-run Backend/Frontend with updated spec in context
+  5. Loop back to TechLead review
+  
+- architecture_bug routing:
+  1. Load current architecture from ArtifactStore(project scope)
+  2. Call ArchitectAgent.update_architecture() with bug_analysis
+  3. Agent writes versioned artifact + audit entry
+  4. Re-run Backend/Frontend with updated arch in context
+  5. Loop back to TechLead review
+  
+- security_violation & unknown types:
+  - Treated as code_bug (re-run Backend/Frontend with fix_instruction)
+  - Security agent UPDATE mode deferred to future phase
+
+**Testing & Validation:**
+- Sanity check: All new methods verified ✅
+- Smoke tests: 40/40 passed ✅
+- Regression tests: 495/495 passed ✅
+
+**Files changed:**
+- `backend/app/agents/retro.py` (added 2 methods)
+- `backend/app/agents/product_owner.py` (added 1 method)
+- `backend/app/agents/architect.py` (added 1 method)
+- `backend/app/agents/devops.py` (added ProductionDeployAgent alias)
+- `backend/app/agents/factory.py` (registered "production_deploy")
+- `backend/app/workflow/sprint_supervisor.py` (spec/arch bug routing)
+- `backend/app/workspace/artifact_store.py` (append_version_audit method)
+
+**Commit:** `7b0d62b`
+
+**Next:** Final cleanup — update dependencies, end-to-end tests
 
 ---
 
