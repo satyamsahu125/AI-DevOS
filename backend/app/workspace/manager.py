@@ -4,6 +4,8 @@ import json
 import logging
 import os
 import shutil
+import threading
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -13,6 +15,18 @@ from .layout import WorkspaceLayout
 from .repository import WorkspaceRepository
 
 logger = logging.getLogger(__name__)
+
+# Per-project write lock — prevents concurrent update_project_json calls from
+# corrupting project.json via interleaved read-modify-write sequences.
+_project_locks: dict[str, threading.Lock] = {}
+_project_locks_meta = threading.Lock()
+
+
+def _get_project_lock(project_id: str) -> threading.Lock:
+    with _project_locks_meta:
+        if project_id not in _project_locks:
+            _project_locks[project_id] = threading.Lock()
+        return _project_locks[project_id]
 
 
 class WorkspaceManager:
@@ -93,20 +107,57 @@ class WorkspaceManager:
         return self.get_workspace_path(project_id) / "docs"
 
     def load_project_json(self, project_id: str) -> dict | None:
-        """Return the parsed project.json for project_id, or None if the workspace has none."""
+        """Return the parsed project.json for project_id, or None if the workspace has none.
+
+        Tolerates files corrupted by a previous write race: if ``json.loads`` raises
+        ``JSONDecodeError``, we attempt to recover the first valid JSON object from
+        the file via the streaming decoder, log a warning, and return what we can.
+        """
         path = self.get_workspace_path(project_id) / "project.json"
         if not path.exists():
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_text(encoding="utf-8")
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning(
+                "project.json for %s is corrupted (JSONDecodeError) — attempting recovery",
+                project_id,
+            )
+            try:
+                obj, _ = json.JSONDecoder().raw_decode(raw)
+                return obj
+            except Exception as exc:
+                logger.error("project.json recovery failed for %s: %s", project_id, exc)
+                return None
 
     def update_project_json(self, project_id: str, updates: dict) -> None:
-        """Merge updates into project.json, creating the file if the workspace predates it."""
-        path = self.get_workspace_path(project_id) / "project.json"
-        data = self.load_project_json(project_id) or {"project_id": project_id}
-        data.update(updates)
-        data["updated_at"] = datetime.now(timezone.utc).isoformat()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        """Merge updates into project.json atomically under a per-project lock.
+
+        Uses a lock + write-to-temp-then-rename pattern so concurrent calls
+        (e.g. engine._update_project_progress and _transition running in the
+        same thread pool) never produce partially-overwritten or double-JSON files.
+        """
+        lock = _get_project_lock(project_id)
+        with lock:
+            path = self.get_workspace_path(project_id) / "project.json"
+            data = self.load_project_json(project_id) or {"project_id": project_id}
+            data.update(updates)
+            data["updated_at"] = datetime.now(timezone.utc).isoformat()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # Write to a temp file in the same directory then rename so the
+            # on-disk file is never in a partial state even if the process dies.
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+            try:
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp_path, path)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
 
     def update_state(self, project_id: str, new_state: ProjectState) -> None:
         """Persist state change immediately."""

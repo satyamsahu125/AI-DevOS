@@ -89,19 +89,56 @@ class WorkflowManager:
         """Resolve agent via factory — never instantiate directly."""
         return self._agent_factory.create(stage_name)
 
+    # Stages that are *implied* by each ProjectState reaching that state means
+    # every stage in the tuple definitely ran (even via the Q&A bypass path).
+    _STATE_IMPLIED_STAGES: dict[str, tuple[str, ...]] = {
+        # past REQUIREMENTS_READY → StrategicReview processed via Q&A or directly
+        "requirements_ready":   ("StrategicReview",),
+        "architecture_ready":   ("StrategicReview", "ProductOwner"),
+        "design_ready":         ("StrategicReview", "ProductOwner", "Architect"),
+        "design_review_pending":("StrategicReview", "ProductOwner", "Architect", "Designer"),
+        "design_approved":      ("StrategicReview", "ProductOwner", "Architect", "Designer"),
+        "sprint_plan_ready":    ("StrategicReview", "ProductOwner", "Architect", "Designer",
+                                 "Security", "SprintPlanning", "ScrumMaster"),
+        "sprint_in_progress":   ("StrategicReview", "ProductOwner", "Architect", "Designer",
+                                 "Security", "SprintPlanning", "ScrumMaster"),
+        "all_sprints_complete": ("StrategicReview", "ProductOwner", "Architect", "Designer",
+                                 "Security", "SprintPlanning", "ScrumMaster"),
+        "qa_complete":          ("StrategicReview", "ProductOwner", "Architect", "Designer",
+                                 "Security", "SprintPlanning", "ScrumMaster"),
+        "deployable":           ("StrategicReview", "ProductOwner", "Architect", "Designer",
+                                 "Security", "SprintPlanning", "ScrumMaster"),
+        "done":                 ("StrategicReview", "ProductOwner", "Architect", "Designer",
+                                 "Security", "SprintPlanning", "ScrumMaster"),
+        "resuming_from_change": ("StrategicReview",),
+        "change_requested":     ("StrategicReview",),
+    }
+
     def _sanitize_stages_completed(
         self,
         stages_completed: list[str],
         stage_order: list[Stage],
+        current_state: str = "",
     ) -> list[str]:
-        """Remove any stage from stages_completed that comes after
-        a stage that is NOT in stages_completed.
-        Prevents gaps where stage 5 is "complete" but stage 4 is not.
+        """Return a prefix of stage_order that is fully contiguous in stages_completed.
+
+        Also injects any stages *implied* by the current pipeline state before
+        running the prefix check.  This prevents the gap-sanitizer from wiping
+        valid stages on projects that ran before FIX-2 (which adds StrategicReview
+        to stages_completed in the Q&A path) or whose project.json was corrupted
+        and repaired.
         """
+        # Merge in any stages implied by where the pipeline currently sits.
+        implied = self._STATE_IMPLIED_STAGES.get(current_state, ())
+        merged = list(stages_completed)
+        for s in implied:
+            if s not in merged:
+                merged.append(s)
+
         order = [s.value for s in stage_order]
         clean = []
         for stage in order:
-            if stage in stages_completed:
+            if stage in merged:
                 clean.append(stage)
             else:
                 break  # first incomplete stage found — stop
@@ -148,13 +185,14 @@ class WorkflowManager:
 
         from .dependency_graph import DependencyGraph
         raw_completed = p_data.get("stages_completed", [])
+        current_state_str = p_data.get("state", "")
         stages_completed = self._sanitize_stages_completed(
-            raw_completed, DependencyGraph.ordered_stages()
+            raw_completed, DependencyGraph.ordered_stages(), current_state=current_state_str
         )
         if raw_completed != stages_completed:
             logger.warning(
-                "Sanitized stages_completed for %s: %s → %s (removed gap stages)",
-                project_id, raw_completed, stages_completed
+                "Sanitized stages_completed for %s: %s → %s (implied by state=%s)",
+                project_id, raw_completed, stages_completed, current_state_str,
             )
             self.workspace.update_project_json(
                 project_id, {"stages_completed": stages_completed}
