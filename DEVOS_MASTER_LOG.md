@@ -288,12 +288,12 @@ temp-workspace/{project_id}/
 |---|---|---|
 | Create `agents/bug_analyst.py` | ✅ DONE | Root cause classifier -- 4 types, ArtifactStore write in analyse() |
 | Create `agents/tech_lead.py` | ✅ DONE | Code review per sprint -- approved/violations JSON, ArtifactStore write in review() |
-| Create `agents/sprint_deploy.py` | ⏳ PENDING | Lightweight staging deploy |
-| Create `agents/sprint_review.py` | ⏳ PENDING | Demo vs acceptance criteria |
-| Evolve `agents/qa.py` -- per-sprint mode | ⏳ PENDING | Structured JSON output, reads sprint artifacts |
-| Create `workflow/sprint_supervisor.py` | ⏳ PENDING | Sprint graph + feedback edges + retry gates |
-| Add `SPRINT_BLOCKED` to ProjectState | ⏳ PENDING | New state for human escalation |
-| Add retry configuration to settings.yml | ⏳ PENDING | `max_dev_iterations`, `max_qa_iterations` |
+| Create `agents/sprint_deploy.py` | ✅ DONE | Lightweight staging deploy, ArtifactStore write in deploy_sprint() |
+| Create `agents/sprint_review.py` | ✅ DONE | Demo vs acceptance criteria, ArtifactStore write in review_sprint() |
+| Evolve `agents/qa.py` -- per-sprint mode | ✅ DONE | run_sprint_qa() method, structured JSON output, ArtifactStore write |
+| Create `workflow/sprint_supervisor.py` | ✅ DONE | Sprint orchestrator with feedback loops, retry gates, escalation to SPRINT_BLOCKED |
+| Add `SPRINT_BLOCKED` to ProjectState | ✅ DONE | New state for human escalation (retry limits exceeded) |
+| Add retry configuration to settings.yml | ✅ DONE | SprintRetryConfig with `max_dev_review_iterations`, `max_qa_iterations`, `max_spec_fix_iterations` |
 
 ### Phase 3 — Replace State Machine with PipelineSupervisor
 > Replaces the hardcoded if/elif chain in WorkflowManager.
@@ -477,6 +477,81 @@ temp-workspace/{project_id}/
 **Commit:** `4d43132`
 
 **Next:** Phase 2 remaining -- `SprintSupervisor` with feedback edges and retry gates
+
+---
+
+### [2026-07-27] PASS -- Phase 2 complete: SprintSupervisor + remaining sprint agents
+
+**Done:**
+
+**Remaining Phase 2 agents implemented:**
+- `backend/app/agents/sprint_deploy.py` -- SprintDeployAgent:
+  - `deploy_sprint(project_id, sprint_number, file_plan)` simulates staging deployment
+  - Output: `{"deployed": bool, "staging_url": str, "services_started": [...], "issues": [...]}`
+  - ArtifactStore write to `sprint_{N}/deploy_status.json`
+- `backend/app/agents/sprint_review.py` -- SprintReviewAgent:
+  - `review_sprint(project_id, sprint_number, user_stories, deploy_status, qa_findings)` validates demo
+  - Output: `{"accepted": bool, "stories_done": [...], "stories_partial": [...], "stories_missing": [...]}`
+  - ArtifactStore write to `sprint_{N}/sprint_review.json`
+- Evolved `backend/app/agents/qa.py` -- QAAgent:
+  - Added `run_sprint_qa()` method for per-sprint testing
+  - Takes file_plan, architecture, user_stories as inputs
+  - Output: `{"passed": bool, "total_tests": int, "failed_tests": int, "failures": [...]}`
+  - ArtifactStore write to `sprint_{N}/qa_findings.json`
+  - Kept existing execute() method unchanged (used by release-phase regression QA)
+
+**Sprint orchestration:**
+- `backend/app/workflow/sprint_supervisor.py` -- SprintSupervisor:
+  - Manages complete sprint execution with feedback loops
+  - Execution order: ScrumMaster → FilePlanner → Backend/Frontend → TechLead (review loop) → QA (feedback loop) → Deploy → Review
+  - TechLead review loop: max configurable iterations (default 3)
+    - Rejects: re-run Backend+Frontend with violations as context
+    - Iteration limit exceeded: return blocked=True
+  - QA feedback loop: max configurable iterations (default 3)
+    - Failures: run BugAnalystAgent for root-cause classification
+    - code_bug: re-run Backend+Frontend with fix_instruction
+    - spec_bug/architecture_bug: log warning, treat as code_bug for now (Phase 4 adds UPDATE mode)
+    - Iteration limit exceeded: return blocked=True
+  - All ArtifactStore reads/writes use sprint-scoped artifacts
+  - Local retry counters (not persisted -- sprint re-runs from step 1 on restart)
+
+**Configuration:**
+- Added `SprintRetryConfig` to `backend/app/config/models.py`:
+  - `max_dev_review_iterations: int = 3` (TechLead loop limit)
+  - `max_qa_iterations: int = 3` (QA loop limit)
+  - `max_spec_fix_iterations: int = 2` (spec/arch update loop limit)
+- Added `SPRINT_BLOCKED` to ProjectState enum for retry limit escalation
+
+**Agent registration:**
+- Registered `sprint_deploy` and `sprint_review` in `backend/app/agents/factory.py`
+- Added `Stage.SprintDeploy` and `Stage.SprintReview` to `backend/app/shared/enums/stage.py`
+
+**Testing:**
+- Created `backend/tests/test_sprint_supervisor.py` -- 9 tests:
+  - Instantiation tests (3): constructor, default settings, custom retry limits
+  - SprintResult dataclass tests (3): success, blocked, error cases
+  - Structure tests (3): agent_factory, run_sprint method, exception handling
+- Updated agent count test: 19 agents total (was 17 before SprintDeploy + SprintReview)
+
+**Files changed:**
+- `backend/app/agents/qa.py` (updated -- added run_sprint_qa method)
+- `backend/app/agents/sprint_deploy.py` (NEW)
+- `backend/app/agents/sprint_review.py` (NEW)
+- `backend/app/workflow/sprint_supervisor.py` (NEW)
+- `backend/app/shared/enums/stage.py` (updated -- added SprintDeploy, SprintReview)
+- `backend/app/shared/enums/project_state.py` (updated -- added SPRINT_BLOCKED)
+- `backend/app/agents/factory.py` (updated -- registered new agents)
+- `backend/app/config/models.py` (updated -- added SprintRetryConfig)
+- `backend/tests/test_sprint_supervisor.py` (NEW)
+- `backend/tests/test_v1_pipeline_fixes.py` (updated -- agent count: 19)
+
+**Tests:** 
+- New tests: 9 passed
+- Full suite: 536 passed, 9 pre-existing failures (Unicode encoding issues, unrelated)
+
+**Commit:** `9e89652`
+
+**Next:** Phase 3 -- PipelineSupervisor replaces WorkflowManager state machine
 
 ---
 
