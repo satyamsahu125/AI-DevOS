@@ -382,14 +382,25 @@ class WorkflowManager:
                     return self._fail(project_id, "Sprint", result)
 
             elif state == ProjectState.ALL_SPRINTS_COMPLETE:
-                result_qa = self._run_stage(project_id, "QA", request)
-                logger.info("QA result: %s", result_qa.message)
-
-                result_ops = self._run_stage(project_id, "DevOps", request)
-                logger.info("DevOps result: %s", result_ops.message)
-
-                result_doc = self._run_stage(project_id, "Document", request)
-                logger.info("Document result: %s", result_doc.message)
+                # QA, DevOps, Document are all "best-effort" post-sprint stages.
+                # A failure in any of them is recorded and logged but does NOT
+                # stop the pipeline — the project is still deployable without a
+                # perfect QA report or DevOps manifest.  This matches the user
+                # expectation: "Retro should still run; we can retry failed stages
+                # individually via /workflow/stage."
+                #
+                # HOWEVER, we no longer silently ignore failures — each failure is
+                # logged at WARNING level with the stage name so it shows up in the
+                # live log and can be diagnosed.
+                for stage_name in ("QA", "DevOps", "Document"):
+                    stage_result = self._run_stage(project_id, stage_name, request)
+                    if stage_result.success:
+                        logger.info("%s completed successfully", stage_name)
+                    else:
+                        logger.warning(
+                            "%s failed (non-fatal, pipeline continues): %s",
+                            stage_name, stage_result.message,
+                        )
 
                 self._transition(project_id, ProjectState.QA_COMPLETE)
 

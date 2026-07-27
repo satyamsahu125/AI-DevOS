@@ -102,15 +102,20 @@ class LLMManager:
         stage: str = "",
         agent: str = "",
         project_id: str = "",
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """Generate a completion for prompt (optionally under system_prompt) via the configured provider.
 
         stage/agent/project_id are optional attribution for CostTracker --
         omit them and the call is still tracked, just unattributed.
+        max_tokens overrides the global config value when set; callers such as
+        WriteQAReportAction/WriteDeploymentAction that generate large outputs
+        use this to avoid Ollama truncating mid-response.
         """
         settings = self._settings
         resolved_model = model or settings.llm.model
-        logger.debug("generate_text: model=%s prompt_len=%s stage=%s agent=%s", resolved_model, len(prompt), stage, agent)
+        resolved_max_tokens = max_tokens if max_tokens is not None else settings.llm.max_tokens
+        logger.debug("generate_text: model=%s prompt_len=%s stage=%s agent=%s max_tokens=%s", resolved_model, len(prompt), stage, agent, resolved_max_tokens)
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -121,7 +126,7 @@ class LLMManager:
             model=resolved_model,
             messages=messages,
             temperature=settings.llm.temperature,
-            max_tokens=settings.llm.max_tokens,
+            max_tokens=resolved_max_tokens,
         )
         response = self._provider.execute(request)
         self._record_cost(resolved_model, response, stage, agent, project_id)
