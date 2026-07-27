@@ -42,3 +42,7 @@ class DevOpsAgent(BaseAgent):
             project_reader=self.project_reader,
             file_validator=self.file_validator,
         )
+
+
+# Alias: release-phase production deploy is the same agent as DevOpsAgent
+ProductionDeployAgent = DevOpsAgent

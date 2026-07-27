@@ -362,18 +362,37 @@ class SprintSupervisor:
                         frontend_artifact = frontend_agent.execute(dev_ctx)
                         # Loop back to re-run TechLead review on the fixed code.
                         dev_review_iteration = 0
-                    elif bug_type in ("spec_bug", "architecture_bug"):
-                        logger.warning(
-                            "[SprintSupervisor] %s detected; Phase 4 will add spec/arch update. "
-                            "For now, routing as code_bug for developer fix.",
-                            bug_type,
+                    elif bug_type == "spec_bug":
+                        logger.info(
+                            "[SprintSupervisor] spec_bug detected for sprint %d, routing to ProductOwner",
+                            sprint_number,
                         )
-                        fix_instruction = bug_analysis.get("fix_instruction", "See bug_analysis for details.")
+                        # Load current user stories
+                        current_stories = store.read("project", "user_stories") or {}
+
+                        # ProductOwner updates them
+                        product_owner_agent = self.agent_factory.create("product_owner")
+                        if hasattr(product_owner_agent, "update_user_stories"):
+                            product_owner_agent._workspace_manager = self.workspace_manager
+                            updated_stories = product_owner_agent.update_user_stories(
+                                project_id=project_id,
+                                current_stories=current_stories,
+                                bug_analysis=bug_analysis,
+                                iteration=qa_iteration,
+                            )
+                        else:
+                            updated_stories = current_stories
+
+                        # Re-run Backend + Frontend with updated context
+                        fix_instruction = bug_analysis.get("fix_instruction", "Spec updated by ProductOwner")
                         dev_ctx = SimpleNamespace(
                             content=(
                                 f"{request}\n\n"
-                                f"BUG ANALYSIS (iteration {qa_iteration}):\n{fix_instruction}\n"
-                                f"Fix the above bugs and regenerate the code."
+                                f"SPECIFICATION UPDATE (iteration {qa_iteration}):\n"
+                                f"User stories have been updated by the Product Manager.\n"
+                                f"Updated stories: {json.dumps(updated_stories, indent=2)[:500]}...\n"
+                                f"Reason for update: {fix_instruction}\n"
+                                f"Please regenerate code to match the updated specification."
                             ),
                             project_id=project_id,
                             sprint=sprint_number,
@@ -382,18 +401,67 @@ class SprintSupervisor:
                         frontend_artifact = frontend_agent.execute(dev_ctx)
                         # Loop back to re-run TechLead review.
                         dev_review_iteration = 0
+
+                    elif bug_type == "architecture_bug":
+                        logger.info(
+                            "[SprintSupervisor] architecture_bug detected for sprint %d, routing to Architect",
+                            sprint_number,
+                        )
+                        # Load current architecture
+                        current_arch = store.read("project", "architecture") or {}
+
+                        # Architect updates it
+                        architect_agent = self.agent_factory.create("architect")
+                        if hasattr(architect_agent, "update_architecture"):
+                            architect_agent._workspace_manager = self.workspace_manager
+                            updated_arch = architect_agent.update_architecture(
+                                project_id=project_id,
+                                current_architecture=current_arch,
+                                bug_analysis=bug_analysis,
+                                iteration=qa_iteration,
+                            )
+                        else:
+                            updated_arch = current_arch
+
+                        # Re-run Backend + Frontend with updated context
+                        fix_instruction = bug_analysis.get("fix_instruction", "Architecture updated by Architect")
+                        dev_ctx = SimpleNamespace(
+                            content=(
+                                f"{request}\n\n"
+                                f"ARCHITECTURE UPDATE (iteration {qa_iteration}):\n"
+                                f"Architecture has been updated by the Architect.\n"
+                                f"Updated architecture: {json.dumps(updated_arch, indent=2)[:500]}...\n"
+                                f"Reason for update: {fix_instruction}\n"
+                                f"Please regenerate code to align with the updated architecture."
+                            ),
+                            project_id=project_id,
+                            sprint=sprint_number,
+                        )
+                        backend_artifact = backend_agent.execute(dev_ctx)
+                        frontend_artifact = frontend_agent.execute(dev_ctx)
+                        # Loop back to re-run TechLead review.
+                        dev_review_iteration = 0
+
                     else:
-                        logger.error(
-                            "[SprintSupervisor] unknown bug type: %s, blocking sprint",
+                        # security_violation and other types: treat as code_bug
+                        logger.warning(
+                            "[SprintSupervisor] %s detected; treating as code_bug for dev fix",
                             bug_type,
                         )
-                        return SprintResult(
-                            success=False,
-                            blocked=True,
-                            message=(
-                                f"Sprint {sprint_number} blocked: unknown bug type {bug_type}"
+                        fix_instruction = bug_analysis.get("fix_instruction", "See bug_analysis for details.")
+                        dev_ctx = SimpleNamespace(
+                            content=(
+                                f"{request}\n\n"
+                                f"BUG ANALYSIS (iteration {qa_iteration}):\n{fix_instruction}\n"
+                                f"Fix the above issues and regenerate the code."
                             ),
+                            project_id=project_id,
+                            sprint=sprint_number,
                         )
+                        backend_artifact = backend_agent.execute(dev_ctx)
+                        frontend_artifact = frontend_agent.execute(dev_ctx)
+                        # Loop back to re-run TechLead review.
+                        dev_review_iteration = 0
 
         # ===================================================================
         # Step 6: SprintDeploy

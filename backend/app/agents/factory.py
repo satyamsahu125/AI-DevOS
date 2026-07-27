@@ -9,7 +9,7 @@ from .base_agent import BaseAgent
 from .bug_analyst import BugAnalystAgent
 from .clarification import ClarificationAgent
 from .designer import DesignerAgent
-from .devops import DevOpsAgent
+from .devops import DevOpsAgent, ProductionDeployAgent
 from .document import DocumentAgent
 from .file_planner import FileStructurePlannerAgent
 from .frontend import FrontendDeveloperAgent
@@ -52,6 +52,7 @@ class AgentFactory:
         self.registry.register("frontend", FrontendDeveloperAgent)
         self.registry.register("qa", QAAgent)
         self.registry.register("devops", DevOpsAgent)
+        self.registry.register("production_deploy", ProductionDeployAgent)
         self.registry.register("strategic_review", StrategicReviewAgent)
         self.registry.register("designer", DesignerAgent)
         self.registry.register("security", SecurityAgent)

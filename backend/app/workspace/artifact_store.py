@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -208,3 +209,61 @@ class ArtifactStore:
             else:
                 names.add(p.stem)
         return sorted(names)
+
+    def append_version_audit(
+        self,
+        artifact_name: str,
+        new_version: str,
+        reason: str,
+        bug_analysis_type: str,
+        sprint: int,
+        iteration: int,
+    ) -> None:
+        """Append one entry to artifacts/project/version_history.json.
+
+        Records when and why an artifact was versioned.
+
+        Parameters
+        ----------
+        artifact_name : str
+            Name of the artifact that was versioned (e.g., "user_stories").
+        new_version : str
+            Version string (e.g., "v2", "v3").
+        reason : str
+            Why the artifact was updated (e.g., bug fix instruction).
+        bug_analysis_type : str
+            Type of bug that triggered the update ("spec_bug", "architecture_bug").
+        sprint : int
+            Sprint number (0 if not in a sprint).
+        iteration : int
+            Which iteration of updates this was.
+        """
+        history_path = self._scope_dir("project") / "version_history.json"
+        history = []
+
+        if history_path.exists():
+            try:
+                history = json.loads(history_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                logger.warning("[ArtifactStore] failed to read version_history: %s", exc)
+                history = []
+
+        history.append({
+            "artifact": artifact_name,
+            "version": new_version,
+            "reason": reason,
+            "bug_type": bug_analysis_type,
+            "sprint": sprint,
+            "iteration": iteration,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+
+        try:
+            history_path.write_text(json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8")
+            logger.debug(
+                "[ArtifactStore] appended version audit for %s → %s",
+                artifact_name,
+                new_version,
+            )
+        except Exception as exc:
+            logger.warning("[ArtifactStore] failed to write version_history: %s", exc)
