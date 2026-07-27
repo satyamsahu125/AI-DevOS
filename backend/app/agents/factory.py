@@ -6,6 +6,7 @@ from ..shared.exceptions import DependencyException
 from .architect import ArchitectAgent
 from .backend import BackendDeveloperAgent
 from .base_agent import BaseAgent
+from .bug_analyst import BugAnalystAgent
 from .clarification import ClarificationAgent
 from .designer import DesignerAgent
 from .devops import DevOpsAgent
@@ -21,6 +22,7 @@ from .scrum_master import ScrumMasterAgent
 from .security import SecurityAgent
 from .sprint_planner import SprintPlannerAgent
 from .strategic_review import StrategicReviewAgent
+from .tech_lead import TechLeadAgent
 from .validation import AgentValidation
 
 logger = logging.getLogger(__name__)
@@ -57,6 +59,8 @@ class AgentFactory:
         self.registry.register("clarification", ClarificationAgent)
         self.registry.register("sprint_planner", SprintPlannerAgent)
         self.registry.register("scrum_master", ScrumMasterAgent)
+        self.registry.register("tech_lead", TechLeadAgent)
+        self.registry.register("bug_analyst", BugAnalystAgent)
 
     def create(self, stage_name: str) -> BaseAgent:
         """Resolve stage_name to a registered agent and construct a new instance of it."""

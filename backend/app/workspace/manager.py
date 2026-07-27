@@ -394,4 +394,14 @@ class WorkspaceManager:
         )
         return sprint_dir
 
+    def get_artifact_store(self, project_id: str):
+        """Return an :class:`~app.workspace.artifact_store.ArtifactStore` for *project_id*.
+
+        Convenience factory so callers never need to import ArtifactStore
+        directly or remember the ``(workspace_root, project_id)`` constructor
+        signature.  Import is deferred to avoid circular imports at module load.
+        """
+        from .artifact_store import ArtifactStore  # deferred — avoids circular import
+        return ArtifactStore(self.root, project_id)
+
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from typing import Any
@@ -291,6 +292,9 @@ class WorkflowManager:
             elif state == ProjectState.REQUIREMENTS_READY:
                 result = self._run_stage(project_id, "ProductOwner", request)
                 if result.success:
+                    self._persist_to_artifact_store(
+                        project_id, Stage.ProductOwner, "project", "user_stories"
+                    )
                     self._transition(project_id, ProjectState.ARCHITECTURE_READY)
                 else:
                     return self._fail(project_id, "Requirements", result)
@@ -298,6 +302,9 @@ class WorkflowManager:
             elif state == ProjectState.ARCHITECTURE_READY:
                 result = self._run_stage(project_id, "Architect", request)
                 if result.success:
+                    self._persist_to_artifact_store(
+                        project_id, Stage.Architect, "project", "architecture"
+                    )
                     self._transition(project_id, ProjectState.DESIGN_READY)
                 else:
                     return self._fail(project_id, "Architecture", result)
@@ -317,6 +324,9 @@ class WorkflowManager:
 
                 result = self._run_stage(project_id, "Designer", design_req)
                 if result.success:
+                    self._persist_to_artifact_store(
+                        project_id, Stage.Designer, "project", "design"
+                    )
                     self._transition(project_id, ProjectState.DESIGN_REVIEW_PENDING)
                     data = self.workspace.load_project_json(project_id) or {}
                     completed_stages = list(data.get("stages_completed", []))
@@ -351,15 +361,24 @@ class WorkflowManager:
                 result_sec = self._run_stage(project_id, "Security", request)
                 if not result_sec.success:
                     return self._fail(project_id, "Security", result_sec)
+                self._persist_to_artifact_store(
+                    project_id, Stage.Security, "project", "security_rules"
+                )
 
                 result_sp = self._run_stage(project_id, "SprintPlanner", request)
                 if not result_sp.success:
                     return self._fail(project_id, "SprintPlanning", result_sp)
                 self._handle_sprint_planner_approval(project_id, result_sp)
+                self._persist_to_artifact_store(
+                    project_id, Stage.SprintPlanning, "project", "sprint_plan"
+                )
 
                 result_sm = self._run_stage(project_id, "ScrumMaster", request)
                 if not result_sm.success:
                     return self._fail(project_id, "ScrumMaster", result_sm)
+                self._persist_to_artifact_store(
+                    project_id, Stage.ScrumMaster, "project", "sprint_plan_tasks"
+                )
 
                 # FileStructurePlanner runs per-sprint inside _run_sprint() so it
                 # has access to the per-sprint context (goal, features, tasks).
@@ -396,6 +415,11 @@ class WorkflowManager:
                     stage_result = self._run_stage(project_id, stage_name, request)
                     if stage_result.success:
                         logger.info("%s completed successfully", stage_name)
+                        # Mirror QA output into release-scoped ArtifactStore.
+                        if stage_name == "QA":
+                            self._persist_to_artifact_store(
+                                project_id, Stage.QA, "release", "qa_findings"
+                            )
                     else:
                         logger.warning(
                             "%s failed (non-fatal, pipeline continues): %s",
@@ -795,6 +819,8 @@ class WorkflowManager:
         """
         logger.info("Starting sprint %d: %s", sprint.sprint_number, sprint.name)
         self.workspace.set_current_sprint(project_id, sprint.sprint_number)
+        # Create the sprint-scoped artifact directory before any agent writes to it.
+        self.workspace.create_sprint_folder(project_id, sprint.sprint_number)
 
         arch = self.artifact_manager.get_artifact(project_id, Stage.Architect)
         plan_context = self._build_sprint_context(project_id, sprint, arch)
@@ -802,6 +828,14 @@ class WorkflowManager:
 
         if not plan_result.success:
             return SprintResult(success=False, message=plan_result.message)
+
+        # Mirror file_plan into sprint-scoped ArtifactStore.
+        self._persist_to_artifact_store(
+            project_id,
+            Stage.FileStructurePlanner,
+            f"sprint_{sprint.sprint_number}",
+            "file_plan",
+        )
 
         file_plan = self._load_file_plan(project_id, sprint.sprint_number)
 
@@ -889,6 +923,59 @@ class WorkflowManager:
         if result.stopped:
             self.workspace_manager.update_project_json(project_id, {"stopped": True})
         return result
+
+    def _persist_to_artifact_store(
+        self,
+        project_id: str,
+        stage: Stage,
+        scope: str,
+        artifact_name: str,
+    ) -> None:
+        """Mirror a just-completed stage's output into ArtifactStore (non-fatal).
+
+        Reads the artifact the engine just wrote via ArtifactManager
+        (``artifacts/{stage}.json``) and writes a scoped copy to the new
+        sprint/project ArtifactStore layout without removing the original.
+
+        Parameters
+        ----------
+        project_id:
+            The project being processed.
+        stage:
+            The :class:`~app.shared.enums.stage.Stage` enum value whose output
+            to read back from ArtifactManager.
+        scope:
+            ArtifactStore scope, e.g. ``"project"`` or ``"sprint_1"``.
+        artifact_name:
+            Logical artifact name inside the scope, e.g. ``"user_stories"``.
+        """
+        try:
+            artifact = self.artifact_manager.get_artifact(project_id, stage)
+            if artifact is None:
+                logger.debug(
+                    "[ArtifactStore] skip persist — ArtifactManager has no entry for %s/%s",
+                    project_id, stage.value,
+                )
+                return
+            store = self.workspace_manager.get_artifact_store(project_id)
+            store.write(
+                scope=scope,
+                name=artifact_name,
+                data={
+                    "content": artifact.content or "",
+                    "stage": stage.value,
+                    "written_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            logger.debug(
+                "[ArtifactStore] persisted %s → %s/%s",
+                stage.value, scope, artifact_name,
+            )
+        except Exception as exc:  # never block the pipeline
+            logger.warning(
+                "[ArtifactStore] non-fatal persist failure for %s/%s → %s/%s: %s",
+                project_id, stage.value, scope, artifact_name, exc,
+            )
 
     def _handle_sprint_planner_approval(
         self,

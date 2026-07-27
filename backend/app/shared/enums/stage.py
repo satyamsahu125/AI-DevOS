@@ -20,3 +20,5 @@ class Stage(str, Enum):
     SprintPlanning = "SprintPlanning"
     ScrumMaster = "ScrumMaster"
     DomainResearch = "DomainResearch"
+    TechLead = "TechLead"
+    BugAnalyst = "BugAnalyst"
