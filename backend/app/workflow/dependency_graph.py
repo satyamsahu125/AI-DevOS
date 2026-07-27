@@ -7,46 +7,52 @@ from .stage_lookup import resolve_stage_name
 class DependencyGraph:
     """Minimal dependency graph for workflow stage ordering.
 
-    STAGE_ORDER is the canonical pipeline sequence (registry keys, matching
-    AgentFactory's registrations). STAGE_DEPENDENCIES expresses the same
-    ordering as an explicit dependency map keyed by Stage: Designer depends
-    on Architect; FrontendDeveloper depends on both Security and Designer,
-    so no frontend code is ever produced without an approved design spec.
+    STAGE_ORDER lists only the top-level Discovery and Release stages.
+    Sprint-internal stages (ScrumMaster, FileStructurePlanner, Backend,
+    Frontend, TechLead, BugAnalyst, SprintDeploy, SprintReview) are managed
+    by SprintSupervisor via SprintGraph and do not appear here.
+
+    STAGE_DEPENDENCIES expresses ordering as an explicit dependency map keyed
+    by Stage: Designer depends on Architect; FrontendDeveloper depends on both
+    Security and Designer, so no frontend code is ever produced without an
+    approved design spec.
     """
 
     STAGE_ORDER: list[str] = [
+        # Discovery phase (run once)
         "strategic_review",
         "product_owner",
         "architect",
         "designer",
         "security",
         "sprint_planner",
-        "scrum_master",
-        "backend",
-        "frontend",
-        "qa",
+        # Sprint execution (managed by SprintSupervisor/SprintGraph)
+        # - scrum_master, file_planner, backend, frontend, tech_lead,
+        #   qa, bug_analyst, sprint_deploy, sprint_review all run per-sprint
+        # Release phase (run once)
+        "qa",  # Regression QA across full project
         "devops",
         "document",
         "retro",
     ]
-    # FileStructurePlanner is intentionally excluded from STAGE_ORDER.
-    # It runs as an internal per-sprint step inside WorkflowManager._run_sprint()
-    # and is never tracked as a top-level completed stage.
 
     STAGE_DEPENDENCIES: dict[Stage, list[Stage]] = {
+        # Discovery phase dependencies
         Stage.StrategicReview: [],
         Stage.ProductOwner: [Stage.StrategicReview],
         Stage.Architect: [Stage.ProductOwner],
         Stage.Designer: [Stage.Architect],
         Stage.Security: [Stage.Designer],
         Stage.SprintPlanning: [Stage.Security],
-        Stage.ScrumMaster: [Stage.SprintPlanning],
-        Stage.BackendDeveloper: [Stage.Security, Stage.SprintPlanning],
-        Stage.FrontendDeveloper: [Stage.Security, Stage.Designer, Stage.SprintPlanning],
-        Stage.QA: [Stage.BackendDeveloper, Stage.FrontendDeveloper],
+        # Release phase dependencies (run after ALL sprints are complete)
+        Stage.QA: [],  # Regression QA runs independently after sprints
         Stage.DevOps: [Stage.QA],
         Stage.Document: [Stage.DevOps],
         Stage.Retro: [Stage.Document],
+        # Sprint-internal stages are NOT listed here.
+        # They are managed by SprintSupervisor via SprintGraph:
+        # ScrumMaster, FileStructurePlanner, BackendDeveloper, FrontendDeveloper,
+        # TechLead, BugAnalyst, SprintDeploy, SprintReview
     }
 
     def has_dependency(self, stage: str) -> bool:
