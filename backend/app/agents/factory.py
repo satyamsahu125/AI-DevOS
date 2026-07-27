@@ -20,7 +20,9 @@ from .resolver import AgentResolver
 from .retro import RetroAgent
 from .scrum_master import ScrumMasterAgent
 from .security import SecurityAgent
+from .sprint_deploy import SprintDeployAgent
 from .sprint_planner import SprintPlannerAgent
+from .sprint_review import SprintReviewAgent
 from .strategic_review import StrategicReviewAgent
 from .tech_lead import TechLeadAgent
 from .validation import AgentValidation
@@ -61,6 +63,8 @@ class AgentFactory:
         self.registry.register("scrum_master", ScrumMasterAgent)
         self.registry.register("tech_lead", TechLeadAgent)
         self.registry.register("bug_analyst", BugAnalystAgent)
+        self.registry.register("sprint_deploy", SprintDeployAgent)
+        self.registry.register("sprint_review", SprintReviewAgent)
 
     def create(self, stage_name: str) -> BaseAgent:
         """Resolve stage_name to a registered agent and construct a new instance of it."""

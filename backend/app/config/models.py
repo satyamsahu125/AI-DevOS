@@ -19,6 +19,12 @@ class RuntimeConfig(BaseModel):
     log_level: str = Field(default="INFO")
 
 
+class SprintRetryConfig(BaseModel):
+    max_dev_review_iterations: int = Field(default=3, description="TechLead → dev loop limit")
+    max_qa_iterations: int = Field(default=3, description="dev → QA loop limit")
+    max_spec_fix_iterations: int = Field(default=2, description="ProductOwner/Architect update → dev → QA limit")
+
+
 class Settings(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
@@ -26,3 +32,4 @@ class Settings(BaseModel):
     learning_db: str = Field(default="data/learning.sqlite")
     memory_db_path: str = Field(default="backend/app/memory/memory.db")
     workspace_root: str = Field(default="temp-workspace")
+    sprint_retry: SprintRetryConfig = Field(default_factory=SprintRetryConfig, description="Sprint feedback loop retry limits")

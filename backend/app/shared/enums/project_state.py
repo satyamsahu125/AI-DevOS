@@ -20,6 +20,7 @@ class ProjectState(str, Enum):
     SPRINT_PLAN_READY       = "sprint_plan_ready"
     SPRINT_IN_PROGRESS      = "sprint_in_progress"  # has sub-state
     SPRINT_COMPLETE         = "sprint_complete"
+    SPRINT_BLOCKED          = "sprint_blocked"      # retry limits exceeded, human intervention required
     ALL_SPRINTS_COMPLETE    = "all_sprints_complete"
     AWAITING_HUMAN_APPROVAL = "awaiting_human_approval"
     CHANGE_REQUESTED     = "change_requested"
