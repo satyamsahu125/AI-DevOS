@@ -371,4 +371,27 @@ class WorkspaceManager:
         qa["completed"] = True
         self.update_project_json(project_id, {"qa_session": qa})
 
+    def create_sprint_folder(self, project_id: str, sprint_number: int) -> Path:
+        """Idempotently create the artifact directory for *sprint_number*.
+
+        Creates ``{workspace_root}/{project_id}/artifacts/sprint_{N}/``.
+        Safe to call multiple times (``mkdir(exist_ok=True)``).
+
+        Must be called before ScrumMasterAgent runs for each sprint so that
+        :class:`~app.workspace.artifact_store.ArtifactStore` can write
+        sprint-scoped artifacts into the correct directory.
+
+        Returns the directory path.
+        """
+        sprint_dir = (
+            self.get_workspace_path(project_id)
+            / "artifacts"
+            / f"sprint_{sprint_number}"
+        )
+        sprint_dir.mkdir(parents=True, exist_ok=True)
+        logger.debug(
+            "[WorkspaceManager] sprint artifact dir ready: %s", sprint_dir
+        )
+        return sprint_dir
+
 
