@@ -44,6 +44,7 @@ class LLMManager:
             base_url=llm.base_url,
             bedrock_api_key=llm.bedrock_api_key,
             bedrock_region=llm.bedrock_region,
+            timeout=getattr(llm, "timeout", 1200),
         )
 
     @property

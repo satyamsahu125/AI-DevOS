@@ -10,7 +10,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@measured/puck": "^0.13.0",
     "@radix-ui/react-dialog": "^1.1.21",
     "@radix-ui/react-progress": "^1.1.14",
     "@radix-ui/react-scroll-area": "^1.2.16",

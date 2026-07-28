@@ -9,6 +9,11 @@ class LLMConfig(BaseModel):
     base_url: str = Field(default="http://localhost:11434")
     temperature: float = Field(default=0.1)
     max_tokens: int = Field(default=4096)
+    # Socket timeout in seconds for each LLM call.
+    # Designer stage on qwen2.5-coder:7b measured >600s on modest hardware
+    # when the accumulated context is large — raising the default prevents
+    # spurious TimeoutError failures on slow machines.
+    timeout: int = Field(default=1200)
     bedrock_api_key: str = Field(default="")
     bedrock_region: str = Field(default="us-east-1")
 

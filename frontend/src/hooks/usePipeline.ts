@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { api, type WorkflowStatus } from "../lib/api"
 import { type WSMessage, useWebSocket } from "./useWebSocket"
 
@@ -72,11 +72,11 @@ export function usePipeline(projectId: string | null) {
     refresh()
   }, [projectId, refresh])
 
-  // Poll every 5 s while pipeline is active
+  // Poll every 2 s while pipeline is active (safety net for missed WS events)
   useEffect(() => {
     if (!projectId) return
     if (TERMINAL.has(pipeline.state)) return
-    const id = setInterval(refresh, 5000)
+    const id = setInterval(refresh, 2000)
     return () => clearInterval(id)
   }, [projectId, pipeline.state, refresh])
 
@@ -102,9 +102,15 @@ export function usePipeline(projectId: string | null) {
       case "stage_complete":
         setPipeline(p => ({
           ...p,
+          // Clear current_stage so sidebar doesn't show the old stage as "running"
+          // while we wait for the next stage_started event.
+          current_stage: p.current_stage?.toLowerCase() === (msg.stage as string)?.toLowerCase()
+            ? null : p.current_stage,
           stages_completed: [...new Set([...p.stages_completed, msg.stage as string])],
         }))
         log(`✓  ${msg.stage} done (${msg.duration_seconds ?? 0}s, attempt ${msg.attempt ?? 1})`)
+        // Also do a REST refresh to sync progress_percent and other fields
+        refresh()
         break
 
       case "stage_retry":
@@ -146,7 +152,12 @@ export function usePipeline(projectId: string | null) {
     }
   }, [])
 
-  const { connected } = useWebSocket(projectId, handleWS)
+  const { connected } = useWebSocket(projectId, handleWS, {
+    // Immediately fetch REST state when WS drops so we don't wait for the poll
+    onDisconnect: refresh,
+    // Re-fetch when WS comes back up (may have missed events while disconnected)
+    onReconnect:  refresh,
+  })
 
   return { pipeline, liveLogs, connected, refresh }
 }

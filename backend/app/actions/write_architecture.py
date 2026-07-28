@@ -36,8 +36,11 @@ class WriteArchitectureAction(LLMAction):
     def _parse_structured(self, text: str) -> dict[str, Any]:
         """Parse LLM response into ArchitectureArtifact schema.
 
-        Raises SchemaValidationError if parsing fails — never
-        silently falls back to fake data.
+        Raises SchemaValidationError if:
+        - JSON cannot be parsed from the response
+        - All of modules, api_endpoints, and data_models are empty lists
+          (this means the architect marked everything out-of-scope, which
+          is always wrong for a real software project)
         """
         parsed = super()._parse_structured(text)
         if not parsed:
@@ -52,5 +55,30 @@ class WriteArchitectureAction(LLMAction):
                 "The LLM response did not match the SystemArchitecture "
                 "schema. This stage will retry with feedback. "
                 f"Response preview: {(text or '')[:200]}"
+            )
+        # Reject architectures where the architect designed nothing.
+        # This happens when the LLM mistakenly puts everything in out_of_scope
+        # (e.g. misreading auth/database requirements). A valid architecture
+        # must have at least some modules, endpoints, or data models.
+        modules = parsed.get("modules") or []
+        api_endpoints = parsed.get("api_endpoints") or parsed.get("api_design") or []
+        data_models = parsed.get("data_models") or []
+        if not modules and not api_endpoints and not data_models:
+            out_of_scope = parsed.get("out_of_scope", [])
+            logger.error(
+                "ArchitectAgent: produced empty architecture (no modules, endpoints, or data models). "
+                "out_of_scope=%s. This indicates the architect incorrectly excluded everything. "
+                "Forcing retry.",
+                out_of_scope,
+            )
+            raise SchemaValidationError(
+                "Architecture is empty: no modules, api_endpoints, or data_models were produced. "
+                "This means the architect put everything in out_of_scope, which is incorrect. "
+                "REQUIRED: Design the actual system — modules for each feature, API endpoints "
+                "for each user story, and data models for persistent entities. "
+                "Read scale_profile flags: auth_needed=true means include auth modules; "
+                "database_needed=true means include database and ORM models. "
+                f"Current out_of_scope: {out_of_scope}. "
+                "Remove any out_of_scope items that contradict TRUE scale_profile flags."
             )
         return parsed

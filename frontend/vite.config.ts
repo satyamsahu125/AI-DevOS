@@ -16,8 +16,17 @@ export default defineConfig({
       "/api": {
         target: "http://localhost:8000",
         changeOrigin: true,
-        ws: true, // FIX-A: forward WebSocket upgrade requests to the backend
+        ws: true,
         rewrite: (requestPath) => requestPath.replace(/^\/api/, ""),
+        // Suppress ECONNABORTED / ECONNRESET noise that fires when the backend
+        // closes a WebSocket connection between stage transitions.
+        configure: (proxy) => {
+          const IGNORED = new Set(["ECONNABORTED", "ECONNRESET", "EPIPE"])
+          proxy.on("error", (err: Error & { code?: string }) => {
+            if (err.code && IGNORED.has(err.code)) return
+            console.warn("[proxy]", err.message)
+          })
+        },
       },
     },
   },

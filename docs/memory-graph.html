@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>AI DevOS — Memory Graph & Agent Links</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:#0d0f18; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; min-height:100vh; padding:24px; }
+  .wrap { max-width:960px; margin:0 auto; }
+  .header { margin-bottom:20px; }
+  h1 { font-size:18px; font-weight:700; color:#e0e0e0; margin-bottom:6px; }
+  .sub { font-size:12px; color:#555; margin-bottom:14px; }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:18px; font-size:12px; color:#888; }
+  .ld { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:5px; vertical-align:middle; }
+  svg { width:100%; height:auto; display:block; background:#0d0f18; border-radius:12px; border:1px solid #1e2030; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <h1>AI DevOS — Memory Architecture & Agent Links</h1>
+    <div class="sub">Generated from AI DevOS codebase · backend/app/memory/ · backend/app/intelligence/</div>
+    <div class="legend">
+      <span><span class="ld" style="background:#56b987"></span>Agents</span>
+      <span><span class="ld" style="background:#e07b39"></span>Memory Core</span>
+      <span><span class="ld" style="background:#4a7cf7"></span>Storage / Index</span>
+      <span><span class="ld" style="background:#9b6cf0"></span>Learning</span>
+      <span><span class="ld" style="background:#e0c23a"></span>Context / Budget</span>
+      <span><span class="ld" style="background:#e05c5c"></span>Intelligence Layer</span>
+    </div>
+  </div>
+
+<svg viewBox="0 0 920 680" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <marker id="ma"  markerWidth="6" markerHeight="6" refX="4.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#555"/></marker>
+  <marker id="mag" markerWidth="6" markerHeight="6" refX="4.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#56b987"/></marker>
+  <marker id="mao" markerWidth="6" markerHeight="6" refX="4.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#e07b39"/></marker>
+  <marker id="mab" markerWidth="6" markerHeight="6" refX="4.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#4a7cf7"/></marker>
+  <marker id="map" markerWidth="6" markerHeight="6" refX="4.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#9b6cf0"/></marker>
+  <marker id="may" markerWidth="6" markerHeight="6" refX="4.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#e0c23a"/></marker>
+  <marker id="mar" markerWidth="6" markerHeight="6" refX="4.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#e05c5c"/></marker>
+</defs>
+
+<!-- ═══════════════════ AGENTS (left column) ═══════════════════ -->
+<!-- Hub -->
+<g transform="translate(20,295)">
+  <rect width="138" height="34" rx="7" fill="#13301e" stroke="#56b987" stroke-width="2.2"/>
+  <text x="69" y="18" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#7ee8b0" font-family="sans-serif" font-weight="700">All Agents (hub)</text>
+</g>
+
+<!-- Individual agents above hub -->
+<g transform="translate(20,65)">  <rect width="138" height="28" rx="5" fill="#13301e" stroke="#56b987" stroke-width="1.2"/> <text x="69" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#7ee8b0" font-family="sans-serif">BackendDeveloper</text>  </g>
+<g transform="translate(20,103)"> <rect width="138" height="28" rx="5" fill="#13301e" stroke="#56b987" stroke-width="1.2"/> <text x="69" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#7ee8b0" font-family="sans-serif">FrontendDeveloper</text> </g>
+<g transform="translate(20,141)"> <rect width="138" height="28" rx="5" fill="#13301e" stroke="#56b987" stroke-width="1.2"/> <text x="69" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#7ee8b0" font-family="sans-serif">Architect</text>           </g>
+<g transform="translate(20,179)"> <rect width="138" height="28" rx="5" fill="#13301e" stroke="#56b987" stroke-width="1.2"/> <text x="69" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#7ee8b0" font-family="sans-serif">DomainResearcher</text>   </g>
+<g transform="translate(20,217)"> <rect width="138" height="28" rx="5" fill="#13301e" stroke="#56b987" stroke-width="1.2"/> <text x="69" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#7ee8b0" font-family="sans-serif">Clarification</text>        </g>
+<!-- Individual agents below hub -->
+<g transform="translate(20,345)"> <rect width="138" height="28" rx="5" fill="#13301e" stroke="#56b987" stroke-width="1.2"/> <text x="69" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#7ee8b0" font-family="sans-serif">ProductOwner</text>        </g>
+<g transform="translate(20,383)"> <rect width="138" height="28" rx="5" fill="#13301e" stroke="#56b987" stroke-width="1.2"/> <text x="69" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#7ee8b0" font-family="sans-serif">Designer</text>             </g>
+<g transform="translate(20,421)"> <rect width="138" height="28" rx="5" fill="#13301e" stroke="#56b987" stroke-width="1.2"/> <text x="69" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#7ee8b0" font-family="sans-serif">SprintPlanner</text>        </g>
+<g transform="translate(20,459)"> <rect width="138" height="28" rx="5" fill="#13301e" stroke="#56b987" stroke-width="1.2"/> <text x="69" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#7ee8b0" font-family="sans-serif">ScrumMaster</text>          </g>
+<g transform="translate(20,497)"> <rect width="138" height="28" rx="5" fill="#13301e" stroke="#56b987" stroke-width="1.2"/> <text x="69" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#7ee8b0" font-family="sans-serif">Security / QA / Retro</text></g>
+
+<!-- Connector lines agent → hub -->
+<line x1="89" y1="93"  x2="89" y2="293" stroke="#56b987" stroke-width="1" opacity=".3"/>
+<line x1="89" y1="131" x2="89" y2="293" stroke="#56b987" stroke-width="1" opacity=".3"/>
+<line x1="89" y1="169" x2="89" y2="293" stroke="#56b987" stroke-width="1" opacity=".3"/>
+<line x1="89" y1="207" x2="89" y2="293" stroke="#56b987" stroke-width="1" opacity=".3"/>
+<line x1="89" y1="245" x2="89" y2="293" stroke="#56b987" stroke-width="1" opacity=".3"/>
+<line x1="89" y1="359" x2="89" y2="331" stroke="#56b987" stroke-width="1" opacity=".3"/>
+<line x1="89" y1="397" x2="89" y2="331" stroke="#56b987" stroke-width="1" opacity=".3"/>
+<line x1="89" y1="435" x2="89" y2="331" stroke="#56b987" stroke-width="1" opacity=".3"/>
+<line x1="89" y1="473" x2="89" y2="331" stroke="#56b987" stroke-width="1" opacity=".3"/>
+<line x1="89" y1="511" x2="89" y2="331" stroke="#56b987" stroke-width="1" opacity=".3"/>
+
+<!-- ═══════════════════ MEMORY CORE (centre-left) ═══════════════════ -->
+<!-- MemoryManager hub -->
+<g transform="translate(230,295)">
+  <rect width="138" height="34" rx="7" fill="#3a2210" stroke="#e07b39" stroke-width="2.2"/>
+  <text x="69" y="18" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#ffb87a" font-family="sans-serif" font-weight="700">MemoryManager</text>
+</g>
+<!-- ProjectEventLog -->
+<g transform="translate(230,230)"> <rect width="138" height="28" rx="5" fill="#3a2210" stroke="#e07b39" stroke-width="1.2"/> <text x="69" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#ffb87a" font-family="sans-serif">ProjectEventLog</text> </g>
+<!-- MemoryStore -->
+<g transform="translate(230,345)"> <rect width="138" height="28" rx="5" fill="#3a2210" stroke="#e07b39" stroke-width="1.2"/> <text x="69" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#ffb87a" font-family="sans-serif">MemoryStore</text>      </g>
+<!-- MemoryCache -->
+<g transform="translate(230,385)"> <rect width="138" height="28" rx="5" fill="#3a2210" stroke="#e07b39" stroke-width="1.2"/> <text x="69" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#ffb87a" font-family="sans-serif">MemoryCache</text>      </g>
+
+<!-- agent hub → MemoryManager -->
+<line x1="158" y1="312" x2="228" y2="312" stroke="#56b987" stroke-width="1.8" marker-end="url(#mag)"/>
+<!-- MemoryManager ↕ children -->
+<line x1="299" y1="293" x2="299" y2="260" stroke="#e07b39" stroke-width="1.2" marker-end="url(#mao)"/>
+<line x1="299" y1="331" x2="299" y2="343" stroke="#e07b39" stroke-width="1.2" marker-end="url(#mao)"/>
+<line x1="299" y1="331" x2="299" y2="383" stroke="#e07b39" stroke-width="1.2" marker-end="url(#mao)"/>
+
+<!-- ═══════════════════ STORAGE / INDEX (centre) ═══════════════════ -->
+<g transform="translate(440,140)"> <rect width="148" height="28" rx="5" fill="#1e2a42" stroke="#4a7cf7" stroke-width="1.5"/> <text x="74" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#b0c4ff" font-family="sans-serif">MemoryRepository</text> </g>
+<g transform="translate(440,180)"> <rect width="148" height="28" rx="5" fill="#1e2a42" stroke="#4a7cf7" stroke-width="1.5"/> <text x="74" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#b0c4ff" font-family="sans-serif">MemoryIndex</text>      </g>
+<g transform="translate(440,220)"> <rect width="148" height="28" rx="5" fill="#1e2a42" stroke="#4a7cf7" stroke-width="1.5"/> <text x="74" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#b0c4ff" font-family="sans-serif">MemorySync</text>       </g>
+<g transform="translate(440,260)"> <rect width="148" height="28" rx="5" fill="#1e2a42" stroke="#4a7cf7" stroke-width="1.5"/> <text x="74" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#b0c4ff" font-family="sans-serif">MemoryCleanup</text>    </g>
+<g transform="translate(440,300)"> <rect width="148" height="28" rx="5" fill="#1e2a42" stroke="#4a7cf7" stroke-width="1.5"/> <text x="74" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#b0c4ff" font-family="sans-serif">MemoryFilter</text>     </g>
+
+<!-- MemoryManager → Storage nodes -->
+<path d="M368,302 Q404,155 438,155" fill="none" stroke="#4a7cf7" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#mab)"/>
+<path d="M368,305 Q404,194 438,194" fill="none" stroke="#4a7cf7" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#mab)"/>
+<line x1="368" y1="312" x2="438" y2="234" stroke="#4a7cf7" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#mab)"/>
+<line x1="368" y1="316" x2="438" y2="274" stroke="#4a7cf7" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#mab)"/>
+<line x1="368" y1="320" x2="438" y2="314" stroke="#4a7cf7" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#mab)"/>
+
+<!-- ═══════════════════ LEARNING (top right) ═══════════════════ -->
+<g transform="translate(670,55)">  <rect width="148" height="28" rx="5" fill="#1a1028" stroke="#9b6cf0" stroke-width="1.5"/> <text x="74" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#c8a6ff" font-family="sans-serif">KnowledgeMemory</text>  </g>
+<g transform="translate(670,95)">  <rect width="148" height="28" rx="5" fill="#1a1028" stroke="#9b6cf0" stroke-width="1.5"/> <text x="74" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#c8a6ff" font-family="sans-serif">LearningLoop</text>         </g>
+<g transform="translate(670,135)"> <rect width="148" height="28" rx="5" fill="#1a1028" stroke="#9b6cf0" stroke-width="1.5"/> <text x="74" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#c8a6ff" font-family="sans-serif">LessonStore</text>          </g>
+<g transform="translate(670,175)"> <rect width="148" height="28" rx="5" fill="#1a1028" stroke="#9b6cf0" stroke-width="1.5"/> <text x="74" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#c8a6ff" font-family="sans-serif">MemoryRanker</text>        </g>
+<g transform="translate(670,215)"> <rect width="148" height="28" rx="5" fill="#1a1028" stroke="#9b6cf0" stroke-width="1.5"/> <text x="74" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#c8a6ff" font-family="sans-serif">MemoryStatistics</text>    </g>
+
+<!-- Storage → Learning -->
+<line x1="588" y1="155" x2="668" y2="69"  stroke="#9b6cf0" stroke-width="1.2" marker-end="url(#map)"/>
+<line x1="588" y1="180" x2="668" y2="109" stroke="#9b6cf0" stroke-width="1.2" marker-end="url(#map)"/>
+<line x1="588" y1="204" x2="668" y2="149" stroke="#9b6cf0" stroke-width="1.2" marker-end="url(#map)"/>
+<line x1="588" y1="220" x2="668" y2="189" stroke="#9b6cf0" stroke-width="1.2" marker-end="url(#map)"/>
+<line x1="588" y1="235" x2="668" y2="229" stroke="#9b6cf0" stroke-width="1.2" marker-end="url(#map)"/>
+
+<!-- LearningLoop → Agents feedback -->
+<path d="M670,109 Q560,60 89,295" fill="none" stroke="#9b6cf0" stroke-width="1" stroke-dasharray="3 3" opacity=".45" marker-end="url(#map)"/>
+<text x="330" y="78" text-anchor="middle" font-size="8" fill="#9b6cf0" opacity=".7" font-family="sans-serif">lessons feed back to all agents</text>
+
+<!-- ═══════════════════ CONTEXT / BUDGET (bottom right) ═══════════════════ -->
+<g transform="translate(670,355)"> <rect width="148" height="28" rx="5" fill="#201a08" stroke="#e0c23a" stroke-width="1.5"/> <text x="74" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#f5e07a" font-family="sans-serif">MemoryContext</text>       </g>
+<g transform="translate(670,395)"> <rect width="148" height="28" rx="5" fill="#201a08" stroke="#e0c23a" stroke-width="1.5"/> <text x="74" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#f5e07a" font-family="sans-serif">MemoryContextBuilder</text> </g>
+<g transform="translate(670,435)"> <rect width="148" height="28" rx="5" fill="#201a08" stroke="#e0c23a" stroke-width="1.5"/> <text x="74" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#f5e07a" font-family="sans-serif">MemoryTokenBudget</text>   </g>
+<g transform="translate(670,475)"> <rect width="148" height="28" rx="5" fill="#201a08" stroke="#e0c23a" stroke-width="1.5"/> <text x="74" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#f5e07a" font-family="sans-serif">MemorySummary</text>       </g>
+
+<!-- MemoryManager → Context -->
+<path d="M368,325 Q500,480 668,369" fill="none" stroke="#e0c23a" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#may)"/>
+<!-- Context internal chain -->
+<line x1="744" y1="383" x2="744" y2="393" stroke="#e0c23a" stroke-width="1.2" marker-end="url(#may)"/>
+<line x1="744" y1="423" x2="744" y2="433" stroke="#e0c23a" stroke-width="1.2" marker-end="url(#may)"/>
+<line x1="744" y1="463" x2="744" y2="473" stroke="#e0c23a" stroke-width="1.2" marker-end="url(#may)"/>
+
+<!-- ═══════════════════ INTELLIGENCE LAYER (bottom centre) ═══════════════════ -->
+<g transform="translate(420,500)"> <rect width="120" height="28" rx="5" fill="#2a1015" stroke="#e05c5c" stroke-width="1.5"/> <text x="60" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#ff9090" font-family="sans-serif">FileIndexer</text>          </g>
+<g transform="translate(420,538)"> <rect width="120" height="28" rx="5" fill="#2a1015" stroke="#e05c5c" stroke-width="1.5"/> <text x="60" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#ff9090" font-family="sans-serif">DependencyGraph</text>      </g>
+<g transform="translate(560,500)"> <rect width="120" height="28" rx="5" fill="#2a1015" stroke="#e05c5c" stroke-width="1.5"/> <text x="60" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#ff9090" font-family="sans-serif">CodeSummarizer</text>       </g>
+<g transform="translate(560,538)"> <rect width="140" height="28" rx="5" fill="#2a1015" stroke="#e05c5c" stroke-width="1.5"/> <text x="70" y="15" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#ff9090" font-family="sans-serif">ContextOrchestrator</text>  </g>
+
+<!-- FileIndexer → DependencyGraph -->
+<line x1="480" y1="528" x2="480" y2="536" stroke="#e05c5c" stroke-width="1.2" marker-end="url(#mar)"/>
+<!-- FileIndexer → ContextOrchestrator -->
+<line x1="540" y1="514" x2="558" y2="552" stroke="#e05c5c" stroke-width="1.2" marker-end="url(#mar)"/>
+<!-- MemoryManager → FileIndexer -->
+<path d="M368,330 Q395,490 418,514" fill="none" stroke="#e05c5c" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#mar)"/>
+<!-- ContextOrchestrator → Agents -->
+<path d="M560,552 Q290,600 158,320" fill="none" stroke="#e05c5c" stroke-width="1" stroke-dasharray="3 3" opacity=".5" marker-end="url(#mar)"/>
+<text x="340" y="610" text-anchor="middle" font-size="8" fill="#e05c5c" opacity=".7" font-family="sans-serif">context package injected into every agent call</text>
+
+<!-- Section label badges -->
+<rect x="420" y="484" width="260" height="16" rx="3" fill="#1a0a0a"/>
+<text x="550" y="495" text-anchor="middle" font-size="8" fill="#e05c5c" font-family="sans-serif" font-weight="600">INTELLIGENCE LAYER (Project Intelligence)</text>
+
+<rect x="660" y="38" width="158" height="16" rx="3" fill="#100820"/>
+<text x="739" y="49" text-anchor="middle" font-size="8" fill="#9b6cf0" font-family="sans-serif" font-weight="600">LEARNING SUBSYSTEM</text>
+
+<rect x="660" y="338" width="158" height="16" rx="3" fill="#181008"/>
+<text x="739" y="349" text-anchor="middle" font-size="8" fill="#e0c23a" font-family="sans-serif" font-weight="600">CONTEXT / TOKEN BUDGET</text>
+
+<rect x="430" y="124" width="158" height="16" rx="3" fill="#0c1220"/>
+<text x="514" y="135" text-anchor="middle" font-size="8" fill="#4a7cf7" font-family="sans-serif" font-weight="600">STORAGE &amp; INDEX</text>
+
+</svg>
+</div>
+</body>
+</html>

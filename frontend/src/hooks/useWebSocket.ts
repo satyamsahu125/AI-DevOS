@@ -21,13 +21,24 @@ export type WSMessage = {
 
 type MessageHandler = (msg: WSMessage) => void
 
-export function useWebSocket(projectId: string | null, onMessage: MessageHandler) {
-  const wsRef = useRef<WebSocket | null>(null)
+interface WSOptions {
+  onDisconnect?: () => void   // called immediately when WS drops
+  onReconnect?: () => void    // called when WS comes back up
+}
+
+export function useWebSocket(
+  projectId: string | null,
+  onMessage: MessageHandler,
+  opts?: WSOptions,
+) {
+  const wsRef      = useRef<WebSocket | null>(null)
   const [connected, setConnected] = useState(false)
-  const timerRef = useRef<ReturnType<typeof setTimeout>>()
-  const delayRef = useRef(1000)
+  const timerRef   = useRef<number | undefined>(undefined)
+  const delayRef   = useRef(300)           // start at 300ms, not 1 s
   const handlerRef = useRef(onMessage)
+  const optsRef    = useRef(opts)
   handlerRef.current = onMessage
+  optsRef.current    = opts
 
   const connect = useCallback(() => {
     if (!projectId) return
@@ -39,7 +50,8 @@ export function useWebSocket(projectId: string | null, onMessage: MessageHandler
 
     ws.onopen = () => {
       setConnected(true)
-      delayRef.current = 1000
+      delayRef.current = 300               // reset on successful connect
+      optsRef.current?.onReconnect?.()
     }
 
     ws.onmessage = (ev) => {
@@ -53,8 +65,9 @@ export function useWebSocket(projectId: string | null, onMessage: MessageHandler
     ws.onclose = () => {
       setConnected(false)
       wsRef.current = null
+      optsRef.current?.onDisconnect?.()   // notify caller immediately
       timerRef.current = setTimeout(() => {
-        delayRef.current = Math.min(delayRef.current * 1.5, 15000)
+        delayRef.current = Math.min(delayRef.current * 2, 8000)  // cap at 8 s
         connect()
       }, delayRef.current)
     }

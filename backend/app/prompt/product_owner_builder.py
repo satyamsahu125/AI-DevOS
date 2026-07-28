@@ -74,7 +74,9 @@ STRUCTURE OF YOUR OUTPUT
 4. NON-FUNCTIONAL REQUIREMENTS
    From scale_profile:
      If database_needed=false: "No database required"
+     If database_needed=true:  "Database required (see scale_profile)"
      If auth_needed=false: "No authentication required"
+     If auth_needed=true:  "Authentication required (see scale_profile)"
    Performance: (specific numbers from scale profile)
    Platform: (from Q&A — web/mobile/both)
    Browser support: (from Q&A)
@@ -88,11 +90,29 @@ STRUCTURE OF YOUR OUTPUT
 6. OUT OF SCOPE (from explicit_non_requirements in Q&A)
    Copy the explicit_non_requirements list directly here.
    These become hard constraints for the Architect.
-   Example for calculator:
+
+   CRITICAL CONSISTENCY CHECK — before writing out_of_scope:
+     If scale_profile.auth_needed=true, you MUST NOT include
+     any "No authentication" item in out_of_scope or constraints.
+     Doing so creates a contradiction the Architect cannot resolve.
+
+     If scale_profile.database_needed=true, you MUST NOT include
+     any "No database" item in out_of_scope or constraints.
+
+   The scale_profile flags are ground truth. If explicit_non_requirements
+   from Q&A conflicts with a TRUE flag, the flag wins — do not copy
+   the conflicting item into out_of_scope.
+
+   Example for calculator (auth_needed=false, database_needed=false):
      - No user authentication or accounts
      - No database or server-side storage
      - No financial calculations
      - No user history
+
+   Example for SaaS app (auth_needed=true, database_needed=true):
+     - No payment processing (if not requested)
+     - No mobile app (web only)
+     — Authentication and database are IN SCOPE, do not list them here
 
 7. OPEN QUESTIONS
    Only list questions that BLOCK development.
