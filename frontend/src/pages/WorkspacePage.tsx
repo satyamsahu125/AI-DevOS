@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { useNavigate, useParams } from "react-router-dom"
+import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import {
   api, STAGES, STAGE_LABELS,
   type ProjectDetail, type CostSummary, type ProjectFiles,
-  type LogEvent,
+  type LogEvent, type ArtifactSummary,
 } from "../lib/api"
 import { usePipeline } from "../hooks/usePipeline"
 import { useLogs } from "../hooks/useLogs"
@@ -251,6 +251,89 @@ function ChatPanel({ projectId }: { projectId: string }) {
   )
 }
 
+// ── Artifacts panel ───────────────────────────────────────────────────────────
+function ArtifactsPanel({ artifacts }: { artifacts: ArtifactSummary[] }) {
+  const [open, setOpen] = useState<string | null>(null)
+  const [content, setContent] = useState<Record<string, string>>({})
+
+  function toggle(key: string, json?: string) {
+    if (open === key) { setOpen(null); return }
+    setOpen(key)
+    if (json && !content[key]) setContent(p => ({ ...p, [key]: json }))
+  }
+
+  if (!artifacts || artifacts.length === 0) {
+    return (
+      <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:"var(--color-muted)", fontSize:13 }}>
+        No artifacts yet — run the pipeline first.
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ flex:1, overflowY:"auto", padding:"0 4px" }}>
+      <div className="ws-section-title" style={{ marginBottom:12 }}>Stage Artifacts</div>
+      <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+        {artifacts.map((a, i) => {
+          const key = `${a.stage}-${i}`
+          const isOpen = open === key
+          let preview = ""
+          try { preview = a.json ? JSON.stringify(JSON.parse(a.json), null, 2).slice(0, 800) : "" } catch { preview = a.json ?? "" }
+          return (
+            <div key={key} style={{ background:"var(--color-surface)", border:"1px solid var(--color-divider)", borderRadius:"var(--radius-md)", overflow:"hidden" }}>
+              <button onClick={() => toggle(key, a.json)}
+                style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:"transparent", border:"none", cursor:"pointer", textAlign:"left", color:"var(--color-text)" }}>
+                <IcDone />
+                <span style={{ flex:1, fontSize:13, fontWeight:500 }}>{STAGE_LABELS[a.stage as keyof typeof STAGE_LABELS] ?? a.stage}</span>
+                <span style={{ fontSize:11, opacity:.4 }}>attempt {a.attempt}</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"
+                  style={{ opacity:.4, transform: isOpen ? "rotate(180deg)" : "none", transition:"transform .15s", flexShrink:0 }}>
+                  <path d="M6 9l6 6 6-6"/>
+                </svg>
+              </button>
+              {isOpen && (
+                <pre style={{ margin:0, padding:"0 14px 12px", fontSize:11, lineHeight:1.55, overflowX:"auto", color:"rgba(233,233,237,.7)", fontFamily:"var(--font-mono)", maxHeight:360, overflowY:"auto" }}>
+                  {preview || "(no structured content)"}
+                  {preview.length >= 800 && <span style={{ opacity:.4 }}>\n… (truncated)</span>}
+                </pre>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Metrics panel ─────────────────────────────────────────────────────────────
+function MetricsPanel({ cost, pipeline }: { cost: CostSummary | null; pipeline: { progress_percent: number; stages_completed: string[]; current_sprint: number; total_sprints: number } }) {
+  const rows: { label: string; value: string | number }[] = [
+    { label: "LLM Calls",          value: cost?.calls ?? 0 },
+    { label: "Prompt tokens",      value: cost?.prompt_tokens?.toLocaleString() ?? "—" },
+    { label: "Completion tokens",  value: cost?.completion_tokens?.toLocaleString() ?? "—" },
+    { label: "Total tokens",       value: cost?.total_tokens?.toLocaleString() ?? "—" },
+    { label: "Total latency",
+      value: cost ? `${(cost.total_latency_ms / 1000).toFixed(1)}s` : "—" },
+    { label: "Stages completed",   value: `${pipeline.stages_completed.length} / 12` },
+    { label: "Progress",           value: `${pipeline.progress_percent}%` },
+    { label: "Sprint",
+      value: pipeline.total_sprints > 0 ? `${pipeline.current_sprint} / ${pipeline.total_sprints}` : "—" },
+  ]
+  return (
+    <div style={{ flex:1, overflowY:"auto", padding:"0 4px" }}>
+      <div className="ws-section-title" style={{ marginBottom:12 }}>Metrics</div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+        {rows.map(r => (
+          <div key={r.label} style={{ background:"var(--color-surface)", border:"1px solid var(--color-divider)", borderRadius:"var(--radius-md)", padding:"12px 16px" }}>
+            <div style={{ fontSize:11, opacity:.5, letterSpacing:".06em", textTransform:"uppercase", marginBottom:4 }}>{r.label}</div>
+            <div style={{ fontSize:20, fontWeight:700, letterSpacing:"-.02em" }}>{r.value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Empty state ────────────────────────────────────────────────────────────────
 function EmptyState({ onStart, starting }: { onStart: () => void; starting: boolean }) {
   return (
@@ -281,6 +364,8 @@ function EmptyState({ onStart, starting }: { onStart: () => void; starting: bool
 export function WorkspacePage() {
   const { projectId } = useParams<{ projectId: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const activeTab = searchParams.get("tab") ?? "activity"
 
   const [project, setProject]   = useState<ProjectDetail | null>(null)
   const [cost, setCost]         = useState<CostSummary | null>(null)
@@ -424,7 +509,7 @@ export function WorkspacePage() {
       {/* ── Main content ─────────────────────────────────────── */}
       <div style={{ display:"flex", flexDirection:"column", gap:12, padding:16, overflow:"hidden", minHeight:0 }}>
 
-        {/* Stat cards row */}
+        {/* Stat cards row — always visible */}
         <div style={{ display:"flex", gap:10, flexShrink:0 }}>
           <StatCard label="API CALLS"  value={cost?.calls ?? "—"} />
           <StatCard label="TOKENS"     value={tokenStr} />
@@ -432,28 +517,47 @@ export function WorkspacePage() {
           <StatCard label="PROGRESS"   value={`${pipeline.progress_percent ?? 0}%`} />
         </div>
 
-        {/* Main row: log (1fr) + files+chat (340px) */}
-        {showQA ? (
-          <QAPanel
-            projectId={projectId!}
-            onComplete={async () => { loadProject(); await refresh() }}
-          />
-        ) : notStarted ? (
-          <EmptyState onStart={handleStart} starting={starting} />
-        ) : (
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 340px", gap:12, flex:1, minHeight:0 }}>
-            {/* Live log */}
-            <LogPanel
-              events={logEvents}
-              liveLogs={liveLogs}
-              currentStage={pipeline.current_stage}
+        {/* Tab: activity (default) */}
+        {activeTab === "activity" && (
+          showQA ? (
+            <QAPanel
+              projectId={projectId!}
+              onComplete={async () => { loadProject(); await refresh() }}
             />
-
-            {/* Files + Chat */}
-            <div style={{ display:"flex", flexDirection:"column", gap:12, minHeight:0, overflow:"hidden" }}>
-              <FilesPanel projectId={projectId!} />
-              <ChatPanel projectId={projectId!} />
+          ) : notStarted ? (
+            <EmptyState onStart={handleStart} starting={starting} />
+          ) : (
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 340px", gap:12, flex:1, minHeight:0 }}>
+              <LogPanel events={logEvents} liveLogs={liveLogs} currentStage={pipeline.current_stage} />
+              <div style={{ display:"flex", flexDirection:"column", gap:12, minHeight:0, overflow:"hidden" }}>
+                <FilesPanel projectId={projectId!} />
+                <ChatPanel projectId={projectId!} />
+              </div>
             </div>
+          )
+        )}
+
+        {/* Tab: files */}
+        {activeTab === "files" && (
+          <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
+            <FilesPanel projectId={projectId!} />
+          </div>
+        )}
+
+        {/* Tab: artifacts */}
+        {activeTab === "artifacts" && (
+          <ArtifactsPanel artifacts={project?.artifacts ?? []} />
+        )}
+
+        {/* Tab: metrics */}
+        {activeTab === "metrics" && (
+          <MetricsPanel cost={cost} pipeline={pipeline} />
+        )}
+
+        {/* Tab: chat */}
+        {activeTab === "chat" && (
+          <div style={{ flex:1, display:"flex", flexDirection:"column", minHeight:0 }}>
+            <ChatPanel projectId={projectId!} />
           </div>
         )}
       </div>

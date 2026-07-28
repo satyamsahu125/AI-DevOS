@@ -8,12 +8,20 @@ class LLMConfig(BaseModel):
     model: str = Field(default="qwen2.5-coder:7b")
     base_url: str = Field(default="http://localhost:11434")
     temperature: float = Field(default=0.1)
-    max_tokens: int = Field(default=4096)
+    # 8192 tokens: Architect and BackendDev generate large JSON objects (modules,
+    # api_endpoints, data_models, file contents) that routinely exceed 4096 tokens
+    # on complex projects. 4096 caused reliable mid-JSON truncation on qwen2.5-coder:7b.
+    max_tokens: int = Field(default=8192)
     # Socket timeout in seconds for each LLM call.
     # Designer stage on qwen2.5-coder:7b measured >600s on modest hardware
     # when the accumulated context is large — raising the default prevents
     # spurious TimeoutError failures on slow machines.
     timeout: int = Field(default=1200)
+    # Ollama context window (num_ctx). The default Ollama value is 2048 which
+    # causes mid-JSON truncation when prompt + response exceed that length.
+    # Architect and BackendDev stages routinely need 6000+ combined tokens.
+    # Set to 8192 so that num_predict=8192 can actually be used in full.
+    num_ctx: int = Field(default=8192)
     bedrock_api_key: str = Field(default="")
     bedrock_region: str = Field(default="us-east-1")
 

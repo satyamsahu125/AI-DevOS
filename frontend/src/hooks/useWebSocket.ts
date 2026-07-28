@@ -42,7 +42,11 @@ export function useWebSocket(
 
   const connect = useCallback(() => {
     if (!projectId) return
-    if (wsRef.current?.readyState === WebSocket.OPEN) return
+    // Guard against both OPEN and CONNECTING — React Strict Mode's double-effect
+    // would otherwise create two sockets (the first in CLOSING state passes the
+    // OPEN-only guard, causing every event to be received and logged twice).
+    const state = wsRef.current?.readyState
+    if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) return
 
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:"
     const ws = new WebSocket(`${proto}//${window.location.host}/api/ws/${projectId}`)

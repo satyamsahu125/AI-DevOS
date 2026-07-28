@@ -1,4 +1,4 @@
-import { useNavigate, useLocation, useParams } from "react-router-dom"
+import { useNavigate, useLocation, useParams, useSearchParams } from "react-router-dom"
 
 interface NavItem {
   icon: React.ReactNode
@@ -43,6 +43,13 @@ export function Sidebar({ collapsed, setCollapsed, projectName, projectStatus }:
   const navigate = useNavigate()
   const location = useLocation()
   const { projectId } = useParams()
+  const [searchParams] = useSearchParams()
+  const activeTab = searchParams.get("tab") ?? "activity"
+
+  // Pathname matches project workspace
+  const onProjectPage = projectId
+    ? (location.pathname === `/projects/${projectId}` || location.pathname.startsWith(`/projects/${projectId}/`))
+    : false
 
   const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(path + "/")
 
@@ -136,11 +143,11 @@ export function Sidebar({ collapsed, setCollapsed, projectName, projectStatus }:
         {projectId && (
           <>
             <SectionLabel label="Project" />
-            <NavBtn icon={<Icon d={ICONS.activity} />}  label="Activity"  to={`/projects/${projectId}`} active={isActive(`/projects/${projectId}`)} />
-            <NavBtn icon={<Icon d={ICONS.files} />}     label="Files"     to={`/projects/${projectId}?tab=files`} active={false} />
-            <NavBtn icon={<Icon d={ICONS.artifacts} />} label="Artifacts" to={`/projects/${projectId}?tab=artifacts`} active={false} />
-            <NavBtn icon={<Icon d={ICONS.metrics} />}   label="Metrics"   to={`/projects/${projectId}?tab=metrics`} active={false} />
-            <NavBtn icon={<Icon d={ICONS.chat} />}      label="Chat"      to={`/projects/${projectId}?tab=chat`} active={false} />
+            <NavBtn icon={<Icon d={ICONS.activity} />}  label="Activity"  to={`/projects/${projectId}`}              active={onProjectPage && activeTab === "activity"} />
+            <NavBtn icon={<Icon d={ICONS.files} />}     label="Files"     to={`/projects/${projectId}?tab=files`}     active={onProjectPage && activeTab === "files"} />
+            <NavBtn icon={<Icon d={ICONS.artifacts} />} label="Artifacts" to={`/projects/${projectId}?tab=artifacts`} active={onProjectPage && activeTab === "artifacts"} />
+            <NavBtn icon={<Icon d={ICONS.metrics} />}   label="Metrics"   to={`/projects/${projectId}?tab=metrics`}   active={onProjectPage && activeTab === "metrics"} />
+            <NavBtn icon={<Icon d={ICONS.chat} />}      label="Chat"      to={`/projects/${projectId}?tab=chat`}      active={onProjectPage && activeTab === "chat"} />
           </>
         )}
 

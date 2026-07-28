@@ -104,6 +104,7 @@ class LLMManager:
         agent: str = "",
         project_id: str = "",
         max_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> LLMResponse:
         """Generate a completion for prompt (optionally under system_prompt) via the configured provider.
 
@@ -116,7 +117,11 @@ class LLMManager:
         settings = self._settings
         resolved_model = model or settings.llm.model
         resolved_max_tokens = max_tokens if max_tokens is not None else settings.llm.max_tokens
-        logger.debug("generate_text: model=%s prompt_len=%s stage=%s agent=%s max_tokens=%s", resolved_model, len(prompt), stage, agent, resolved_max_tokens)
+        resolved_num_ctx = getattr(settings.llm, "num_ctx", 8192)
+        logger.debug(
+            "generate_text: model=%s prompt_len=%s stage=%s agent=%s max_tokens=%s num_ctx=%s json_mode=%s",
+            resolved_model, len(prompt), stage, agent, resolved_max_tokens, resolved_num_ctx, json_mode,
+        )
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -128,6 +133,8 @@ class LLMManager:
             messages=messages,
             temperature=settings.llm.temperature,
             max_tokens=resolved_max_tokens,
+            num_ctx=resolved_num_ctx,
+            json_mode=json_mode,
         )
         response = self._provider.execute(request)
         self._record_cost(resolved_model, response, stage, agent, project_id)

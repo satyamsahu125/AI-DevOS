@@ -82,7 +82,12 @@ export function usePipeline(projectId: string | null) {
 
   // WebSocket handler
   const handleWS = useCallback((msg: WSMessage) => {
-    const log = (line: string) => setLiveLogs(p => [...p.slice(-499), line])
+    // Deduplicate: skip if the last log line is identical (prevents duplicate
+    // entries when two WS connections briefly co-exist during reconnect).
+    const log = (line: string) => setLiveLogs(p => {
+      if (p.length > 0 && p[p.length - 1] === line) return p
+      return [...p.slice(-499), line]
+    })
 
     switch (msg.type) {
       case "status_update":

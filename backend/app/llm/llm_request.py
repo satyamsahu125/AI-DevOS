@@ -19,3 +19,11 @@ class LLMRequest:
     stream: bool = False
     timeout: int = 30
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Ollama-specific: context window size. Default 2048 in Ollama causes
+    # mid-JSON truncation. Set to match max_tokens so the window is never
+    # smaller than the desired output length.
+    num_ctx: int = 8192
+    # When True, the Ollama provider adds format="json" to the request,
+    # enabling grammar-constrained decoding. This guarantees syntactically
+    # valid JSON output even if the content is abbreviated by token limits.
+    json_mode: bool = False

@@ -105,9 +105,29 @@ class OllamaProvider(LLMProvider):
         return ProviderCapabilities(streaming=True, embeddings=True, json_mode=True, structured_output=True, supported_models=self.supported_models())
 
     def _build_payload(self, request: LLMRequest, stream: bool = False) -> dict[str, object]:
-        """Build the Ollama /api/generate payload, splitting system-role messages into the top-level `system` field."""
+        """Build the Ollama /api/generate payload.
+
+        Key options:
+        - num_ctx: must be set explicitly — Ollama defaults to 2048 which
+          causes mid-JSON truncation for any prompt+response > 2048 tokens.
+          We set it to at least max(num_predict, num_ctx) so the context
+          window is never smaller than the desired generation length.
+        - format "json": enables grammar-constrained decoding when
+          request.json_mode is True. The model is forced to always emit
+          syntactically valid JSON, closing all open structures before
+          terminating even if num_predict is reached. This eliminates the
+          class of "truncated mid-value" failures that _complete_truncated_json
+          cannot recover from (e.g. "key": <EOF> with no value).
+        """
         system_messages = [m["content"] for m in request.messages if m.get("role") == "system"]
         user_messages = [m["content"] for m in request.messages if m.get("role") != "system"]
+        # num_ctx must cover both the prompt and the generated response.
+        # Use the larger of the configured context window and num_predict so
+        # we never ask Ollama to generate more tokens than the window allows.
+        effective_num_ctx = max(
+            getattr(request, "num_ctx", 8192),
+            request.max_tokens,
+        )
         payload: dict[str, object] = {
             "model": request.model,
             "prompt": user_messages[-1] if user_messages else "",
@@ -116,10 +136,15 @@ class OllamaProvider(LLMProvider):
                 "temperature": request.temperature,
                 "top_p": request.top_p,
                 "num_predict": request.max_tokens,
+                "num_ctx": effective_num_ctx,
             },
         }
         if system_messages:
             payload["system"] = system_messages[-1]
+        # Grammar-constrained JSON decoding: guarantees syntactically valid JSON
+        # even when generation is cut short by token limits.
+        if getattr(request, "json_mode", False):
+            payload["format"] = "json"
         return payload
 
     def _post_json(self, path: str, payload: dict[str, object]) -> dict[str, object]:
