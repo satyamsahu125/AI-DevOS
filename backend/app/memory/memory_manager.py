@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
-from ..shared.enums.memory_type import MemoryType
 from .memory_cache import MemoryCache
 from .memory_cleanup import MemoryCleanup
 from .memory_index import MemoryIndex
@@ -19,33 +17,39 @@ class MemoryOrchestrator:
     """MemoryOrchestrator coordinates all memory subsystems (repository, store, index, cache, cleanup, sync, statistics).
 
     For simple key/value storage, use MemoryManager from manager.py.
+
+    Design note: instance attributes are prefixed to avoid shadowing same-named
+    public methods (Python instance attrs take precedence over class methods in
+    attribute lookup, so a field named ``store`` would make the ``store()``
+    method unreachable via normal attribute access).
     """
 
     def __init__(self, repository: MemoryRepository | None = None, store: MemoryStore | None = None) -> None:
         self.repository = repository or MemoryRepository(storage=None)
-        self.store = store or MemoryStore()
-        self.index = MemoryIndex()
+        self.memory_store = store or MemoryStore()        # was: self.store   (shadowed method)
+        self.memory_index = MemoryIndex()                  # was: self.index   (shadowed method)
         self.cache = MemoryCache()
-        self.cleanup = MemoryCleanup()
+        self.memory_cleanup = MemoryCleanup()              # was: self.cleanup (shadowed method)
         self.sync = MemorySynchronization()
-        self.statistics = MemoryStatistics()
+        self._stats = MemoryStatistics()                   # was: self.statistics (shadowed method)
 
     def initialize(self) -> None:
         self.repository.initialize()
-        self.store.records.clear()
+        self.memory_store.records.clear()
         self.cache.clear()
-        self.cleanup.clear()
+        self.memory_cleanup.clear()
         self.sync.mark_synced()
-        self.statistics = MemoryStatistics(count=self.repository.count())
+        self._stats = MemoryStatistics(count=self.repository.count())
 
     def store(self, record: MemoryRecord) -> MemoryRecord:
+        """Persist a MemoryRecord through repository + all subsystems."""
         saved = self.repository.save(record)
-        self.store.put(str(saved.memory_id), saved)
-        self.index.add(str(saved.memory_id), saved)
+        self.memory_store.put(str(saved.memory_id), saved)
+        self.memory_index.add(str(saved.memory_id), saved)
         self.cache.set(str(saved.memory_id), saved)
-        self.statistics.count = self.repository.count()
-        self.statistics.indexed = len(self.index.snapshot())
-        self.statistics.cached = len(self.cache._cache)
+        self._stats.count = self.repository.count()
+        self._stats.indexed = len(self.memory_index.snapshot())
+        self._stats.cached = len(self.cache._cache)
         return saved
 
     def retrieve(self, memory_id: UUID) -> MemoryRecord | None:
@@ -56,19 +60,19 @@ class MemoryOrchestrator:
 
     def update(self, record: MemoryRecord) -> MemoryRecord:
         updated = self.repository.update(record)
-        self.store.put(str(updated.memory_id), updated)
-        self.index.add(str(updated.memory_id), updated)
+        self.memory_store.put(str(updated.memory_id), updated)
+        self.memory_index.add(str(updated.memory_id), updated)
         self.cache.set(str(updated.memory_id), updated)
         self.sync.mark_synced()
         return updated
 
     def delete(self, memory_id: UUID) -> bool:
         deleted = self.repository.delete(memory_id)
-        self.store.delete(str(memory_id))
-        self.index.remove(str(memory_id))
+        self.memory_store.delete(str(memory_id))
+        self.memory_index.remove(str(memory_id))
         self.cache.invalidate(str(memory_id))
-        self.cleanup.mark_removed(str(memory_id))
-        self.statistics.count = self.repository.count()
+        self.memory_cleanup.mark_removed(str(memory_id))
+        self._stats.count = self.repository.count()
         return deleted
 
     def search(self, query: RepositoryQuery) -> list[MemoryRecord]:
@@ -82,20 +86,23 @@ class MemoryOrchestrator:
             return ""
         return record.summary or record.content[:80]
 
-    def index(self) -> None:
-        self.statistics.indexed = len(self.index.snapshot())
+    def rebuild_index(self) -> None:
+        """Rebuild the in-memory index from the current memory_index snapshot."""
+        self._stats.indexed = len(self.memory_index.snapshot())
 
     def persist(self) -> None:
         self.sync.mark_synced()
 
-    def cleanup(self) -> None:
-        self.cleanup.clear()
+    def run_cleanup(self) -> None:
+        """Run the memory cleanup pass (removes tombstoned records from the cache)."""
+        self.memory_cleanup.clear()
 
-    def statistics(self) -> MemoryStatistics:
-        return self.statistics
+    def get_statistics(self) -> MemoryStatistics:
+        """Return current memory subsystem statistics."""
+        return self._stats
 
     def shutdown(self) -> None:
-        self.store.records.clear()
+        self.memory_store.records.clear()
         self.cache.clear()
-        self.index = MemoryIndex()
+        self.memory_index = MemoryIndex()
         self.sync = MemorySynchronization()

@@ -34,5 +34,16 @@ class AgentResolver:
             "sprint_planning": "sprint_planner",
             "scrummaster": "scrum_master",
             "scrum_master": "scrum_master",
+            # Sprint-internal agents — called directly by SprintSupervisor, not
+            # via engine.run_stage(), but listed here so factory.create() works
+            # for tests and future tooling.
+            "tech_lead": "tech_lead",
+            "techlead": "tech_lead",
+            "bug_analyst": "bug_analyst",
+            "buganalyst": "bug_analyst",
+            "sprint_deploy": "sprint_deploy",
+            "sprintdeploy": "sprint_deploy",
+            "sprint_review": "sprint_review",
+            "sprintreview": "sprint_review",
         }
         return mapping.get(normalized, normalized)

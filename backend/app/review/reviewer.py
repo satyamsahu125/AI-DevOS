@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -21,6 +22,44 @@ _REQUIRED_DESIGN_SYSTEM_KEYS = ("colors", "fonts", "spacing", "breakpoints")
 
 _CODE_SCHEMA_NAMES = ("WriteBackendFiles", "WriteFrontendFiles")
 _CODE_COVERAGE_FLAG_THRESHOLD = 0.5
+
+# Minimum word count for non-empty text-only stages (StrategicReview, Retro, Security)
+_MIN_WORDS_TEXT_STAGE = 30
+
+# Boilerplate phrases common in LLM hallucinated/degenerate responses
+_BOILERPLATE_PATTERNS: list[re.Pattern] = [
+    re.compile(r"\bsure[,!]?\s+(here|i\'ll|let me)\b", re.IGNORECASE),
+    re.compile(r"\bhere is (your|the|a)\b", re.IGNORECASE),
+    re.compile(r"\bcertainly[,!]?\s+here\b", re.IGNORECASE),
+    re.compile(r"\bof course[,!]?\s+here\b", re.IGNORECASE),
+    re.compile(r"\bi (am|will|would) (happy|glad) to\b", re.IGNORECASE),
+    re.compile(r"\bas (an|a) (AI|language model|LLM)\b", re.IGNORECASE),
+]
+
+# Required top-level keys per schema — if any are empty/missing it indicates a truncated
+# or stub output. Split into two tiers:
+#   CRITICAL → empty required key blocks approval (ASK_HUMAN): these stages gate the whole pipeline.
+#   NON_CRITICAL → empty required key is advisory only (FLAG): later/release stages.
+_REQUIRED_STRUCTURED_KEYS: dict[str, list[str]] = {
+    "WriteArchitecture":  ["modules", "api_endpoints", "data_models"],
+    "WriteDesign":        ["user_flows", "components", "page_layouts"],
+    "WriteRequirements":  ["requirements"],
+    "WriteStrategicBrief": ["goals", "risks"],
+    "WriteSecurityReport": ["threats", "recommendations"],
+    "WriteQAReport":      ["test_cases"],
+    "WriteDeployment":    ["infrastructure", "deployment_steps"],
+}
+
+# Schemas whose empty required keys escalate to ASK_HUMAN (block approval).
+# These stages directly gate every downstream stage — a stub output here means
+# BackendDev / FrontendDev / QA will all receive unusable context.
+_CRITICAL_SCHEMAS: frozenset[str] = frozenset({
+    "WriteArchitecture",
+    "WriteRequirements",
+    "WriteDesign",
+    "WriteBackendFiles",
+    "WriteFrontendFiles",
+})
 
 
 class ReviewTier(str, Enum):
@@ -92,7 +131,7 @@ class Reviewer:
         self._check_auto_fix(artifact, content_valid, findings, auto_fixes_applied)
         self._check_ask_human(artifact, content, content_valid, findings, human_questions)
         quality_score = self._compute_quality_score(artifact, content, content_valid)
-        self._check_flag(artifact, content, quality_score, previous_content, findings, flags)
+        self._check_flag(artifact, content, quality_score, previous_content, findings, flags, human_questions)
         if artifact.schema_type == _DESIGN_SCHEMA_NAME and artifact.structured_content:
             self._check_design_stage(artifact, architecture_endpoints, findings, auto_fixes_applied, human_questions, flags)
         if artifact.schema_type in _CODE_SCHEMA_NAMES and artifact.structured_content:
@@ -155,9 +194,12 @@ class Reviewer:
 
     def _check_flag(
         self, artifact: StageArtifact, content: str, quality_score: float, previous_content: str | None,
-        findings: list[ReviewFinding], flags: list[str],
+        findings: list[ReviewFinding], flags: list[str], human_questions: list[str] | None = None,
     ) -> None:
-        """Detect FLAG patterns: low quality score, unusually long content, or repeated content from before."""
+        """Detect FLAG/ASK_HUMAN patterns: low quality score, unusually long content, repeated content,
+        boilerplate phrasing, and empty required structured fields (critical schemas → ASK_HUMAN)."""
+        if human_questions is None:
+            human_questions = []
         if quality_score < _QUALITY_FLAG_THRESHOLD:
             finding = ReviewFinding(
                 tier=ReviewTier.FLAG,
@@ -184,6 +226,66 @@ class Reviewer:
             )
             findings.append(finding)
             flags.append(finding.description)
+
+        # Boilerplate detection: LLM assistant-voice phrases in structured output
+        for pattern in _BOILERPLATE_PATTERNS:
+            if pattern.search(content[:500]):
+                finding = ReviewFinding(
+                    tier=ReviewTier.FLAG,
+                    description="Content begins with LLM boilerplate phrasing (assistant voice leaked into output)",
+                    suggestion="Re-prompt with stricter 'output JSON only, no preamble' instruction",
+                )
+                findings.append(finding)
+                flags.append(finding.description)
+                break  # one flag per artifact is enough
+
+        # Word count check for text-only (non-structured) stages
+        if not artifact.schema_type and content:
+            word_count = len(content.split())
+            if word_count < _MIN_WORDS_TEXT_STAGE:
+                finding = ReviewFinding(
+                    tier=ReviewTier.FLAG,
+                    description=f"Text-stage output is very short ({word_count} words, minimum {_MIN_WORDS_TEXT_STAGE})",
+                    suggestion="The agent may have produced a stub response; check for completeness",
+                )
+                findings.append(finding)
+                flags.append(finding.description)
+
+        # Structured content required-key emptiness check.
+        # Critical schemas (Architect, Requirements, Design, BackendDev, FrontendDev)
+        # gate the entire downstream pipeline — empty required fields escalate to
+        # ASK_HUMAN (blocks approval). Non-critical schemas get FLAG (advisory only).
+        required_keys = _REQUIRED_STRUCTURED_KEYS.get(artifact.schema_type or "", [])
+        if required_keys and artifact.structured_content:
+            empty_required = [
+                k for k in required_keys
+                if not artifact.structured_content.get(k)
+            ]
+            if empty_required:
+                is_critical = (artifact.schema_type or "") in _CRITICAL_SCHEMAS
+                if is_critical:
+                    finding = ReviewFinding(
+                        tier=ReviewTier.ASK_HUMAN,
+                        description=(
+                            f"Critical stage '{artifact.schema_type}' produced empty required fields: "
+                            f"{', '.join(empty_required)}. Downstream stages cannot proceed."
+                        ),
+                        suggestion="Retry with higher max_tokens, switch to Claude/Gemini provider, or reduce prompt context",
+                    )
+                    findings.append(finding)
+                    human_questions.append(finding.description)
+                    logger.warning(
+                        "reviewer: critical schema empty fields stage=%s empty=%s",
+                        artifact.schema_type, empty_required,
+                    )
+                else:
+                    finding = ReviewFinding(
+                        tier=ReviewTier.FLAG,
+                        description=f"Required structured fields are empty: {', '.join(empty_required)}",
+                        suggestion="Agent likely produced a stub output — retry with higher max_tokens or slim context",
+                    )
+                    findings.append(finding)
+                    flags.append(finding.description)
 
     def _check_design_stage(
         self, artifact: StageArtifact, architecture_endpoints: list[str] | None,
@@ -370,6 +472,18 @@ class Reviewer:
             score -= 0.3
         if artifact.safety_flags:
             score -= 0.1
+        # Penalise empty required structured fields (stub/truncated output)
+        required_keys = _REQUIRED_STRUCTURED_KEYS.get(artifact.schema_type or "", [])
+        if required_keys and artifact.structured_content:
+            empty_ratio = sum(
+                1 for k in required_keys if not artifact.structured_content.get(k)
+            ) / len(required_keys)
+            score -= 0.4 * empty_ratio
+        # Penalise boilerplate phrasing
+        for pattern in _BOILERPLATE_PATTERNS:
+            if pattern.search(content[:500]):
+                score -= 0.2
+                break
         return max(0.0, min(1.0, score))
 
     def _summarize(self, approved: bool, findings: list[ReviewFinding]) -> str:

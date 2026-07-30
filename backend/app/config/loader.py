@@ -56,7 +56,11 @@ class ConfigurationLoader:
         """Apply the documented environment-variable overrides (see backend/.env) on top of payload, in place."""
         llm = dict(payload.get("llm") or {})
         if os.environ.get("OLLAMA_BASE_URL"):
+            # Store as both base_url (legacy) AND ollama_base_url (preferred).
+            # The factory now ignores base_url for Claude/Gemini so this no
+            # longer bleeds the Ollama localhost address into cloud providers.
             llm["base_url"] = os.environ["OLLAMA_BASE_URL"]
+            llm["ollama_base_url"] = os.environ["OLLAMA_BASE_URL"]
         if os.environ.get("OLLAMA_MODEL"):
             llm["model"] = os.environ["OLLAMA_MODEL"]
         if os.environ.get("OLLAMA_TEMPERATURE"):
@@ -71,6 +75,10 @@ class ConfigurationLoader:
             llm["bedrock_api_key"] = os.environ["BEDROCK_API_KEY"]
         if os.environ.get("BEDROCK_REGION"):
             llm["bedrock_region"] = os.environ["BEDROCK_REGION"]
+        if os.environ.get("CLAUDE_API_KEY"):
+            llm["claude_api_key"] = os.environ["CLAUDE_API_KEY"]
+        if os.environ.get("GEMINI_API_KEY"):
+            llm["gemini_api_key"] = os.environ["GEMINI_API_KEY"]
         if llm:
             payload["llm"] = llm
 

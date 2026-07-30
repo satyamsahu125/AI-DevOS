@@ -1,6 +1,23 @@
 from __future__ import annotations
 
 from .builder import PromptBuilder
+from .context_extractor import SlimContextExtractor
+
+# Only these keys are needed for architectural decisions.
+# Full ProductOwner artifacts include target_user personas, detailed
+# acceptance criteria, edge cases, success metrics, and open questions —
+# none of which the architect uses. Passing all of it wastes ~3,000 tokens
+# of context window on qwen2.5-coder:7b, leaving too little room for the
+# architecture JSON output and causing mid-JSON truncation.
+_ARCH_KEYS = frozenset({
+    "project_name",
+    "problem_statement",
+    "scale_profile",
+    "out_of_scope",
+    "requirements",
+    "constraints",
+    "non_functional_requirements",
+})
 
 SYSTEM_PROMPT = """
 You are a Principal Software Architect with 20 years experience.
@@ -136,13 +153,28 @@ GOOD: "layers": ["presentation", "business", "data"]
 """
 
 
-class ArchitectPromptBuilder(PromptBuilder):
-    """Advanced prompt builder for Architect stage."""
+class ArchitectPromptBuilder(PromptBuilder, SlimContextExtractor):
+    """Architect prompt builder.
+
+    Extracts only the fields the architect actually needs from the predecessor
+    (ProductOwner) artifact instead of passing the full JSON verbatim.
+    A full ProductOwner artifact is 15-20 KB (~4000+ tokens); the architect
+    only needs scale_profile, out_of_scope, requirements, constraints and
+    project metadata — roughly 500-800 tokens. The savings give the model
+    enough context budget to produce a complete architecture JSON.
+
+    Uses SlimContextExtractor (context_extractor.py) — shared with all other
+    prompt builders to avoid duplicating parse/extract logic.
+    """
 
     def __init__(self) -> None:
         super().__init__(role="Architect")
 
     def build(self, context: object | None = None) -> str:
-        base = super().build(context)
-        body = f"Architect Prompt:\n{base}" if base else "Architect Prompt"
+        content = self.get_raw_content(context)
+        slim = self.extract(content, _ARCH_KEYS)
+        if slim:
+            body = f"Requirements (architect-relevant fields):\n{slim}"
+        else:
+            body = f"Context:\n{content[:3000]}" if content else "No context provided."
         return f"{SYSTEM_PROMPT}\n\n{body}"

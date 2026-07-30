@@ -113,8 +113,14 @@ class SafetyPolicy:
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
-        """Create the safety_checks audit table on first run."""
-        self._conn.execute(
+        """Create audit tables on first run.
+
+        Both tables are created here — not lazily inside query methods — so
+        that _is_approved_artifact() stays a pure read with no DDL side-effects.
+        The artifacts schema mirrors ArtifactManager's schema; SafetyPolicy reads
+        it read-only (ArtifactManager owns all writes to that table).
+        """
+        self._conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS safety_checks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,7 +129,17 @@ class SafetyPolicy:
                 decision TEXT NOT NULL,
                 reason TEXT NOT NULL,
                 checked_at TEXT NOT NULL
-            )
+            );
+            CREATE TABLE IF NOT EXISTS artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                json_path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                attempt INTEGER NOT NULL,
+                approved INTEGER NOT NULL DEFAULT 0
+            );
             """
         )
         self._conn.commit()
@@ -160,8 +176,10 @@ class SafetyPolicy:
                     reason = "new write outside the workspace root is not permitted"
             elif attempt > 1:
                 decision = SafetyDecision.ALLOW
-                reason = f"writing retry attempt {attempt} alongside previous attempts is expected"
-            elif self._is_approved_artifact(str(resolved_target)):
+                # Retry writes overwrite the canonical artifact file AND create a
+                # new attempt-N snapshot alongside it — both are expected behavior.
+                reason = f"retry attempt {attempt}: overwriting canonical artifact and writing attempt-{attempt} snapshot"
+            elif self._is_approved_artifact(target):
                 decision = SafetyDecision.WARN
                 reason = "overwriting a previously approved artifact"
             elif in_workspace:
@@ -179,21 +197,13 @@ class SafetyPolicy:
         return result
 
     def _is_approved_artifact(self, target: str) -> bool:
-        """Return whether target matches an approved row in the shared artifacts table."""
-        self._conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS artifacts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id TEXT NOT NULL,
-                stage TEXT NOT NULL,
-                file_path TEXT NOT NULL,
-                json_path TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                attempt INTEGER NOT NULL,
-                approved INTEGER NOT NULL DEFAULT 0
-            )
-            """
-        )
+        """Return whether target matches an approved artifact row in the shared artifacts table.
+
+        target must be the *un-resolved* path string as passed to check() —
+        ArtifactManager stores the path as-is (relative when WORKSPACE_ROOT is
+        relative), so resolving to absolute before querying would never match.
+        The artifacts table is created by _ensure_schema() at init time, not here.
+        """
         row = self._conn.execute(
             "SELECT 1 FROM artifacts WHERE file_path = ? AND approved = 1 LIMIT 1", (target,)
         ).fetchone()

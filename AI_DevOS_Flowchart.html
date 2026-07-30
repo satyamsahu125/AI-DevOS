@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI DevOS — System Flowchart</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d1117; color: #e6edf3; font-family: 'Segoe UI', system-ui, sans-serif; }
+  h1 { text-align: center; padding: 24px 0 8px; font-size: 22px; color: #58a6ff; letter-spacing: 0.5px; }
+  .subtitle { text-align: center; color: #8b949e; font-size: 13px; margin-bottom: 20px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-bottom: 20px; padding: 0 20px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8b949e; }
+  .legend-dot { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+  svg { display: block; margin: 0 auto; max-width: 100%; }
+  .panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px 24px; margin: 16px auto; max-width: 900px; }
+  .panel h2 { font-size: 14px; color: #58a6ff; margin-bottom: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: #8b949e; padding: 4px 8px; border-bottom: 1px solid #30363d; font-weight: 500; }
+  td { padding: 5px 8px; border-bottom: 1px solid #21262d; vertical-align: top; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .p0 { background: #3d1f1f; color: #f85149; }
+  .p1 { background: #3d2e00; color: #e3b341; }
+  .p2 { background: #1c2d3d; color: #58a6ff; }
+  .p3 { background: #1c2b1c; color: #3fb950; }
+  .tag-ok { background: #1c2b1c; color: #3fb950; }
+  .tag-warn { background: #3d2e00; color: #e3b341; }
+  .tag-err { background: #3d1f1f; color: #f85149; }
+  footer { text-align: center; color: #484f58; font-size: 11px; padding: 20px; }
+</style>
+</head>
+<body>
+<h1>AI DevOS — Complete System Flowchart</h1>
+<div class="subtitle">Full pipeline from HTTP request → Supervisor → Agent → Memory → Review → Artifact</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#388bfd"></div> Entry / API</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div> Success path</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f85149"></div> Failure path</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#e3b341"></div> Retry / conditional</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#8b949e"></div> Storage / memory</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#bc8cff"></div> External LLM provider</div>
+</div>
+
+<svg viewBox="0 0 880 2600" xmlns="http://www.w3.org/2000/svg" width="880">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#8b949e"/>
+    </marker>
+    <marker id="arr-g" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#3fb950"/>
+    </marker>
+    <marker id="arr-r" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#f85149"/>
+    </marker>
+    <marker id="arr-y" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#e3b341"/>
+    </marker>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- PHASE LABELS -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <rect x="10" y="10" width="130" height="24" rx="4" fill="#1c2d3d"/>
+  <text x="75" y="26" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="600">API LAYER</text>
+
+  <rect x="10" y="250" width="130" height="24" rx="4" fill="#1c2b1c"/>
+  <text x="75" y="266" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">ORCHESTRATION</text>
+
+  <rect x="10" y="540" width="130" height="24" rx="4" fill="#2d1f3d"/>
+  <text x="75" y="556" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">DISCOVERY PHASE</text>
+
+  <rect x="10" y="920" width="130" height="24" rx="4" fill="#2d1f3d"/>
+  <text x="75" y="936" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">PER-STAGE ENGINE</text>
+
+  <rect x="10" y="1400" width="130" height="24" rx="4" fill="#3d2e00"/>
+  <text x="75" y="1416" text-anchor="middle" fill="#e3b341" font-size="11" font-weight="600">SPRINT PHASE</text>
+
+  <rect x="10" y="1800" width="130" height="24" rx="4" fill="#1c2b1c"/>
+  <text x="75" y="1816" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">RELEASE PHASE</text>
+
+  <rect x="10" y="2050" width="130" height="24" rx="4" fill="#1f2d1f"/>
+  <text x="75" y="2066" text-anchor="middle" fill="#8b949e" font-size="11" font-weight="600">MEMORY STORES</text>
+
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- ROW 1: HTTP Request → WorkflowManager -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- Box: HTTP POST /workflow/start -->
+  <rect x="290" y="20" width="300" height="44" rx="8" fill="#1c2d3d" stroke="#388bfd" stroke-width="2"/>
+  <text x="440" y="38" text-anchor="middle" fill="#58a6ff" font-size="13" font-weight="700">HTTP POST /workflow/start</text>
+  <text x="440" y="54" text-anchor="middle" fill="#8b949e" font-size="11">FastAPI router → WorkflowManager.run()</text>
+
+  <!-- Arrow down -->
+  <line x1="440" y1="64" x2="440" y2="100" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- WebSocket broadcast -->
+  <rect x="640" y="30" width="200" height="32" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="740" y="44" text-anchor="middle" fill="#8b949e" font-size="11">WebSocket broadcast</text>
+  <text x="740" y="57" text-anchor="middle" fill="#484f58" font-size="10">status_update events</text>
+  <line x1="590" y1="44" x2="640" y2="44" stroke="#30363d" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr)"/>
+
+  <!-- Box: WorkspaceManager reads Project -->
+  <rect x="310" y="100" width="260" height="36" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="440" y="116" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">WorkspaceManager.read_project()</text>
+  <text x="440" y="129" text-anchor="middle" fill="#8b949e" font-size="10">reads project.json from disk</text>
+
+  <line x1="440" y1="136" x2="440" y2="172" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Box: PipelineSupervisor -->
+  <rect x="280" y="172" width="320" height="48" rx="8" fill="#1c2b1c" stroke="#3fb950" stroke-width="2"/>
+  <text x="440" y="192" text-anchor="middle" fill="#3fb950" font-size="13" font-weight="700">PipelineSupervisor.run()</text>
+  <text x="440" y="208" text-anchor="middle" fill="#8b949e" font-size="11">Reads ProjectState → routes to phase</text>
+
+  <!-- Arrow to phase decision -->
+  <line x1="440" y1="220" x2="440" y2="258" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- ROW 2: Phase decision -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- Diamond: phase? -->
+  <polygon points="440,258 520,290 440,322 360,290" fill="#21262d" stroke="#e3b341" stroke-width="1.5"/>
+  <text x="440" y="286" text-anchor="middle" fill="#e3b341" font-size="12" font-weight="600">ProjectState?</text>
+  <text x="440" y="300" text-anchor="middle" fill="#8b949e" font-size="10">routes by phase</text>
+
+  <!-- Discovery label -->
+  <text x="360" y="315" text-anchor="middle" fill="#bc8cff" font-size="10">EMPTY/CLARIFYING</text>
+  <line x1="360" y1="290" x2="190" y2="370" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Sprint label -->
+  <text x="530" y="280" text-anchor="middle" fill="#e3b341" font-size="10">SPRINT_*</text>
+  <line x1="520" y1="290" x2="680" y2="370" stroke="#e3b341" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Release label -->
+  <text x="450" y="340" text-anchor="middle" fill="#3fb950" font-size="10">ALL_SPRINTS_COMPLETE</text>
+  <line x1="440" y1="322" x2="440" y2="370" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arr)"/>
+
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- ROW 3: Three phase boxes -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- Discovery -->
+  <rect x="80" y="370" width="220" height="70" rx="8" fill="#2d1f3d" stroke="#bc8cff" stroke-width="1.5"/>
+  <text x="190" y="390" text-anchor="middle" fill="#bc8cff" font-size="12" font-weight="700">DISCOVERY STAGES</text>
+  <text x="190" y="406" text-anchor="middle" fill="#8b949e" font-size="10">strategic_review → product_owner</text>
+  <text x="190" y="420" text-anchor="middle" fill="#8b949e" font-size="10">→ architect → designer → security</text>
+  <text x="190" y="434" text-anchor="middle" fill="#8b949e" font-size="10">→ sprint_planner → scrum_master</text>
+
+  <!-- Release -->
+  <rect x="330" y="370" width="220" height="70" rx="8" fill="#1c2b1c" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="440" y="390" text-anchor="middle" fill="#3fb950" font-size="12" font-weight="700">RELEASE STAGES</text>
+  <text x="440" y="406" text-anchor="middle" fill="#8b949e" font-size="10">qa → devops → document → retro</text>
+  <text x="440" y="422" text-anchor="middle" fill="#8b949e" font-size="10">Non-fatal: failures logged but</text>
+  <text x="440" y="436" text-anchor="middle" fill="#8b949e" font-size="10">don't block completion</text>
+
+  <!-- Sprint -->
+  <rect x="580" y="370" width="220" height="70" rx="8" fill="#3d2e00" stroke="#e3b341" stroke-width="1.5"/>
+  <text x="690" y="390" text-anchor="middle" fill="#e3b341" font-size="12" font-weight="700">SPRINT PHASE</text>
+  <text x="690" y="406" text-anchor="middle" fill="#8b949e" font-size="10">SprintSupervisor.run_sprint(N)</text>
+  <text x="690" y="422" text-anchor="middle" fill="#8b949e" font-size="10">file_planner → backend → frontend</text>
+  <text x="690" y="436" text-anchor="middle" fill="#8b949e" font-size="10">→ tech_lead → bug_analyst → qa</text>
+
+  <!-- All three converge to engine.run_stage() -->
+  <line x1="190" y1="440" x2="310" y2="530" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="440" y1="440" x2="440" y2="530" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="690" y1="440" x2="570" y2="530" stroke="#e3b341" stroke-width="1.5" marker-end="url(#arr)"/>
+
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- ROW 4: engine.run_stage() -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <rect x="260" y="530" width="360" height="48" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="2"/>
+  <text x="440" y="550" text-anchor="middle" fill="#58a6ff" font-size="13" font-weight="700">WorkflowEngine.run_stage()</text>
+  <text x="440" y="566" text-anchor="middle" fill="#8b949e" font-size="11">Creates StageSession • injects context • calls ExecutionManager</text>
+
+  <!-- Context injections (right side) -->
+  <rect x="660" y="530" width="190" height="80" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="755" y="548" text-anchor="middle" fill="#8b949e" font-size="11" font-weight="600">Context Injection</text>
+  <text x="755" y="562" text-anchor="middle" fill="#484f58" font-size="10">• predecessor artifact (disk)</text>
+  <text x="755" y="574" text-anchor="middle" fill="#484f58" font-size="10">• design context (MemoryManager)</text>
+  <text x="755" y="586" text-anchor="middle" fill="#484f58" font-size="10">• lessons (LessonStore SQLite)</text>
+  <text x="755" y="598" text-anchor="middle" fill="#484f58" font-size="10">• intelligence context (MemoryMgr)</text>
+  <line x1="620" y1="560" x2="660" y2="560" stroke="#30363d" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr)"/>
+
+  <line x1="440" y1="578" x2="440" y2="614" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- ROW 5: ExecutionPipeline -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <rect x="280" y="614" width="320" height="44" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="440" y="634" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">ExecutionPipeline.run()</text>
+  <text x="440" y="649" text-anchor="middle" fill="#8b949e" font-size="10">ExecutionManager → ExecutionEngine → ExecutionPipeline</text>
+
+  <line x1="440" y1="658" x2="440" y2="690" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- ROW 6: AgentFactory -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <rect x="300" y="690" width="280" height="44" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="440" y="710" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">AgentFactory.create(stage_name)</text>
+  <text x="440" y="725" text-anchor="middle" fill="#8b949e" font-size="10">AgentResolver → AgentRegistry → Agent()</text>
+
+  <line x1="440" y1="734" x2="440" y2="766" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- ROW 7: agent.execute → action.run -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <rect x="280" y="766" width="320" height="56" rx="8" fill="#2d1f3d" stroke="#bc8cff" stroke-width="1.5"/>
+  <text x="440" y="786" text-anchor="middle" fill="#bc8cff" font-size="13" font-weight="700">agent.execute(context)</text>
+  <text x="440" y="802" text-anchor="middle" fill="#8b949e" font-size="10">→ LLMAction.run(context, llm_manager)</text>
+  <text x="440" y="816" text-anchor="middle" fill="#8b949e" font-size="10">PromptBuilder.build() → prompt string</text>
+
+  <line x1="440" y1="822" x2="440" y2="856" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- ROW 8: LLMManager.generate_text -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <rect x="270" y="856" width="340" height="56" rx="8" fill="#1c2d3d" stroke="#388bfd" stroke-width="1.5"/>
+  <text x="440" y="876" text-anchor="middle" fill="#58a6ff" font-size="12" font-weight="700">LLMManager.generate_text()</text>
+  <text x="440" y="892" text-anchor="middle" fill="#8b949e" font-size="10">json_mode=True, max_tokens=8192, num_ctx=8192</text>
+  <text x="440" y="906" text-anchor="middle" fill="#8b949e" font-size="10">builds LLMRequest → dispatches to provider</text>
+
+  <!-- Provider split -->
+  <line x1="350" y1="912" x2="220" y2="960" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="440" y1="912" x2="440" y2="960" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="530" y1="912" x2="660" y2="960" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Provider boxes -->
+  <!-- Ollama -->
+  <rect x="110" y="960" width="220" height="60" rx="6" fill="#21262d" stroke="#e3b341" stroke-width="1.5"/>
+  <text x="220" y="980" text-anchor="middle" fill="#e3b341" font-size="12" font-weight="600">OllamaProvider</text>
+  <text x="220" y="995" text-anchor="middle" fill="#8b949e" font-size="10">qwen2.5-coder:7b (local)</text>
+  <text x="220" y="1008" text-anchor="middle" fill="#f85149" font-size="10">⚠ num_ctx truncation risk</text>
+
+  <!-- Claude -->
+  <rect x="340" y="960" width="200" height="60" rx="6" fill="#21262d" stroke="#bc8cff" stroke-width="1.5"/>
+  <text x="440" y="980" text-anchor="middle" fill="#bc8cff" font-size="12" font-weight="600">ClaudeProvider</text>
+  <text x="440" y="995" text-anchor="middle" fill="#8b949e" font-size="10">claude-haiku-4-5</text>
+  <text x="440" y="1008" text-anchor="middle" fill="#3fb950" font-size="10">✓ Prefill JSON, 200K ctx</text>
+
+  <!-- Gemini -->
+  <rect x="560" y="960" width="200" height="60" rx="6" fill="#21262d" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="660" y="980" text-anchor="middle" fill="#3fb950" font-size="12" font-weight="600">GeminiProvider</text>
+  <text x="660" y="995" text-anchor="middle" fill="#8b949e" font-size="10">gemini-2.0-flash</text>
+  <text x="660" y="1008" text-anchor="middle" fill="#3fb950" font-size="10">✓ Native JSON, 1M ctx</text>
+
+  <!-- All providers return LLMResponse -->
+  <line x1="220" y1="1020" x2="350" y2="1068" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="440" y1="1020" x2="440" y2="1068" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="660" y1="1020" x2="530" y2="1068" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- ROW 9: JSON parse / validate -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <rect x="270" y="1068" width="340" height="64" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="440" y="1088" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">_parse_structured(response.content)</text>
+  <text x="440" y="1104" text-anchor="middle" fill="#8b949e" font-size="10">1. extract_json() tries raw parse</text>
+  <text x="440" y="1117" text-anchor="middle" fill="#8b949e" font-size="10">2. _repair_common_json_errors()</text>
+  <text x="440" y="1130" text-anchor="middle" fill="#8b949e" font-size="10">3. _complete_truncated_json()  →  Pydantic model_validate()</text>
+
+  <!-- parse success / fail -->
+  <line x1="390" y1="1132" x2="300" y2="1180" stroke="#f85149" stroke-width="1.5" marker-end="url(#arr-r)"/>
+  <text x="310" y="1163" fill="#f85149" font-size="10">parse fails</text>
+  <line x1="490" y1="1132" x2="580" y2="1180" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arr-g)"/>
+  <text x="540" y="1163" fill="#3fb950" font-size="10">success</text>
+
+  <!-- fail: SchemaValidationError -->
+  <rect x="110" y="1180" width="220" height="44" rx="6" fill="#3d1f1f" stroke="#f85149" stroke-width="1.5"/>
+  <text x="220" y="1198" text-anchor="middle" fill="#f85149" font-size="11" font-weight="600">SchemaValidationError</text>
+  <text x="220" y="1213" text-anchor="middle" fill="#8b949e" font-size="10">returns {} → retry if attempt &lt; 3</text>
+
+  <!-- success: ArtifactManager -->
+  <rect x="470" y="1180" width="220" height="44" rx="6" fill="#1c2b1c" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="580" y="1198" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">ArtifactManager.save()</text>
+  <text x="580" y="1213" text-anchor="middle" fill="#8b949e" font-size="10">writes {stage}.json to disk</text>
+
+  <!-- SafetyPolicy -->
+  <rect x="470" y="1240" width="220" height="36" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="580" y="1255" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="600">SafetyPolicy.check()</text>
+  <text x="580" y="1269" text-anchor="middle" fill="#8b949e" font-size="10">FILE_OVERWRITE → ALLOW/WARN/BLOCK</text>
+  <line x1="580" y1="1224" x2="580" y2="1240" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arr-g)"/>
+
+  <line x1="580" y1="1276" x2="580" y2="1306" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- ROW 10: Reviewer -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <rect x="290" y="1306" width="290" height="60" rx="8" fill="#161b22" stroke="#e3b341" stroke-width="1.5"/>
+  <text x="435" y="1326" text-anchor="middle" fill="#e3b341" font-size="12" font-weight="700">Reviewer.review(artifact)</text>
+  <text x="435" y="1342" text-anchor="middle" fill="#8b949e" font-size="10">• length check (&lt;30 chars → ASK_HUMAN)</text>
+  <text x="435" y="1356" text-anchor="middle" fill="#8b949e" font-size="10">• schema check • Designer structural checks</text>
+  <line x1="580" y1="1306" x2="510" y2="1306" stroke="#8b949e" stroke-width="1.5"/>
+
+  <!-- reviewer approve / reject -->
+  <line x1="350" y1="1366" x2="250" y2="1420" stroke="#f85149" stroke-width="1.5" marker-end="url(#arr-r)"/>
+  <text x="250" y="1403" fill="#f85149" font-size="10">rejected</text>
+  <line x1="520" y1="1366" x2="620" y2="1420" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arr-g)"/>
+  <text x="570" y="1403" fill="#3fb950" font-size="10">approved</text>
+
+  <!-- Retry path -->
+  <rect x="80" y="1420" width="220" height="56" rx="6" fill="#3d2e00" stroke="#e3b341" stroke-width="1.5"/>
+  <text x="190" y="1440" text-anchor="middle" fill="#e3b341" font-size="11" font-weight="600">RetryPolicy.should_retry()</text>
+  <text x="190" y="1456" text-anchor="middle" fill="#8b949e" font-size="10">attempt &lt; 3 → inject feedback</text>
+  <text x="190" y="1470" text-anchor="middle" fill="#8b949e" font-size="10">attempt ≥ 3 → StageExhaustedException</text>
+
+  <!-- retry loop back -->
+  <path d="M80,1448 Q30,1448 30,900 Q30,766 280,794" stroke="#e3b341" stroke-width="1.5" stroke-dasharray="5,4" fill="none" marker-end="url(#arr-y)"/>
+  <text x="40" y="1100" fill="#e3b341" font-size="10" transform="rotate(-90,40,1100)">retry loop</text>
+
+  <!-- Exhausted path -->
+  <rect x="80" y="1490" width="220" height="36" rx="6" fill="#3d1f1f" stroke="#f85149" stroke-width="1"/>
+  <text x="190" y="1505" text-anchor="middle" fill="#f85149" font-size="11" font-weight="600">StageExhaustedException</text>
+  <text x="190" y="1519" text-anchor="middle" fill="#8b949e" font-size="10">emit: stage_failed WS event</text>
+  <line x1="190" y1="1476" x2="190" y2="1490" stroke="#f85149" stroke-width="1.5" marker-end="url(#arr-r)"/>
+
+  <!-- Approved path -->
+  <rect x="520" y="1420" width="220" height="56" rx="6" fill="#1c2b1c" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="630" y="1440" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">Stage Approved ✓</text>
+  <text x="630" y="1456" text-anchor="middle" fill="#8b949e" font-size="10">SessionManager.close_session()</text>
+  <text x="630" y="1470" text-anchor="middle" fill="#8b949e" font-size="10">emit: stage_complete WS event</text>
+
+  <line x1="630" y1="1476" x2="630" y2="1510" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arr-g)"/>
+
+  <!-- Post-approval memory writes -->
+  <rect x="490" y="1510" width="280" height="80" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="630" y="1530" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">Post-Approval Memory Writes</text>
+  <text x="630" y="1548" text-anchor="middle" fill="#8b949e" font-size="10">MemoryManager.store() → predecessor msg</text>
+  <text x="630" y="1562" text-anchor="middle" fill="#8b949e" font-size="10">LessonStore.save() → lesson (SQLite)</text>
+  <text x="630" y="1576" text-anchor="middle" fill="#8b949e" font-size="10">LearningLoop.record_trajectory()</text>
+  <text x="630" y="1590" text-anchor="middle" fill="#8b949e" font-size="10">CheckpointManager.delete_checkpoint()</text>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- SPRINT SUPERVISOR DETAIL -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <rect x="150" y="1620" width="540" height="80" rx="8" fill="#3d2e00" stroke="#e3b341" stroke-width="1.5"/>
+  <text x="420" y="1642" text-anchor="middle" fill="#e3b341" font-size="13" font-weight="700">SprintSupervisor.run_sprint(N)</text>
+  <text x="420" y="1660" text-anchor="middle" fill="#8b949e" font-size="11">file_planner → backend → frontend → tech_lead review loop</text>
+  <text x="420" y="1676" text-anchor="middle" fill="#8b949e" font-size="10">TechLead rejects → dev retries (max 3x) | bug_analyst → qa (max 3x)</text>
+  <text x="420" y="1692" text-anchor="middle" fill="#8b949e" font-size="10">sprint_review approves → PipelineSupervisor checks if more sprints needed</text>
+  <line x1="630" y1="1590" x2="500" y2="1620" stroke="#e3b341" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr-y)"/>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- EXECUTION ENGINE WRITES FILES -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <rect x="200" y="1720" width="440" height="56" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="420" y="1742" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">ExecutionEngine → writes project files</text>
+  <text x="420" y="1758" text-anchor="middle" fill="#8b949e" font-size="10">BackendDev / FrontendDev → temp-workspace/{pid}/generated/</text>
+  <text x="420" y="1772" text-anchor="middle" fill="#8b949e" font-size="10">Only Execution Engine is allowed to modify project files</text>
+  <line x1="420" y1="1700" x2="420" y2="1720" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- MEMORY STORES SECTION -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <rect x="40" y="1820" width="800" height="200" rx="10" fill="#0f1218" stroke="#30363d" stroke-width="1.5"/>
+  <text x="440" y="1845" text-anchor="middle" fill="#8b949e" font-size="13" font-weight="600">MEMORY STORES</text>
+
+  <!-- Disk -->
+  <rect x="60" y="1860" width="200" height="130" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="160" y="1878" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="600">DISK (persists)</text>
+  <text x="160" y="1895" text-anchor="middle" fill="#484f58" font-size="10">temp-workspace/{pid}/</text>
+  <text x="160" y="1910" text-anchor="middle" fill="#8b949e" font-size="10">{stage}.json    — latest artifact</text>
+  <text x="160" y="1924" text-anchor="middle" fill="#8b949e" font-size="10">{stage}.attempt-N.json</text>
+  <text x="160" y="1938" text-anchor="middle" fill="#8b949e" font-size="10">project.json    — metadata</text>
+  <text x="160" y="1952" text-anchor="middle" fill="#8b949e" font-size="10">generated/      — code files</text>
+  <text x="160" y="1966" text-anchor="middle" fill="#8b949e" font-size="10">config.yaml     — settings</text>
+
+  <!-- SQLite -->
+  <rect x="280" y="1860" width="200" height="130" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="380" y="1878" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="600">SQLite (persists)</text>
+  <text x="380" y="1895" text-anchor="middle" fill="#484f58" font-size="10">memory/memory.db</text>
+  <text x="380" y="1910" text-anchor="middle" fill="#8b949e" font-size="10">MemoryManager — KV store</text>
+  <text x="380" y="1924" text-anchor="middle" fill="#8b949e" font-size="10">  design:latest per project</text>
+  <text x="380" y="1938" text-anchor="middle" fill="#8b949e" font-size="10">  workflow:latest_message</text>
+  <text x="380" y="1952" text-anchor="middle" fill="#8b949e" font-size="10">LessonStore — lessons per stage</text>
+  <text x="380" y="1966" text-anchor="middle" fill="#8b949e" font-size="10">LearningLoop — trajectories</text>
+
+  <!-- In-memory -->
+  <rect x="500" y="1860" width="200" height="130" rx="6" fill="#161b22" stroke="#f85149" stroke-width="1"/>
+  <text x="600" y="1878" text-anchor="middle" fill="#f85149" font-size="11" font-weight="600">IN-MEMORY ONLY</text>
+  <text x="600" y="1893" text-anchor="middle" fill="#484f58" font-size="10">⚠ lost on restart</text>
+  <text x="600" y="1910" text-anchor="middle" fill="#8b949e" font-size="10">SessionManager._sessions</text>
+  <text x="600" y="1924" text-anchor="middle" fill="#8b949e" font-size="10">ExecutionStateRegistry</text>
+  <text x="600" y="1938" text-anchor="middle" fill="#8b949e" font-size="10">WorkflowStateMachine</text>
+  <text x="600" y="1952" text-anchor="middle" fill="#8b949e" font-size="10">CostTracker (metrics)</text>
+  <text x="600" y="1966" text-anchor="middle" fill="#8b949e" font-size="10">WebSocket connections</text>
+
+  <!-- Checkpoint -->
+  <rect x="720" y="1860" width="100" height="130" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="770" y="1878" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="600">Checkpoints</text>
+  <text x="770" y="1898" text-anchor="middle" fill="#8b949e" font-size="10">saved before</text>
+  <text x="770" y="1912" text-anchor="middle" fill="#8b949e" font-size="10">each attempt</text>
+  <text x="770" y="1930" text-anchor="middle" fill="#8b949e" font-size="10">deleted on</text>
+  <text x="770" y="1944" text-anchor="middle" fill="#8b949e" font-size="10">success</text>
+  <text x="770" y="1962" text-anchor="middle" fill="#8b949e" font-size="10">crash →</text>
+  <text x="770" y="1976" text-anchor="middle" fill="#8b949e" font-size="10">orphan logged</text>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- ACTIVE BUGS PANEL -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <rect x="40" y="2050" width="800" height="240" rx="10" fill="#0f1218" stroke="#f85149" stroke-width="1.5"/>
+  <text x="440" y="2075" text-anchor="middle" fill="#f85149" font-size="13" font-weight="600">ACTIVE ISSUES &amp; FAILURE RISKS</text>
+
+  <!-- Headers -->
+  <rect x="60" y="2088" width="760" height="22" rx="3" fill="#161b22"/>
+  <text x="100" y="2103" fill="#8b949e" font-size="11" font-weight="600">Priority</text>
+  <text x="180" y="2103" fill="#8b949e" font-size="11" font-weight="600">Component</text>
+  <text x="400" y="2103" fill="#8b949e" font-size="11" font-weight="600">Issue</text>
+  <text x="680" y="2103" fill="#8b949e" font-size="11" font-weight="600">Status</text>
+
+  <!-- Row 1 -->
+  <line x1="60" y1="2112" x2="820" y2="2112" stroke="#21262d" stroke-width="1"/>
+  <rect x="70" y="2116" width="40" height="16" rx="8" fill="#3d1f1f"/>
+  <text x="90" y="2128" text-anchor="middle" fill="#f85149" font-size="10" font-weight="700">P0</text>
+  <text x="185" y="2128" fill="#e6edf3" font-size="11">Architect / all stages</text>
+  <text x="405" y="2128" fill="#8b949e" font-size="11">JSON truncation with Ollama (qwen2.5:7b)</text>
+  <text x="685" y="2128" fill="#f85149" font-size="11">Active — use Claude/Gemini</text>
+
+  <!-- Row 2 -->
+  <line x1="60" y1="2135" x2="820" y2="2135" stroke="#21262d" stroke-width="1"/>
+  <rect x="70" y="2139" width="40" height="16" rx="8" fill="#3d1f1f"/>
+  <text x="90" y="2151" text-anchor="middle" fill="#f85149" font-size="10" font-weight="700">P0</text>
+  <text x="185" y="2151" fill="#e6edf3" font-size="11">MemoryOrchestrator</text>
+  <text x="405" y="2151" fill="#8b949e" font-size="11">self.store field/method name collision</text>
+  <text x="685" y="2151" fill="#e3b341" font-size="11">Latent — rename field</text>
+
+  <!-- Row 3 -->
+  <line x1="60" y1="2158" x2="820" y2="2158" stroke="#21262d" stroke-width="1"/>
+  <rect x="70" y="2162" width="40" height="16" rx="8" fill="#3d2e00"/>
+  <text x="90" y="2174" text-anchor="middle" fill="#e3b341" font-size="10" font-weight="700">P1</text>
+  <text x="185" y="2174" fill="#e6edf3" font-size="11">CostTracker</text>
+  <text x="405" y="2174" fill="#8b949e" font-size="11">In-memory only — metrics lost on restart</text>
+  <text x="685" y="2174" fill="#8b949e" font-size="11">Known gap</text>
+
+  <!-- Row 4 -->
+  <line x1="60" y1="2181" x2="820" y2="2181" stroke="#21262d" stroke-width="1"/>
+  <rect x="70" y="2185" width="40" height="16" rx="8" fill="#3d2e00"/>
+  <text x="90" y="2197" text-anchor="middle" fill="#e3b341" font-size="10" font-weight="700">P1</text>
+  <text x="185" y="2197" fill="#e6edf3" font-size="11">SessionManager</text>
+  <text x="405" y="2197" fill="#8b949e" font-size="11">In-memory only — session lost on crash</text>
+  <text x="685" y="2197" fill="#8b949e" font-size="11">CheckpointMgr mitigates</text>
+
+  <!-- Row 5 -->
+  <line x1="60" y1="2204" x2="820" y2="2204" stroke="#21262d" stroke-width="1"/>
+  <rect x="70" y="2208" width="40" height="16" rx="8" fill="#3d2e00"/>
+  <text x="90" y="2220" text-anchor="middle" fill="#e3b341" font-size="10" font-weight="700">P1</text>
+  <text x="185" y="2220" fill="#e6edf3" font-size="11">Reviewer</text>
+  <text x="405" y="2220" fill="#8b949e" font-size="11">No semantic quality — boilerplate passes</text>
+  <text x="685" y="2220" fill="#8b949e" font-size="11">Needs improvement</text>
+
+  <!-- Row 6 -->
+  <line x1="60" y1="2227" x2="820" y2="2227" stroke="#21262d" stroke-width="1"/>
+  <rect x="70" y="2231" width="40" height="16" rx="8" fill="#1c2d3d"/>
+  <text x="90" y="2243" text-anchor="middle" fill="#58a6ff" font-size="10" font-weight="700">P2</text>
+  <text x="185" y="2243" fill="#e6edf3" font-size="11">PromptBuilders</text>
+  <text x="405" y="2243" fill="#8b949e" font-size="11">Designer/Backend/Frontend pass raw large artifacts</text>
+  <text x="685" y="2243" fill="#e3b341" font-size="11">Apply slim-context pattern</text>
+
+  <!-- Row 7 -->
+  <line x1="60" y1="2250" x2="820" y2="2250" stroke="#21262d" stroke-width="1"/>
+  <rect x="70" y="2254" width="40" height="16" rx="8" fill="#1c2d3d"/>
+  <text x="90" y="2266" text-anchor="middle" fill="#58a6ff" font-size="10" font-weight="700">P2</text>
+  <text x="185" y="2266" fill="#e6edf3" font-size="11">Design Review Modal</text>
+  <text x="405" y="2266" fill="#8b949e" font-size="11">Cannot dismiss without completing review</text>
+  <text x="685" y="2266" fill="#8b949e" font-size="11">UX fix needed</text>
+
+  <!-- Row 8 -->
+  <line x1="60" y1="2273" x2="820" y2="2273" stroke="#21262d" stroke-width="1"/>
+  <rect x="70" y="2277" width="40" height="16" rx="8" fill="#1c2b1c"/>
+  <text x="90" y="2289" text-anchor="middle" fill="#3fb950" font-size="10" font-weight="700">P3</text>
+  <text x="185" y="2289" fill="#e6edf3" font-size="11">Unreachable Agents</text>
+  <text x="405" y="2289" fill="#8b949e" font-size="11">domain_researcher, descriptor, sprint_deploy not in pipeline</text>
+  <text x="685" y="2289" fill="#8b949e" font-size="11">Wire in or remove</text>
+
+</svg>
+
+<!-- Summary tables below -->
+<div class="panel">
+  <h2>Agent Registry — Pipeline Coverage</h2>
+  <table>
+    <tr><th>Agent</th><th>Stage Name</th><th>Phase</th><th>In Pipeline?</th></tr>
+    <tr><td>StrategicReviewAgent</td><td>strategic_review</td><td>Discovery</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>ProductOwnerAgent</td><td>product_owner</td><td>Discovery</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>ArchitectAgent</td><td>architect</td><td>Discovery</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>DesignerAgent</td><td>designer</td><td>Discovery</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>SecurityAgent</td><td>security</td><td>Discovery</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>SprintPlannerAgent</td><td>sprint_planner</td><td>Discovery</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>ScrumMasterAgent</td><td>scrum_master</td><td>Discovery</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>FileStructurePlannerAgent</td><td>file_planner</td><td>Sprint</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>BackendDeveloperAgent</td><td>backend</td><td>Sprint</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>FrontendDeveloperAgent</td><td>frontend</td><td>Sprint</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>TechLeadAgent</td><td>tech_lead</td><td>Sprint</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>BugAnalystAgent</td><td>bug_analyst</td><td>Sprint</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>SprintReviewAgent</td><td>sprint_review</td><td>Sprint</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>QAAgent</td><td>qa</td><td>Release</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>DevOpsAgent</td><td>devops</td><td>Release</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>DocumentAgent</td><td>document</td><td>Release</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>RetroAgent</td><td>retro</td><td>Release</td><td><span class="badge tag-ok">✓ Yes</span></td></tr>
+    <tr><td>ClarificationAgent</td><td>clarification</td><td>QA endpoint</td><td><span class="badge tag-warn">⚠ Separate path</span></td></tr>
+    <tr><td>SprintDeployAgent</td><td>sprint_deploy</td><td>—</td><td><span class="badge tag-err">✗ Orphaned</span></td></tr>
+    <tr><td>ProductionDeployAgent</td><td>production_deploy</td><td>—</td><td><span class="badge tag-err">✗ Orphaned</span></td></tr>
+    <tr><td>—</td><td>domain_researcher</td><td>—</td><td><span class="badge tag-err">✗ Not in factory</span></td></tr>
+    <tr><td>—</td><td>descriptor</td><td>—</td><td><span class="badge tag-err">✗ Not in factory</span></td></tr>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>LLM Provider Comparison</h2>
+  <table>
+    <tr><th>Provider</th><th>Context Window</th><th>JSON Mode</th><th>Speed</th><th>Recommendation</th></tr>
+    <tr><td>Ollama (qwen2.5-coder:7b)</td><td>8192 (forced)</td><td>grammar-constrained (unreliable at limit)</td><td>Slow — 2-10 min/stage</td><td><span class="badge tag-warn">Small projects only</span></td></tr>
+    <tr><td>Claude (claude-haiku-4-5)</td><td>200K tokens</td><td>Assistant prefill { (reliable)</td><td>~5-15s/stage</td><td><span class="badge tag-ok">Recommended</span></td></tr>
+    <tr><td>Gemini (gemini-2.0-flash)</td><td>1M tokens</td><td>Native responseMimeType=json</td><td>~3-10s/stage</td><td><span class="badge tag-ok">Recommended</span></td></tr>
+    <tr><td>AWS Bedrock</td><td>Model-dependent</td><td>Model-dependent</td><td>Medium</td><td><span class="badge tag-warn">Enterprise only</span></td></tr>
+  </table>
+</div>
+
+<footer>AI DevOS System Analysis — 2026-07-28 — All flow paths verified against source code</footer>
+</body>
+</html>

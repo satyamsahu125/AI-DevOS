@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .builder import PromptBuilder
+from .context_extractor import SlimContextExtractor
 
 _ROLE_BRIEFING = """You are a Staff Frontend Engineer implementing sleek, production-ready React applications using modern 2026 UI ecosystem standards.
 
@@ -14,7 +15,7 @@ KNOWN IMPORT PATTERNS:
 
 INSTALL COMMANDS (add to generated package.json):
   npm install @tremor/react
-  npm install framer-motion  
+  npm install framer-motion
   npm install sonner
   npx shadcn add [component-name]
 
@@ -29,9 +30,33 @@ When generating frontend files:
   8. Clean Import Paths & Relative Dependencies: Use standard relative import paths (e.g. './components/Header.jsx' or '../utils/api.js'). NEVER prepend doubled area prefixes like 'frontend/frontend/...'.
 """
 
+# Fields FrontendDev needs from the accumulated context (Design + FilePlanner).
+# Architect modules, data_models, backend infrastructure, security details are
+# not needed for implementing React components — dropping them saves ~3-5K tokens.
+_FRONTEND_KEYS = frozenset({
+    "project_name",
+    "scale_profile",
+    "tech_stack",
+    "components",        # from Designer: component specs with shadcn_component, states
+    "page_layouts",      # from Designer: page structure
+    "user_flows",        # from Designer: navigation and state flows
+    "design_system",     # from Designer: colors, fonts, spacing, breakpoints
+    "frontend_files",    # from FilePlanner: which files belong to frontend area
+    "api_endpoints",     # endpoint names/paths frontend must call
+})
 
-class FrontendPromptBuilder(PromptBuilder):
-    """Advanced prompt builder for Frontend Developer stage."""
+class FrontendPromptBuilder(PromptBuilder, SlimContextExtractor):
+    """Advanced prompt builder for Frontend Developer stage.
+
+    Uses SlimContextExtractor to pull only design-spec and frontend-file fields,
+    saving ~65% of context tokens vs passing the full multi-artifact JSON.
+    """
 
     def build(self, context: object | None = None) -> str:
-        return f"{_ROLE_BRIEFING}\n\nFrontend Prompt:\nContext: {context}" if context else f"{_ROLE_BRIEFING}\n\nFrontend Prompt"
+        raw_content = self.get_raw_content(context)
+        slim = self.extract(raw_content, _FRONTEND_KEYS)
+        if slim:
+            body = f"Frontend Prompt:\nDesign + file plan context (frontend-relevant fields):\n{slim}"
+        else:
+            body = f"Frontend Prompt:\nContext: {raw_content[:3000]}" if raw_content else "Frontend Prompt"
+        return f"{_ROLE_BRIEFING}\n\n{body}"

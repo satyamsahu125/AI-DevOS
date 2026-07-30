@@ -25,17 +25,21 @@ class ProjectInitializer:
         self.workflow_manager = workflow_manager or WorkflowManager()
 
     def initialize(self, project: Project) -> Project:
-        """Initialize the project's memory namespace and run its first workflow stage.
+        """Initialize the project's memory namespace.
 
-        Uses project.description as the actual ProductOwner task content --
-        previously this only ever sent "Initialize project {name}", silently
-        discarding the user's real build request and leaving the LLM with
-        nothing concrete to work from (observed bug: a "calci" / "Create a
-        basic calculator app" project produced an unrelated invoice-app spec).
+        Sets state to CLARIFYING so manager.run() enters domain-research →
+        Q&A → StrategicReview → ProductOwner on the next workflow/start call.
+
+        Previously this called run_stage("ProductOwner", ...) directly, which
+        skipped domain research, Q&A, and StrategicReview entirely, leaving
+        ProductOwner with no ClarificationArtifact or StrategicBrief and
+        producing an empty artifact on every new project.
         """
         logger.info("initializing project: project_id=%s name=%s", project.project_id, project.name)
         self.memory_manager.initialize(project.project_id)
-        description = project.description.strip()
-        content = f"Build: {description}\n(Project name: {project.name})" if description else f"Initialize project {project.name}"
-        self.workflow_manager.run_stage(project.project_id, "ProductOwner", content)
+        # Transition to CLARIFYING so the pipeline entrypoint triggers Q&A.
+        from ..shared.enums.project_state import ProjectState
+        workspace = getattr(self.workflow_manager, "workspace_manager", None) or getattr(self.workflow_manager, "workspace", None)
+        if workspace is not None:
+            workspace.update_state(project.project_id, ProjectState.CLARIFYING)
         return project

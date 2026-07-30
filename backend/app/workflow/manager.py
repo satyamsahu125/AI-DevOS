@@ -224,7 +224,15 @@ class WorkflowManager:
 
         state = self.workspace.get_state(project_id)
 
-        # Handle CLARIFYING state separately — Q&A flow is retained for now
+        # EMPTY = brand-new project; enter Q&A flow before running any agent.
+        # ProjectInitializer sets CLARIFYING; this guard covers cases where the
+        # workspace was created without calling ProjectInitializer (e.g. tests,
+        # direct workspace creation) and state was never advanced past EMPTY.
+        if state == ProjectState.EMPTY:
+            self._transition(project_id, ProjectState.CLARIFYING)
+            state = ProjectState.CLARIFYING
+
+        # Handle CLARIFYING state: domain research → Q&A question generation
         if state == ProjectState.CLARIFYING:
             return self._handle_clarifying_state(project_id, request, skip_qa)
 
@@ -324,36 +332,68 @@ class WorkflowManager:
                 )
             else:
                 self._transition(project_id, ProjectState.QA_IN_PROGRESS)
+                state = ProjectState.QA_IN_PROGRESS  # update local variable so next block fires
 
         if state == ProjectState.QA_IN_PROGRESS:
             from ..agents.clarification import ClarificationAgent
             agent = self._get_agent("clarification")
             qa = self.workspace.get_qa_session(project_id)
+
+            # ── Phase B: synthesise Q&A answers into ClarificationArtifact ──────
+            clarification_struct: dict = {}
             if isinstance(agent, ClarificationAgent):
                 artifact_obj = agent.process_answers(request, qa)
-                struct = artifact_obj.model_dump(mode="json") if hasattr(artifact_obj, "model_dump") else {}
-                content_str = getattr(artifact_obj, "clarified_requirement", "") or request
-                self.artifact_manager.save_artifact(
-                    project_id=project_id,
-                    stage=Stage.StrategicReview,
-                    content=content_str,
-                    structured_content=struct,
+                clarification_struct = (
+                    artifact_obj.model_dump(mode="json")
+                    if hasattr(artifact_obj, "model_dump") else {}
                 )
+
+            # Save ClarificationArtifact to Stage.Clarification (NOT StrategicReview).
+            # ProductOwner's predecessor chain reads Stage.StrategicReview for the
+            # StrategicBrief — storing Q&A output there caused ProductOwner to treat
+            # Q&A answers as a StrategicBrief, producing an empty/error artifact.
+            import json as _json
+            self.artifact_manager.save_artifact(
+                project_id=project_id,
+                stage=Stage.Clarification,
+                content=_json.dumps(clarification_struct, indent=2),
+                structured_content=clarification_struct,
+            )
             self.workspace.mark_qa_complete(project_id)
-            # StrategicReview is processed inline via Q&A (not through engine.run),
-            # so _update_project_progress() is never called for it.  Write it into
-            # stages_completed now so the gap-sanitizer at the top of run() finds a
-            # continuous prefix on every subsequent resume — without this, the
-            # sanitizer sees StrategicReview missing and wipes all later stages.
+
+            # ── Phase C: run StrategicReview as a real LLM stage ─────────────────
+            # Build an agent-readable JSON context: ClarificationArtifact +
+            # DomainResearch brief.  StrategicReview produces a StrategicBrief
+            # from this, giving ProductOwner a meaningful predecessor artifact.
+            domain_artifact = self.artifact_manager.get_artifact(project_id, Stage.DomainResearch)
+            domain_struct = (
+                getattr(domain_artifact, "structured_content", None) or {}
+                if domain_artifact else {}
+            )
+            strategic_context = _json.dumps({
+                "original_request": request,
+                "clarification": clarification_struct,
+                "domain_research": domain_struct,
+            }, indent=2)
+
+            strategic_result = self._run_stage(project_id, "StrategicReview", strategic_context)
+            if not strategic_result.success:
+                logger.warning(
+                    "StrategicReview failed after Q&A for %s: %s — continuing anyway",
+                    project_id, strategic_result.message,
+                )
+
+            # Ensure stages_completed has a contiguous prefix including both
+            # Clarification and StrategicReview so the gap-sanitizer never wipes them.
             _qa_data = self.workspace.load_project_json(project_id) or {}
             _completed = list(_qa_data.get("stages_completed", []))
-            if Stage.StrategicReview.value not in _completed:
-                _completed.insert(0, Stage.StrategicReview.value)
-                self.workspace.update_project_json(
-                    project_id, {"stages_completed": _completed}
-                )
+            for _stage_val in (Stage.Clarification.value, Stage.StrategicReview.value):
+                if _stage_val not in _completed:
+                    _completed.insert(0, _stage_val)
+            self.workspace.update_project_json(project_id, {"stages_completed": _completed})
+
             self._transition(project_id, ProjectState.REQUIREMENTS_READY)
-            # Continue pipeline via PipelineSupervisor
+            # Continue pipeline via PipelineSupervisor (ProductOwner → Architect → …)
             self.execution_state.mark_running(project_id)
             self.workspace.update_project_json(project_id, {"stopped": False})
             try:
@@ -505,8 +545,14 @@ class WorkflowManager:
     def _run_domain_research(self, project_id: str, request: str) -> dict | None:
         """Run DomainResearcherAgent before Q&A to get domain-specific context.
 
-        Returns the DomainBrief as a dict, or None if the agent is not
-        wired in or if it fails (non-fatal — Q&A proceeds without enrichment).
+        DomainResearcherAgent is injected into WorkflowManager rather than going
+        through AgentFactory.  It runs *before* the sprint pipeline starts, so it
+        is not a pipeline stage and does not go through engine.run_stage().
+        Inject it at WorkflowManager construction time; if None the step is skipped
+        (non-fatal — Q&A proceeds without domain enrichment).
+
+        Returns the DomainBrief as a dict, or None if the agent is not wired in
+        or if it fails.
         """
         if self.domain_researcher is None:
             return None

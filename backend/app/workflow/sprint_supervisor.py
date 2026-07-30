@@ -467,6 +467,9 @@ class SprintSupervisor:
         # Step 6: SprintDeploy
         # ===================================================================
         logger.debug("[SprintSupervisor] step 6: SprintDeploy")
+        # SprintDeployAgent is instantiated directly (not via AgentFactory) because
+        # it needs workspace_manager and llm_manager injected at construction time,
+        # and its entry-point is deploy_sprint() rather than BaseAgent.execute().
         deploy_agent = SprintDeployAgent(
             workspace_manager=self.workspace_manager,
             llm_manager=self.llm_manager,

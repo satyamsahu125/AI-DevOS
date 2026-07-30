@@ -14,6 +14,12 @@ logger = logging.getLogger(__name__)
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 _JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 _MISSING_COMMA = re.compile(r'"(\s*\n\s*)"(?=[^"\\]*"\s*:)')
+# Detects a dangling key: a quoted string directly after { or , that is
+# followed immediately by } or ] with no : value. This happens when
+# truncation cuts the response mid-key-name and _complete_truncated_json
+# closes the string — leaving {"partial_key"} which is invalid JSON.
+# The fix: inject `: null` so it becomes {"partial_key": null}.
+_DANGLING_KEY = re.compile(r'(?<=[{,])(\s*"[^"]*")(?=\s*[}\]])')
 
 
 class ActionOutput(BaseModel):
@@ -96,8 +102,19 @@ class BaseAction(ABC):
         flat depth counters produce wrong results for interleaved structures
         like `[{"key": "val` where `}` must come before `]`.
 
-        Also strips trailing whitespace before closing an open string, since
-        a literal newline inside a JSON string value is invalid.
+        Also handles three truncation sub-cases:
+        1. Truncation mid-string VALUE  → close the string with `"`
+        2. Truncation mid-string KEY    → close the string and inject `: null`
+           (a partial key name is invalid without its colon+value)
+        3. Truncation after colon, no value started → inject `null`
+        4. Truncation after trailing comma → remove the dangling comma
+
+        Key/value distinction is made by tracking `char_before_string` —
+        the last non-whitespace character seen outside strings just before
+        the current unclosed string's opening quote. If it is `{` or `,`
+        and we are inside an object (stack[-1] == '{'), the string is a key.
+        This avoids a regex post-pass that would incorrectly classify string
+        values inside arrays as dangling keys.
 
         Returns the original string unchanged if already balanced, or an
         empty string if there is no opening `{` to anchor recovery.
@@ -110,6 +127,8 @@ class BaseAction(ABC):
         stack: list[str] = []   # '{' or '[' in order of appearance
         in_string = False
         escaped = False
+        last_outside = ""       # last non-whitespace char seen outside a string
+        char_before_string = "" # last_outside at the moment the current open string was opened
 
         for ch in partial:
             if escaped:
@@ -119,10 +138,18 @@ class BaseAction(ABC):
                 escaped = True
                 continue
             if ch == '"':
+                if not in_string:
+                    # Record what character came before this string's opening quote.
+                    # This lets us distinguish keys (after { or ,) from values (after :)
+                    # and array elements (after [ or ,) without a separate parse pass.
+                    char_before_string = last_outside
                 in_string = not in_string
                 continue
             if in_string:
                 continue
+            # Track last structural character seen outside strings
+            if ch not in " \t\n\r":
+                last_outside = ch
             if ch in "{[":
                 stack.append(ch)
             elif ch == "}" and stack and stack[-1] == "{":
@@ -134,10 +161,37 @@ class BaseAction(ABC):
         if not in_string and not stack:
             return partial
 
-        # Close open string first (strip trailing whitespace to avoid
-        # embedding a literal newline, which is invalid in JSON strings).
+        # Strip trailing whitespace when inside a string — a literal newline
+        # embedded in a JSON string value is invalid.
         base = partial.rstrip() if in_string else partial
-        suffix = '"' if in_string else ""
+
+        if in_string:
+            # Determine whether the unclosed string is a KEY or a VALUE.
+            # A KEY is opened after '{' or ',' while we are inside an object.
+            # A VALUE is opened after ':' or inside an array context.
+            is_key = char_before_string in "{," and bool(stack) and stack[-1] == "{"
+            if is_key:
+                # Partial key — the colon and value are both missing.
+                # Close the string and supply a null value so the object is valid.
+                suffix = '": null'
+            else:
+                # Partial value string — just close it.
+                suffix = '"'
+        else:
+            suffix = ""
+            base_stripped = base.rstrip()
+
+            # ── Colon-with-no-value fix ───────────────────────────────────────
+            # e.g. {"purpose":  →  {"purpose": null}
+            if base_stripped.endswith(":"):
+                suffix = "null"
+                base = base_stripped
+
+            # ── Trailing-comma fix ────────────────────────────────────────────
+            # e.g. {"a": "b",}  or  ["x",]  → remove dangling comma
+            elif base_stripped.endswith(","):
+                base = base_stripped[:-1]
+
         # Close structures in reverse nesting order
         for opener in reversed(stack):
             suffix += "}" if opener == "{" else "]"

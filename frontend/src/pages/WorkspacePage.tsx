@@ -372,6 +372,10 @@ export function WorkspacePage() {
   const [starting, setStarting] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [designOpen, setDesignOpen] = useState(false)
+  // Track whether the user explicitly dismissed the modal without completing review.
+  // Prevents the modal from re-opening on every WebSocket state update while the
+  // pipeline is still in design_review state.
+  const designDismissedRef = useRef(false)
 
   const { pipeline, liveLogs, connected, refresh } = usePipeline(projectId ?? null)
   const logEvents = useLogs(projectId ?? null)
@@ -386,7 +390,15 @@ export function WorkspacePage() {
 
   useEffect(() => {
     const s = pipeline.state.toLowerCase()
-    if (s.includes("design_review") || s === "design_ready") setDesignOpen(true)
+    if (s.includes("design_review") || s === "design_ready") {
+      // Only auto-open if the user hasn't explicitly dismissed this review session
+      if (!designDismissedRef.current) {
+        setDesignOpen(true)
+      }
+    } else {
+      // Pipeline moved past design_review — reset dismissed flag for the next review
+      designDismissedRef.current = false
+    }
   }, [pipeline.state])
 
   async function handleStart() {
@@ -485,7 +497,12 @@ export function WorkspacePage() {
           ) : null}
 
           {pipeline.requires_user_action && (
-            <button onClick={() => setDesignOpen(true)}
+            <button
+              onClick={() => {
+                // User explicitly requested the modal — clear the dismissed flag
+                designDismissedRef.current = false
+                setDesignOpen(true)
+              }}
               style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 14px", border:"1px solid rgba(245,158,11,.3)", borderRadius:"var(--radius-md)", background:"rgba(245,158,11,.08)", color:"var(--color-warning)", fontSize:13, cursor:"pointer", fontFamily:"var(--font-sans)", animation:"pulse-o 2s ease-in-out infinite" }}>
               ⚡ Review Design
             </button>
@@ -566,8 +583,18 @@ export function WorkspacePage() {
       {designOpen && (
         <DesignReviewModal
           projectId={projectId!}
-          onClose={() => setDesignOpen(false)}
-          onActionCompleted={async () => { setDesignOpen(false); loadProject(); await refresh() }}
+          onClose={() => {
+            // Mark as dismissed so WS events don't re-open it automatically
+            designDismissedRef.current = true
+            setDesignOpen(false)
+          }}
+          onActionCompleted={async () => {
+            // Review completed — clear dismissed flag, pipeline will advance past design_review
+            designDismissedRef.current = false
+            setDesignOpen(false)
+            loadProject()
+            await refresh()
+          }}
         />
       )}
     </div>

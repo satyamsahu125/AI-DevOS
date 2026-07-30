@@ -1,6 +1,18 @@
 from __future__ import annotations
 
 from .builder import PromptBuilder
+from .context_extractor import SlimContextExtractor
+
+# Fields the Designer actually needs from the Architect artifact.
+# Full architect output includes layers, security concerns, infrastructure details,
+# deployment strategy, etc. — none of which affect UI design decisions.
+_DESIGN_ARCH_KEYS = frozenset({
+    "project_name",
+    "scale_profile",
+    "tech_stack",
+    "api_endpoints",     # names only — designer needs to know what API calls exist
+    "layers",            # presentation/business/data separation
+})
 
 _ROLE_BRIEFING = """You are a Senior UI/UX Engineer and Design Systems Expert.
 You design production-ready interfaces for modern web applications.
@@ -132,16 +144,20 @@ Decision: why this structure matches the user's mental model
 """
 
 
-class DesignerPromptBuilder(PromptBuilder):
-    """Advanced prompt builder for Designer stage."""
+class DesignerPromptBuilder(PromptBuilder, SlimContextExtractor):
+    """Advanced prompt builder for Designer stage.
+
+    Uses SlimContextExtractor to pull only design-relevant fields from the
+    Architect artifact, saving ~75% of context tokens vs passing the full JSON.
+    """
 
     def __init__(self) -> None:
         super().__init__(role="Designer")
 
     def build(self, context: object | None = None) -> str:
-        base_text = str(context) if context is not None else ""
-        revision_context = ""
+        raw_content = self.get_raw_content(context)
 
+        revision_context = ""
         if isinstance(context, dict):
             design_review = context.get("design_review", {})
             iteration = design_review.get("iteration", 1)
@@ -162,4 +178,6 @@ class DesignerPromptBuilder(PromptBuilder):
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             )
 
-        return f"{_ROLE_BRIEFING}{revision_context}\n\nDesigner Prompt:\n{base_text}"
+        slim = self.extract(raw_content, _DESIGN_ARCH_KEYS)
+        body = f"Architecture context (design-relevant fields):\n{slim}" if slim else f"Context:\n{raw_content[:2000]}"
+        return f"{_ROLE_BRIEFING}{revision_context}\n\n{body}"

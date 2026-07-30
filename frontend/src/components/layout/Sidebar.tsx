@@ -153,7 +153,7 @@ export function Sidebar({ collapsed, setCollapsed, projectName, projectStatus }:
 
         <SectionLabel label="System" />
         <NavBtn icon={<Icon d={ICONS.agents} />}   label="Agents"   to="/projects" active={false} />
-        <NavBtn icon={<Icon d={ICONS.settings} />} label="Settings" to="/projects" active={false} />
+        <NavBtn icon={<Icon d={ICONS.settings} />} label="Settings" to="/settings" active={isActive("/settings")} />
         <NavBtn icon={<Icon d={ICONS.help} />}     label="Help"     to="/" active={false} />
       </div>
 

@@ -31,6 +31,51 @@ PYTHON_VERSION_MAP = {
     "boto3":                "boto3>=1.34.0,<2.0.0",
     "stripe":               "stripe>=8.0.0,<9.0.0",
     "sendgrid":             "sendgrid>=6.11.0,<7.0.0",
+    # Async DB drivers
+    "asyncpg":              "asyncpg>=0.29.0,<1.0.0",
+    "aiosqlite":            "aiosqlite>=0.20.0,<1.0.0",
+    "motor":                "motor>=3.4.0,<4.0.0",
+    # FastAPI / Starlette extras
+    "python-multipart":     "python-multipart>=0.0.9,<1.0.0",
+    "email-validator":      "email-validator>=2.1.0,<3.0.0",
+    "starlette":            "starlette>=0.40.0,<1.0.0",
+    "gunicorn":             "gunicorn>=22.0.0,<23.0.0",
+    # ORM / data
+    "sqlmodel":             "sqlmodel>=0.0.19,<1.0.0",
+    "tortoise-orm":         "tortoise-orm>=0.21.0,<1.0.0",
+    # HTTP / networking
+    "websockets":           "websockets>=12.0,<13.0",
+    "python-socketio":      "python-socketio>=5.11.0,<6.0.0",
+    "tenacity":             "tenacity>=8.3.0,<9.0.0",
+    # Auth / crypto
+    "cryptography":         "cryptography>=42.0.0,<43.0.0",
+    "pyjwt":                "PyJWT>=2.8.0,<3.0.0",
+    "authlib":              "Authlib>=1.3.0,<2.0.0",
+    # AI / LLM clients
+    "openai":               "openai>=1.35.0,<2.0.0",
+    "anthropic":            "anthropic>=0.31.0,<1.0.0",
+    "google-generativeai":  "google-generativeai>=0.7.0,<1.0.0",
+    # Data science
+    "pandas":               "pandas>=2.2.0,<3.0.0",
+    "numpy":                "numpy>=1.26.0,<2.0.0",
+    "scikit-learn":         "scikit-learn>=1.5.0,<2.0.0",
+    # Templating / utilities
+    "jinja2":               "Jinja2>=3.1.0,<4.0.0",
+    "python-slugify":       "python-slugify>=8.0.0,<9.0.0",
+    "arrow":                "arrow>=1.3.0,<2.0.0",
+    "humanize":             "humanize>=4.9.0,<5.0.0",
+    "rich":                 "rich>=13.7.0,<14.0.0",
+    "loguru":               "loguru>=0.7.0,<1.0.0",
+    "structlog":            "structlog>=24.1.0,<25.0.0",
+    # Testing extras
+    "pytest-mock":          "pytest-mock>=3.14.0,<4.0.0",
+    "freezegun":            "freezegun>=1.5.0,<2.0.0",
+    "factory-boy":          "factory-boy>=3.3.0,<4.0.0",
+    "hypothesis":           "hypothesis>=6.104.0",
+    # Dev tools (often in requirements-dev.txt)
+    "black":                "black>=24.4.0",
+    "ruff":                 "ruff>=0.5.0",
+    "mypy":                 "mypy>=1.10.0",
 }
 
 NPM_VERSION_MAP = {
@@ -67,6 +112,66 @@ NPM_VERSION_MAP = {
     "socket.io":               "^4.7.0",
     "jest":                    "^29.7.0",
     "@testing-library/react":  "^16.0.0",
+    # TypeScript type packages
+    "@types/react":            "^18.3.0",
+    "@types/react-dom":        "^18.3.0",
+    "@types/node":             "^20.14.0",
+    "@types/express":          "^4.17.0",
+    "@types/cors":             "^2.8.0",
+    "@types/lodash":           "^4.17.0",
+    "@types/uuid":             "^9.0.0",
+    # Testing
+    "vitest":                  "^1.6.0",
+    "@vitest/ui":              "^1.6.0",
+    "@testing-library/jest-dom":   "^6.4.0",
+    "@testing-library/user-event": "^14.5.0",
+    "msw":                     "^2.3.0",
+    "playwright":              "^1.45.0",
+    "@playwright/test":        "^1.45.0",
+    # Data fetching / state
+    "swr":                     "^2.2.0",
+    "jotai":                   "^2.9.0",
+    "@reduxjs/toolkit":        "^2.3.0",
+    "react-redux":             "^9.1.0",
+    "immer":                   "^10.1.0",
+    # UI components / icons
+    "@headlessui/react":       "^2.1.0",
+    "@heroicons/react":        "^2.1.0",
+    "react-icons":             "^5.2.0",
+    "@radix-ui/react-select":  "^2.1.0",
+    "@radix-ui/react-dropdown-menu": "^2.1.0",
+    "@radix-ui/react-popover": "^1.1.0",
+    "@radix-ui/react-tabs":    "^1.1.0",
+    "@radix-ui/react-switch":  "^1.1.0",
+    "@radix-ui/react-checkbox": "^1.1.0",
+    "@radix-ui/react-slider":  "^1.2.0",
+    # Tables / data display
+    "@tanstack/react-table":   "^8.19.0",
+    "recharts":                "^2.12.0",
+    # Date / utilities
+    "date-fns":                "^3.6.0",
+    "dayjs":                   "^1.11.0",
+    "lodash":                  "^4.17.0",
+    "lodash-es":               "^4.17.0",
+    "uuid":                    "^10.0.0",
+    # Forms
+    "@hookform/resolvers":     "^3.9.0",
+    # Realtime
+    "socket.io-client":        "^4.7.0",
+    # CSS tooling
+    "postcss":                 "^8.4.0",
+    "autoprefixer":            "^10.4.0",
+    "sass":                    "^1.77.0",
+    # Animation
+    "react-spring":            "^9.7.0",
+    # Misc
+    "react-dropzone":          "^14.2.0",
+    "react-helmet-async":      "^2.0.0",
+    "react-hot-toast":         "^2.4.0",
+    "next-auth":               "^4.24.0",
+    "@supabase/supabase-js":   "^2.45.0",
+    "graphql":                 "^16.9.0",
+    "@apollo/client":          "^3.11.0",
 }
 
 _NODE_REQUIRE = re.compile(r"""require\(\s*['"]([^'"]+)['"]\s*\)""")
@@ -209,9 +314,11 @@ def build_requirements_txt(dependencies: list[str]) -> str:
         if pinned:
             lines.append(pinned)
         else:
-            lines.append(f"{pkg}  # TODO: pin version")
+            # Emit the package unpinned rather than blocking generation.
+            # The warning below tells developers to add it to PYTHON_VERSION_MAP.
+            lines.append(f"{pkg}  # unpinned — add to PYTHON_VERSION_MAP")
             logger.warning(
                 "Unknown Python package '%s' — not pinned. "
-                "Add to PYTHON_VERSION_MAP.", pkg
+                "Add to PYTHON_VERSION_MAP in dependency_detector.py.", pkg
             )
     return "\n".join(sorted(lines)) + ("\n" if lines else "")

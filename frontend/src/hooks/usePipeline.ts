@@ -94,7 +94,13 @@ export function usePipeline(projectId: string | null) {
         setPipeline(p => ({
           ...p,
           state:            (msg.state as string) ?? p.state,
-          current_stage:    (msg.current_stage as string) ?? null,
+          // Use an "in" check so we distinguish server-sent null (stage cleared)
+          // from a missing field (partial update — preserve the known current stage).
+          // Without this, any status_update that omits current_stage would blank
+          // the sidebar's active-stage indicator until the next refresh().
+          current_stage:    "current_stage" in msg
+            ? (msg.current_stage as string | null)
+            : p.current_stage,
           stages_completed: (msg.stages_completed as string[]) ?? p.stages_completed,
         }))
         break

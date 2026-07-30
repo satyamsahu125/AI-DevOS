@@ -24,14 +24,22 @@ class MemoryManager:
 
     def __init__(self, root: Path | None = None, repository: MemoryRepository | None = None) -> None:
         """Wire the on-disk root and the MemoryRepository/SQLite backend used to persist entries."""
-        self.root = root or Path(os.getenv("MEMORY_DB_PATH", "backend/app/memory/memory.db")).parent
+        # Env var MEMORY_DB (set in backend/.env) gives the full db path.
+        # When root is passed explicitly (tests / DI) use root/memory.sqlite.
+        _default_db = Path(os.getenv("MEMORY_DB", "data/memory.sqlite"))
+        if root is not None:
+            db_path = root / "memory.sqlite"
+            self.root = root
+        else:
+            db_path = _default_db
+            self.root = db_path.parent
         self.root.mkdir(parents=True, exist_ok=True)
 
         if repository is not None:
             self.repository = repository
             return
 
-        db_path = self.root / "memory.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
         needs_migration = not db_path.exists()
         config = StorageConfig(driver="sqlite", database_url=str(db_path))
         adapter = StorageFactory.create(config)

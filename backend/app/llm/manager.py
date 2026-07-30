@@ -39,9 +39,18 @@ class LLMManager:
 
     def _build_provider(self):
         llm = self._settings.llm
+        # Pick the right API key for the chosen provider
+        provider_name = llm.provider.lower()
+        if provider_name == "claude":
+            api_key = getattr(llm, "claude_api_key", "") or llm.bedrock_api_key
+        elif provider_name == "gemini":
+            api_key = getattr(llm, "gemini_api_key", "") or llm.bedrock_api_key
+        else:
+            api_key = ""
         return self._factory.create_provider(
             llm.provider,
             base_url=llm.base_url,
+            api_key=api_key,
             bedrock_api_key=llm.bedrock_api_key,
             bedrock_region=llm.bedrock_region,
             timeout=getattr(llm, "timeout", 1200),

@@ -52,6 +52,11 @@ class AgentFactory:
         self.registry.register("frontend", FrontendDeveloperAgent)
         self.registry.register("qa", QAAgent)
         self.registry.register("devops", DevOpsAgent)
+        # FUTURE (RELEASE phase): ProductionDeployAgent is an alias for DevOpsAgent
+        # reserved for the post-sprint production promotion step.  It is not wired
+        # into any pipeline stage yet — registration keeps the factory consistent
+        # so the RELEASE supervisor can call factory.create("production_deploy")
+        # when that phase is implemented.
         self.registry.register("production_deploy", ProductionDeployAgent)
         self.registry.register("strategic_review", StrategicReviewAgent)
         self.registry.register("designer", DesignerAgent)
@@ -64,6 +69,12 @@ class AgentFactory:
         self.registry.register("scrum_master", ScrumMasterAgent)
         self.registry.register("tech_lead", TechLeadAgent)
         self.registry.register("bug_analyst", BugAnalystAgent)
+        # sprint_deploy / sprint_review are invoked directly by SprintSupervisor
+        # (not via engine.run_stage()) because they require extra constructor args
+        # (workspace_manager, llm_manager) and call bespoke methods (deploy_sprint,
+        # review_sprint) rather than the standard BaseAgent.execute() interface.
+        # They are registered here so factory.create() works in tests and so the
+        # dependency is explicit and discoverable.
         self.registry.register("sprint_deploy", SprintDeployAgent)
         self.registry.register("sprint_review", SprintReviewAgent)
 

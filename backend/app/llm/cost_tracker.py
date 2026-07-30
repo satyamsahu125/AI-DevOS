@@ -29,7 +29,7 @@ class LLMCall:
     call_id: str
     project_id: str
     stage: str
-    provider: str  # "ollama" | "bedrock"
+    provider: str  # "ollama" | "claude" | "gemini" | "bedrock"
     model: str
     prompt_tokens: int
     completion_tokens: int
@@ -76,16 +76,31 @@ class CostSummary:
     total_latency_ms: float = 0.0
 
 
+# Update this when pricing changes so engineers know how stale the numbers are.
+PRICING_LAST_UPDATED = "2026-07-28"
+
 TOKEN_COST_PER_1K = {
     # Ollama local — effectively free
     "qwen2.5-coder:7b": {"input": 0.0, "output": 0.0},
     "qwen2.5-coder:14b": {"input": 0.0, "output": 0.0},
     "qwen3:8b": {"input": 0.0, "output": 0.0},
     "deepseek-r1:14b": {"input": 0.0, "output": 0.0},
-    # AWS Bedrock pricing (per 1K tokens, USD)
+    # Anthropic Claude (Messages API, per 1K tokens, USD — July 2026)
+    "claude-haiku-4-5": {"input": 0.0008, "output": 0.004},
+    "claude-haiku-4-5-20251001": {"input": 0.0008, "output": 0.004},
+    "claude-sonnet-4-5": {"input": 0.003, "output": 0.015},
+    "claude-opus-4-5": {"input": 0.015, "output": 0.075},
+    "claude-3-5-haiku-20241022": {"input": 0.0008, "output": 0.004},
+    "claude-3-5-sonnet-20241022": {"input": 0.003, "output": 0.015},
+    # Legacy Bedrock model names (kept for backwards compat)
     "claude-3-5-sonnet": {"input": 0.003, "output": 0.015},
     "claude-3-haiku": {"input": 0.00025, "output": 0.00125},
     "claude-opus-4": {"input": 0.015, "output": 0.075},
+    # Google Gemini (per 1K tokens, USD — July 2026)
+    "gemini-2.0-flash": {"input": 0.0001, "output": 0.0004},
+    "gemini-2.0-flash-lite": {"input": 0.000075, "output": 0.0003},
+    "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
+    "gemini-1.5-pro": {"input": 0.00125, "output": 0.005},
 }
 
 
@@ -321,13 +336,35 @@ class CostTracker:
             total_latency_ms=total_latency_ms,
         )
 
+    @staticmethod
+    def _lookup_prices(model: str) -> dict[str, float]:
+        """Return pricing for ``model``, with prefix-match fallback.
+
+        Exact lookup first; if not found, find the longest key in
+        TOKEN_COST_PER_1K that the model string starts with, separated by
+        a ``-`` boundary.  This handles versioned suffixes like
+        ``gemini-2.0-flash-001`` → ``gemini-2.0-flash``.
+        Returns ``{}`` (zero cost) if nothing matches.
+        """
+        if model in TOKEN_COST_PER_1K:
+            return TOKEN_COST_PER_1K[model]
+        # Find the longest matching prefix key (boundary must be at '-' or end)
+        best_key = ""
+        for key in TOKEN_COST_PER_1K:
+            if model.startswith(key) and len(key) > len(best_key):
+                # Ensure the match stops at a segment boundary, not mid-word
+                tail = model[len(key):]
+                if tail == "" or tail.startswith("-"):
+                    best_key = key
+        return TOKEN_COST_PER_1K[best_key] if best_key else {}
+
     def _estimate_cost(self, rows: list[tuple]) -> float:
         total = 0.0
         for row in rows:
-            model = row[2]
+            model = row[2] or ""
             pt = row[3] or 0
             ct = row[4] or 0
-            prices = TOKEN_COST_PER_1K.get(model, {})
+            prices = self._lookup_prices(model)
             total += (pt / 1000) * prices.get("input", 0.0)
             total += (ct / 1000) * prices.get("output", 0.0)
         return total

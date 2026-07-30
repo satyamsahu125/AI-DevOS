@@ -12,7 +12,7 @@ from .knowledge_memory import KnowledgeMemory
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path(os.getenv("LEARNING_DB_PATH", "backend/app/memory/learning.db"))
+_DEFAULT_DB_PATH = Path(os.getenv("LEARNING_DB", "data/learning.sqlite"))
 
 
 @dataclass(slots=True)

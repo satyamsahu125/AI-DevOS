@@ -15,13 +15,19 @@ YOUR BIGGEST RULE — NEVER WRITE GENERIC PLACEHOLDERS:
          so I can calculate my monthly budget in seconds."
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WHAT YOU RECEIVE (read all of it)
+WHAT YOU RECEIVE (in the context JSON below)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  - ClarificationArtifact (Q&A answers — your primary input)
-  - StrategicBrief (scope and vision)
+  The context is a JSON object with these keys:
+    original_request   — the user's verbatim project request
+    clarification      — ClarificationArtifact from Q&A (your PRIMARY input)
+    strategic_brief    — StrategicBrief produced by StrategicReview
+    domain_research    — DomainBrief (optional; may be empty)
 
-CRITICAL: Read explicit_non_requirements from the
-ClarificationArtifact. These become your OUT OF SCOPE list.
+  If any key is absent or empty, use whatever is available.
+  Never output {"error": "Missing..."} — always produce a best-effort PRD.
+
+CRITICAL: Read explicit_non_requirements from clarification.
+These become your OUT OF SCOPE list.
 If Q&A says "NO authentication required", your PRD must say
 exactly that — and the Architect must never add auth modules.
 
@@ -131,6 +137,72 @@ class ProductOwnerPromptBuilder(PromptBuilder):
         super().__init__(role="Product Owner")
 
     def build(self, context: object | None = None) -> str:
-        base = super().build(context)
-        body = f"Product Owner Prompt:\n{base}" if base else "Product Owner Prompt"
-        return f"{SYSTEM_PROMPT}\n\n{body}"
+        import json as _json
+        import re as _re
+
+        raw = ""
+        if context is not None:
+            raw = context if isinstance(context, str) else _json.dumps(context, indent=2)
+
+        # ── Path A: JSON block from _handle_qa_flow ──────────────────────────
+        # Format: {"original_request":…, "clarification":…, "domain_research":…}
+        if raw.strip().startswith("{"):
+            try:
+                ctx = _json.loads(raw)
+                # Detect if the JSON IS a StrategicBrief (has "vision" key) vs
+                # our wrapper dict (has "original_request" key).
+                if "original_request" in ctx:
+                    strategic = ctx.get("strategic_brief") or {}
+                    agent_context: dict = {
+                        "original_request": ctx.get("original_request", ""),
+                        "clarification":    ctx.get("clarification", {}),
+                        "strategic_brief":  strategic,
+                        "domain_research":  ctx.get("domain_research", {}),
+                    }
+                else:
+                    # The JSON itself is the StrategicBrief (vision/scope etc.)
+                    agent_context = {
+                        "original_request": "",
+                        "clarification":    {},
+                        "strategic_brief":  ctx,
+                        "domain_research":  {},
+                    }
+            except (ValueError, TypeError):
+                agent_context = {"original_request": raw, "clarification": {},
+                                 "strategic_brief": {}, "domain_research": {}}
+
+        # ── Path B: Predecessor-enriched string from WorkflowEngine ──────────
+        # Format: "{request}\n\n### Previous Stage Output (StrategicReview)\n{json}"
+        elif "### Previous Stage Output" in raw:
+            split_pat = _re.compile(r"### Previous Stage Output[^\n]*\n", _re.IGNORECASE)
+            parts = split_pat.split(raw, maxsplit=1)
+            original_req = parts[0].strip() if parts else raw
+            predecessor_raw = parts[1].strip() if len(parts) > 1 else ""
+            strategic: dict = {}
+            try:
+                if predecessor_raw.strip().startswith("{"):
+                    strategic = _json.loads(predecessor_raw)
+            except (ValueError, TypeError):
+                strategic = {}
+            agent_context = {
+                "original_request": original_req,
+                "clarification":    {},   # not in predecessor chain at this point
+                "strategic_brief":  strategic,
+                "domain_research":  {},
+            }
+
+        # ── Path C: Plain string (skip_qa / legacy) ───────────────────────────
+        else:
+            agent_context = {
+                "original_request": raw,
+                "clarification":    {},
+                "strategic_brief":  {},
+                "domain_research":  {},
+            }
+
+        context_block = (
+            "CONTEXT (agent-readable JSON — read every field before writing):\n"
+            + _json.dumps(agent_context, indent=2)
+        )
+
+        return f"{SYSTEM_PROMPT}\n\n{context_block}\n\nProduce the full PRD as a single JSON object."

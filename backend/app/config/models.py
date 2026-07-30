@@ -24,6 +24,11 @@ class LLMConfig(BaseModel):
     num_ctx: int = Field(default=8192)
     bedrock_api_key: str = Field(default="")
     bedrock_region: str = Field(default="us-east-1")
+    # API keys for cloud providers.  Set provider="claude" + claude_api_key,
+    # or provider="gemini" + gemini_api_key, to route all LLM calls through
+    # that provider instead of the local Ollama server.
+    claude_api_key: str = Field(default="")
+    gemini_api_key: str = Field(default="")
 
 
 class RuntimeConfig(BaseModel):

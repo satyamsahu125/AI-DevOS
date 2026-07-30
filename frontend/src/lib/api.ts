@@ -196,13 +196,28 @@ export interface LLMSettings {
   base_url: string
   bedrock_region: string
   bedrock_api_key_set: boolean
+  claude_api_key_set: boolean
+  gemini_api_key_set: boolean
+}
+
+export interface LLMSettingsUpdate {
+  provider?: string
+  model?: string
+  base_url?: string
+  bedrock_region?: string
+  bedrock_api_key?: string
+  claude_api_key?: string
+  gemini_api_key?: string
 }
 
 export interface ProviderInfo {
   id: string
   label: string
   models: string[]
+  default_model: string
   requires_api_key: boolean
+  api_key_field?: string
+  notes: string
 }
 
 export interface QASession {
@@ -330,7 +345,7 @@ export const api = {
 
   // Settings
   getLLMSettings:    () => request<LLMSettings>("/settings/llm"),
-  updateLLMSettings: (update: Partial<LLMSettings & { bedrock_api_key: string }>) =>
+  updateLLMSettings: (update: LLMSettingsUpdate) =>
     request<LLMSettings>("/settings/llm", { method: "POST", body: JSON.stringify(update) }),
   listProviders:     () => request<{ providers: ProviderInfo[] }>("/settings/providers"),
 

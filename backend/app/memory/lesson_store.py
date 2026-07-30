@@ -8,7 +8,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path(os.getenv("LESSONS_DB_PATH", "backend/app/memory/lessons.db"))
+_DEFAULT_DB_PATH = Path(os.getenv("LESSONS_DB", "data/lessons.sqlite"))
 
 
 @dataclass(slots=True)
