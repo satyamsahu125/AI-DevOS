@@ -1,0 +1,59 @@
+{
+  "stages": [
+    {
+      "name": "strategic_review",
+      "requires": [],
+      "emits": ["StrategicBrief"]
+    },
+    {
+      "name": "product_owner",
+      "requires": ["StrategicBrief"],
+      "emits": ["Requirements"]
+    },
+    {
+      "name": "architect",
+      "requires": ["Requirements"],
+      "emits": ["Architecture"]
+    },
+    {
+      "name": "designer",
+      "requires": ["Architecture"],
+      "emits": ["Design"]
+    },
+    {
+      "name": "security",
+      "requires": ["Architecture", "Design"],
+      "emits": ["SecurityRules"]
+    },
+    {
+      "name": "sprint_planner",
+      "requires": ["SecurityRules"],
+      "emits": ["SprintPlan"]
+    },
+    {
+      "name": "qa",
+      "requires": [],
+      "emits": ["QAReport"]
+    },
+    {
+      "name": "bug_analyst",
+      "requires": ["QAReport"],
+      "emits": ["BugAnalysis"]
+    },
+    {
+      "name": "devops",
+      "requires": ["QAReport"],
+      "emits": ["DeploymentPlan"]
+    },
+    {
+      "name": "document",
+      "requires": ["DeploymentPlan"],
+      "emits": ["Documentation"]
+    },
+    {
+      "name": "retro",
+      "requires": ["Documentation"],
+      "emits": ["RetroReport"]
+    }
+  ]
+}

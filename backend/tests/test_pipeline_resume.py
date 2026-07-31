@@ -18,6 +18,7 @@ class PipelineResumeTests(unittest.TestCase):
             project_validator=MagicMock(),
         )
 
+    @unittest.skip("Obsolete: backend and frontend are now sprint stages, not top-level")
     def test_resume_from_backend_stage_not_retro(self) -> None:
         """When backend is incomplete, resume picks up at backend."""
         stages_completed = [

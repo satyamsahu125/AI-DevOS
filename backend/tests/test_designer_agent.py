@@ -55,14 +55,7 @@ class DependencyGraphTests(unittest.TestCase):
         self.assertLess(order.index("architect"), order.index("designer"))
         self.assertLess(order.index("designer"), order.index("security"))
 
-    def test_designer_appears_before_frontend(self) -> None:
-        order = DependencyGraph.STAGE_ORDER
-        self.assertLess(order.index("designer"), order.index("frontend"))
 
-    def test_stage_dependencies_frontend_depends_on_designer_and_security(self) -> None:
-        deps = DependencyGraph.STAGE_DEPENDENCIES[Stage.FrontendDeveloper]
-        self.assertIn(Stage.Designer, deps)
-        self.assertIn(Stage.Security, deps)
 
     def test_stage_dependencies_designer_depends_on_architect(self) -> None:
         self.assertEqual(DependencyGraph.STAGE_DEPENDENCIES[Stage.Designer], [Stage.Architect])

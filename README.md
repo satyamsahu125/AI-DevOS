@@ -63,7 +63,7 @@ pip install -r requirements.txt
 cp .env.example .env
 
 # 4. Start backend
-uvicorn app.main:app --port 8000 --reload
+uvicorn app.main:app --port 8000 --reload --reload-exclude "temp-workspace"
 
 # 5. Install and start frontend (new terminal)
 cd frontend

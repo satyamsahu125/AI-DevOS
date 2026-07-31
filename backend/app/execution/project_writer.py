@@ -97,6 +97,22 @@ class ProjectWriter:
             return full_path.read_text(encoding="utf-8")
         return None
 
+    def apply_patch(self, project_id: str, file_path: str, search_block: str, replace_block: str, attempt: int = 1) -> WrittenFile:
+        """Apply a targeted search-and-replace patch to an existing file."""
+        content = self.read_file(project_id, file_path)
+        if content is None:
+            raise FileNotFoundError(f"Cannot patch non-existent file: {file_path}")
+            
+        # Normalize line endings to avoid \r\n vs \n mismatch
+        normalized_content = content.replace("\r\n", "\n")
+        normalized_search = search_block.replace("\r\n", "\n")
+        
+        if normalized_search not in normalized_content:
+            raise ValueError(f"Search block not found in {file_path}. Ensure exact match including whitespace.")
+            
+        new_content = normalized_content.replace(normalized_search, replace_block, 1)
+        return self.write_file(project_id, file_path, new_content, attempt)
+
     def list_files(self, project_id: str) -> list[str]:
         """List all files in the project directory."""
         project_dir = self.get_project_dir(project_id)

@@ -23,7 +23,7 @@ from ..shared.dto.pipeline_result import PipelineResult
 from ..shared.dto.workflow_result import WorkflowResult
 from ..shared.enums.project_state import ProjectState
 from ..workspace.manager import WorkspaceManager
-from .sprint_supervisor import SprintSupervisor
+from ..workspace.manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
@@ -51,24 +51,37 @@ RELEASE_STATES = {
     ProjectState.QA_COMPLETE,
 }
 
-# Discovery stages in order
-DISCOVERY_STAGES = [
-    "strategic_review",
-    "product_owner",
-    "architect",
-    "designer",
-    "security",
-    "sprint_planner",
-    "scrum_master",
-]
+from .dependency_graph import DependencyGraph
 
-# Release stages in order
-RELEASE_STAGES = [
-    "qa",
-    "devops",
-    "document",
-    "retro",
-]
+def get_discovery_stages() -> list[str]:
+    """Dynamically get discovery stages from DependencyGraph up to sprint_planner."""
+    order = DependencyGraph.STAGE_ORDER
+    if not order:
+        DependencyGraph._load_config()
+        order = DependencyGraph.STAGE_ORDER
+    
+    stages = []
+    for s in order:
+        stages.append(s)
+        if s == "sprint_planner":
+            break
+    return stages
+
+def get_release_stages() -> list[str]:
+    """Dynamically get release stages from DependencyGraph after sprint_planner."""
+    order = DependencyGraph.STAGE_ORDER
+    if not order:
+        DependencyGraph._load_config()
+        order = DependencyGraph.STAGE_ORDER
+    
+    stages = []
+    found_sprint_planner = False
+    for s in order:
+        if found_sprint_planner:
+            stages.append(s)
+        if s == "sprint_planner":
+            found_sprint_planner = True
+    return stages
 
 
 @dataclass
@@ -82,8 +95,7 @@ class PipelineSupervisor:
     """Orchestrates the full 3-phase pipeline (Discovery → Sprints → Release).
 
     Replaces the if/elif state machine in WorkflowManager.run().
-    Resumes from current state, pauses for user actions, and delegates
-    to SprintSupervisor for sprint-level execution.
+    to WorkflowManager._run_sprint for sprint-level execution.
 
     Parameters
     ----------
@@ -91,22 +103,22 @@ class PipelineSupervisor:
         For reading/writing project state and artifacts.
     engine
         WorkflowEngine instance (calls engine.run_stage() for each stage).
-    sprint_supervisor : SprintSupervisor
-        For running each sprint's full execution loop.
+    workflow_manager
+        WorkflowManager instance for sprint execution.
     settings
         Settings object with configuration.
     """
 
     def __init__(
         self,
-        workspace: WorkspaceManager,
+        workspace,
         engine,
-        sprint_supervisor: SprintSupervisor,
+        workflow_manager,
         settings,
     ) -> None:
         self.workspace = workspace
         self.engine = engine
-        self.sprint_supervisor = sprint_supervisor
+        self.workflow_manager = workflow_manager
         self.settings = settings
 
     def run(
@@ -186,6 +198,7 @@ class PipelineSupervisor:
             result = self._run_sprints(project_id, request)
             if not result.success:
                 return result
+            state = self.workspace.get_state(project_id)
 
         if state in RELEASE_STATES or state == ProjectState.ALL_SPRINTS_COMPLETE:
             result = self._run_release(project_id, request)
@@ -218,7 +231,7 @@ class PipelineSupervisor:
         data = self.workspace.load_project_json(project_id) or {}
         completed = set(data.get("stages_completed", []))
 
-        for stage_key in DISCOVERY_STAGES:
+        for stage_key in get_discovery_stages():
             # Resolve stage name to Stage enum value for completed check
             from .stage_lookup import resolve_stage_name
             stage_value = resolve_stage_name(stage_key)
@@ -308,22 +321,7 @@ class PipelineSupervisor:
             logger.info("[PipelineSupervisor] running sprint %d", n)
             self.workspace.set_current_sprint(project_id, n)
 
-            sprint_result = self.sprint_supervisor.run_sprint(project_id, n, request)
-
-            if sprint_result.blocked:
-                logger.error(
-                    "[PipelineSupervisor] sprint %d blocked (retry limit exceeded): %s",
-                    n, sprint_result.message,
-                )
-                self.workspace.update_state(project_id, ProjectState.SPRINT_BLOCKED)
-                return PipelineResult(
-                    project_id=project_id,
-                    state=ProjectState.SPRINT_BLOCKED,
-                    success=False,
-                    message=f"Sprint {n} blocked: {sprint_result.message}",
-                    current_sprint=n,
-                    completed_stages=list(data.get("stages_completed", [])),
-                )
+            sprint_result = self.workflow_manager._run_sprint_with_retry(project_id, sprint, max_attempts=2)
 
             if not sprint_result.success:
                 logger.error(
@@ -369,7 +367,7 @@ class PipelineSupervisor:
         """
         logger.info("[PipelineSupervisor] entering Release phase")
 
-        for stage_key in RELEASE_STAGES:
+        for stage_key in get_release_stages():
             logger.debug("[PipelineSupervisor] running release stage: %s", stage_key)
             result = self._run_stage_safe(project_id, stage_key, request)
             if not result.success:
@@ -379,6 +377,29 @@ class PipelineSupervisor:
                 )
             else:
                 logger.info("[PipelineSupervisor] release stage %s complete", stage_key)
+                
+                if stage_key == "bug_analyst" and hasattr(result, "artifact") and result.artifact:
+                    structured = result.artifact.structured_content or {}
+                    bug_type = structured.get("type")
+                    if bug_type in ("spec_bug", "architecture_bug"):
+                        logger.info("[PipelineSupervisor] BugAnalyst detected %s, rolling back pipeline", bug_type)
+                        change = self.workflow_manager.submit_requirement_change(
+                            project_id=project_id,
+                            change_description=f"BugAnalyst detected {bug_type}: {structured.get('fix_instruction')}"
+                        )
+                        self.workflow_manager.apply_requirement_change(
+                            project_id=project_id,
+                            change_id=change.change_id,
+                            confirmed=True
+                        )
+                        # State is now RESUMING_FROM_CHANGE, stop release phase so run() restarts discovery
+                        return PipelineResult(
+                            project_id=project_id,
+                            state=ProjectState.RESUMING_FROM_CHANGE,
+                            success=True,
+                            message=f"Rollback triggered due to {bug_type}",
+                            completed_stages=[]
+                        )
 
         logger.info("[PipelineSupervisor] Release phase complete, marking DEPLOYABLE")
         self.workspace.update_state(project_id, ProjectState.DEPLOYABLE)
@@ -396,27 +417,8 @@ class PipelineSupervisor:
         project_id: str,
         stage_key: str,
         request: str,
-    ) -> _StageResult:
-        """Wrap engine.run() with exception handling.
-
-        Delegates to engine.run() which handles the full
-        execute → review → retry cycle for a single stage.
-        Catches all exceptions and returns _StageResult.
-
-        Parameters
-        ----------
-        project_id : str
-            Project identifier.
-        stage_key : str
-            Stage registry key (e.g., "product_owner").
-        request : str
-            Content to pass to the stage.
-
-        Returns
-        -------
-        _StageResult
-            success=True if stage approved, False otherwise.
-        """
+    ) -> WorkflowResult | _StageResult:
+        """Wrap engine.run() with exception handling."""
         try:
             from .stage_lookup import resolve_stage_name
             resolved_stage = resolve_stage_name(stage_key)
@@ -426,13 +428,13 @@ class PipelineSupervisor:
                     "[PipelineSupervisor] stage %s succeeded",
                     stage_key,
                 )
-                return _StageResult(success=True)
+                return result
             else:
                 logger.warning(
                     "[PipelineSupervisor] stage %s failed: %s",
                     stage_key, result.message,
                 )
-                return _StageResult(success=False, message=result.message or "unknown error")
+                return result
         except Exception as exc:
             logger.error(
                 "[PipelineSupervisor] stage %s raised exception: %s",
@@ -443,3 +445,4 @@ class PipelineSupervisor:
                 success=False,
                 message=f"{type(exc).__name__}: {exc}",
             )
+    # End of PipelineSupervisor

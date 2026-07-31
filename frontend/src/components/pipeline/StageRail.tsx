@@ -6,12 +6,11 @@ const STAGE_ICONS: Record<StageName, string> = {
   Architect:           "🏛",
   Designer:            "🎨",
   Security:            "🔒",
-  FileStructurePlanner:"📁",
-  BackendDeveloper:    "⚙",
-  FrontendDeveloper:   "🖥",
+  SprintPlanner:       "🗓",
   QA:                  "🧪",
-  Document:            "📄",
+  BugAnalyst:          "🐛",
   DevOps:              "🚀",
+  Document:            "📄",
   Retro:               "🔄",
 }
 

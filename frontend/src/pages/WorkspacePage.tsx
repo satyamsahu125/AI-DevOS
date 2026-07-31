@@ -306,7 +306,7 @@ function ArtifactsPanel({ artifacts }: { artifacts: ArtifactSummary[] }) {
 }
 
 // ── Metrics panel ─────────────────────────────────────────────────────────────
-function MetricsPanel({ cost, pipeline }: { cost: CostSummary | null; pipeline: { progress_percent: number; stages_completed: string[]; current_sprint: number; total_sprints: number } }) {
+function MetricsPanel({ cost, pipeline }: { cost: CostSummary | null; pipeline: { progress_percent: number; stages_completed: string[]; current_sprint: number; total_sprints: number; total_stages: number } }) {
   const rows: { label: string; value: string | number }[] = [
     { label: "LLM Calls",          value: cost?.calls ?? 0 },
     { label: "Prompt tokens",      value: cost?.prompt_tokens?.toLocaleString() ?? "—" },
@@ -314,7 +314,7 @@ function MetricsPanel({ cost, pipeline }: { cost: CostSummary | null; pipeline: 
     { label: "Total tokens",       value: cost?.total_tokens?.toLocaleString() ?? "—" },
     { label: "Total latency",
       value: cost ? `${(cost.total_latency_ms / 1000).toFixed(1)}s` : "—" },
-    { label: "Stages completed",   value: `${pipeline.stages_completed.length} / 12` },
+    { label: "Stages completed",   value: `${pipeline.stages_completed.filter(s => STAGES.includes(s as any)).length} / ${pipeline.total_stages}` },
     { label: "Progress",           value: `${pipeline.progress_percent}%` },
     { label: "Sprint",
       value: pipeline.total_sprints > 0 ? `${pipeline.current_sprint} / ${pipeline.total_sprints}` : "—" },
@@ -499,12 +499,19 @@ export function WorkspacePage() {
           {pipeline.requires_user_action && (
             <button
               onClick={() => {
-                // User explicitly requested the modal — clear the dismissed flag
-                designDismissedRef.current = false
-                setDesignOpen(true)
+                if (s === "qa_pending" || s === "qa_in_progress") {
+                  alert("Please go to the Q&A tab to answer questions.")
+                }
+                else if (s.includes("design_review") || s === "design_ready") {
+                  designDismissedRef.current = false
+                  setDesignOpen(true)
+                }
+                else alert(`Pipeline is paused in state: ${pipeline.state}. Please check the server logs for errors.`)
               }}
               style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 14px", border:"1px solid rgba(245,158,11,.3)", borderRadius:"var(--radius-md)", background:"rgba(245,158,11,.08)", color:"var(--color-warning)", fontSize:13, cursor:"pointer", fontFamily:"var(--font-sans)", animation:"pulse-o 2s ease-in-out infinite" }}>
-              ⚡ Review Design
+              {s === "qa_pending" || s === "qa_in_progress" ? "⚡ Answer Q&A" : 
+               (s.includes("design_review") || s === "design_ready") ? "⚡ Review Design" :
+               "⚡ Action Needed"}
             </button>
           )}
 

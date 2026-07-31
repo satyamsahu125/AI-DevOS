@@ -69,11 +69,15 @@ class ProcessAnswersAction(LLMAction):
             if hasattr(builder, "build_process_prompt")
             else f"Process answers for request: {original_request}\nAnswers: {qa_session}"
         )
-        response = llm_manager.generate_text(prompt=prompt, system_prompt=self.system_prompt)
-        content = response.content if hasattr(response, "content") else str(response)
-        parsed = self._parse_structured(content)
-        if parsed:
-            return ClarificationArtifact.model_validate(parsed)
+        try:
+            response = llm_manager.generate_text(prompt=prompt, system_prompt=self.system_prompt)
+            content = response.content if hasattr(response, "content") else str(response)
+            parsed = self._parse_structured(content)
+            if parsed:
+                return ClarificationArtifact.model_validate(parsed)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("ProcessAnswersAction failed: %s", exc)
         return ClarificationArtifact(original_request=original_request)
 
 

@@ -126,7 +126,7 @@ class SprintDeployAgent(BaseAgent):
     """Lightweight staging deployment agent for per-sprint deployments.
 
     Simulates deploying a sprint's increment to a staging environment.
-    Produces a structured deployment status for SprintSupervisor to evaluate.
+    Produces a structured deployment status for WorkflowManager to evaluate.
 
     Parameters
     ----------

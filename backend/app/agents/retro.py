@@ -48,7 +48,7 @@ class RetroAgent(BaseAgent):
         qa_findings: dict,
         tech_review: dict,
     ) -> dict:
-        """Summarise what was learned in this sprint. Called by SprintSupervisor at end of each sprint.
+        """Summarise what was learned in this sprint. Called by WorkflowManager at end of each sprint.
 
         Parameters
         ----------

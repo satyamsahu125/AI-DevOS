@@ -31,8 +31,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const STAGES = [
   "StrategicReview", "ProductOwner", "Architect", "Designer",
-  "Security", "FileStructurePlanner", "BackendDeveloper",
-  "FrontendDeveloper", "QA", "Document", "DevOps", "Retro",
+  "Security", "SprintPlanner", "QA", "BugAnalyst", "DevOps", "Document", "Retro",
 ] as const
 
 export type StageName = (typeof STAGES)[number]
@@ -43,12 +42,11 @@ export const STAGE_LABELS: Record<StageName, string> = {
   Architect:           "Architect",
   Designer:            "Designer",
   Security:            "Security",
-  FileStructurePlanner:"File Planner",
-  BackendDeveloper:    "Backend Dev",
-  FrontendDeveloper:   "Frontend Dev",
+  SprintPlanner:       "Sprint Planner",
   QA:                  "QA",
-  Document:            "Docs",
+  BugAnalyst:          "Bug Analyst",
   DevOps:              "DevOps",
+  Document:            "Docs",
   Retro:               "Retro",
 }
 

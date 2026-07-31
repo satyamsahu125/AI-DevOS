@@ -22,7 +22,7 @@ Output is written to::
 
 via :class:`~app.workspace.artifact_store.ArtifactStore`.
 
-The SprintSupervisor (Phase 3) reads this output and routes the fix
+The WorkflowManager (Phase 3) reads this output and routes the fix
 instruction to the right agent.
 """
 
@@ -139,7 +139,7 @@ class BugAnalystAgent(BaseAgent):
 
     Reads QA findings (and optionally user stories, architecture, and file
     plan from the context) and produces a structured classification that
-    SprintSupervisor uses to route the fix to the right agent.
+    WorkflowManager uses to route the fix to the right agent.
 
     Parameters
     ----------

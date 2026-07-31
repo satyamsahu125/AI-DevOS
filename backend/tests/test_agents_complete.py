@@ -108,6 +108,8 @@ class TestProductOwnerAgent(unittest.TestCase):
         from app.agents.product_owner import ProductOwnerAgent
         return ProductOwnerAgent(llm_manager=llm or _stub())
 
+    _REQ_JSON = '{"project_name": "x", "goals": [], "user_stories": [], "acceptance_criteria": [], "constraints": [], "out_of_scope": []}'
+
     def test_instantiates_without_llm(self):
         from app.agents.product_owner import ProductOwnerAgent
         from app.actions.write_requirements import WriteRequirementsAction
@@ -118,11 +120,12 @@ class TestProductOwnerAgent(unittest.TestCase):
         self.assertEqual(self._make().artifact_name, "product-owner-output")
 
     def test_execute_returns_artifact(self):
-        artifact = self._make().execute(_ctx())
+        llm = _stub(self._REQ_JSON)
+        artifact = self._make(llm).execute(_ctx())
         _assert_artifact(self, artifact, "product-owner-output")
 
     def test_execute_passes_content_to_llm(self):
-        llm = _stub()
+        llm = _stub(self._REQ_JSON)
         self._make(llm).execute(_ctx("Invoicing tool for freelancers"))
         self.assertTrue(any("freelancers" in c for c in llm.calls))
 
@@ -132,7 +135,7 @@ class TestArchitectAgent(unittest.TestCase):
     # so we inject a mock primary_action to test execute() without schema validation.
     _ARCH_JSON = (
         '{"implementation_approach":"layered","approach":"REST","layers":["api","service","db"],'
-        '"modules":[],"api_endpoints":[],"api_design":[],"data_models":[],'
+        '"modules":[{"name":"auth","purpose":"auth"}],"api_endpoints":[],"api_design":[],"data_models":[],'
         '"tech_stack":{"backend":"FastAPI"},"deployment_notes":"","scalability_notes":"",'
         '"out_of_scope":[],"anything_unclear":""}'
     )

@@ -25,7 +25,6 @@ from ..workspace.manager import WorkspaceManager
 from .engine import WorkflowEngine
 from .execution_state import ExecutionStateRegistry
 from .pipeline_supervisor import PipelineSupervisor
-from .sprint_supervisor import SprintSupervisor
 from .stage_lookup import resolve_stage_name
 
 logger = logging.getLogger(__name__)
@@ -93,15 +92,10 @@ class WorkflowManager:
         # Wire up Phase 3: PipelineSupervisor and SprintSupervisor
         self._settings = ConfigurationManager().load()
         self._llm_manager = getattr(self.engine, "llm_manager", None) or LLMManager()
-        self._sprint_supervisor = SprintSupervisor(
-            workspace_manager=self.workspace_manager,
-            llm_manager=self._llm_manager,
-            settings=self._settings,
-        )
         self._pipeline_supervisor = PipelineSupervisor(
             workspace=self.workspace_manager,
             engine=self.engine,
-            sprint_supervisor=self._sprint_supervisor,
+            workflow_manager=self,
             settings=self._settings,
         )
 
@@ -272,14 +266,31 @@ class WorkflowManager:
                 return self._fail(project_id, "StrategicReview", result)
         else:
             from ..agents.clarification import ClarificationAgent
-            # Run domain research BEFORE generating questions so Q&A is domain-aware
-            domain_brief = self._run_domain_research(project_id, request)
-            agent = self._get_agent("clarification")
-            if isinstance(agent, ClarificationAgent):
-                q_set = agent.generate_questions(request, domain_brief=domain_brief)
-                questions = [q.model_dump(mode="json") if hasattr(q, "model_dump") else q for q in q_set.questions]
-            else:
-                questions = []
+            
+            # Retry loop for initial domain research and Q&A generation to handle LLM flakiness
+            max_retries = 3
+            questions = []
+            for attempt in range(max_retries):
+                try:
+                    # Run domain research BEFORE generating questions so Q&A is domain-aware
+                    domain_brief = self._run_domain_research(project_id, request)
+                    agent = self._get_agent("clarification")
+                    if isinstance(agent, ClarificationAgent):
+                        q_set = agent.generate_questions(request, domain_brief=domain_brief)
+                        questions = [q.model_dump(mode="json") if hasattr(q, "model_dump") else q for q in q_set.questions]
+                        if questions:
+                            break  # Success!
+                except Exception as exc:
+                    logger.warning("Clarification generation failed on attempt %d: %s", attempt + 1, exc)
+                    if attempt == max_retries - 1:
+                        # On final failure, mark project as FAILED so user sees it in the UI
+                        return self._fail(
+                            project_id, "Clarifying",
+                            PipelineResult(
+                                project_id=project_id, state=ProjectState.FAILED,
+                                success=False, message=f"Failed to generate clarification questions: {exc}"
+                            )
+                        )
             if questions:
                 self.workspace.save_qa_questions(project_id, questions)
                 self._transition(project_id, ProjectState.QA_PENDING)
@@ -751,30 +762,8 @@ class WorkflowManager:
             tech_stack = getattr(file_plan, "tech_stack", {}) or {}
             self.project_writer.initialize_project(project_id, tech_stack)
 
-        context_obj = SimpleNamespace(project_id=project_id)
-
-        # Resolve developers from the DI container so they get their properly-wired
-        # singletons (llm_manager, project_writer, validator, workspace_manager).
-        # Fall back to AgentFactory only in unit-test paths where container is None.
-        if self._container is not None:
-            backend_agent = self._container.resolve("backend_developer_agent")
-            frontend_agent = self._container.resolve("frontend_developer_agent")
-        else:
-            backend_agent = self._get_agent("backend")
-            frontend_agent = self._get_agent("frontend")
-
-        backend_result = backend_agent.execute_sprint(
-            project_id=project_id,
-            file_plan=file_plan,
-            context=context_obj,
-        )
-
-        frontend_result = frontend_agent.execute_sprint(
-            project_id=project_id,
-            file_plan=file_plan,
-            context=context_obj,
-            design_artifact=self._load_design_artifact(project_id),
-        )
+        backend_result = self.run_stage(project_id, "backend", plan_context)
+        frontend_result = self.run_stage(project_id, "frontend", plan_context)
 
         all_success = bool(backend_result.success and frontend_result.success)
         if all_success:

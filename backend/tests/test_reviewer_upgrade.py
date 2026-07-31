@@ -63,7 +63,7 @@ class ReviewerUpgradeTests(unittest.TestCase):
         self.assertFalse(result.human_questions)
 
     def test_clean_artifact_is_approved_with_no_findings(self) -> None:
-        artifact = self._artifact(content="A" * 200)
+        artifact = self._artifact(content="This is a mock string. " * 30)
 
         result = self.reviewer.review(artifact)
 
@@ -73,9 +73,9 @@ class ReviewerUpgradeTests(unittest.TestCase):
 
     def test_structured_content_present_does_not_trigger_ask_human(self) -> None:
         artifact = self._artifact(
-            content="A" * 200,
+            content="This is a mock string. " * 30,
             schema_type="WriteRequirements",
-            structured_content={"project_name": "Demo"},
+            structured_content={"project_name": "Demo", "requirements": [{"id": "REQ-1", "description": "demo requirements content"}]},
         )
 
         result = self.reviewer.review(artifact)

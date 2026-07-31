@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from ..shared.enums.stage import Stage
 from .stage_lookup import resolve_stage_name
 
@@ -18,42 +20,40 @@ class DependencyGraph:
     approved design spec.
     """
 
-    STAGE_ORDER: list[str] = [
-        # Discovery phase (run once)
-        "strategic_review",
-        "product_owner",
-        "architect",
-        "designer",
-        "security",
-        "sprint_planner",
-        # Sprint execution (managed by SprintSupervisor/SprintGraph)
-        # - scrum_master, file_planner, backend, frontend, tech_lead,
-        #   qa, bug_analyst, sprint_deploy, sprint_review all run per-sprint
-        # Release phase (run once)
-        "qa",  # Regression QA across full project
-        "devops",
-        "document",
-        "retro",
-    ]
+    # Loaded dynamically from workflow.json
+    STAGE_ORDER: list[str] = []
+    STAGE_DEPENDENCIES: dict[Stage, list[Stage]] = {}
 
-    STAGE_DEPENDENCIES: dict[Stage, list[Stage]] = {
-        # Discovery phase dependencies
-        Stage.StrategicReview: [],
-        Stage.ProductOwner: [Stage.StrategicReview],
-        Stage.Architect: [Stage.ProductOwner],
-        Stage.Designer: [Stage.Architect],
-        Stage.Security: [Stage.Designer],
-        Stage.SprintPlanning: [Stage.Security],
-        # Release phase dependencies (run after ALL sprints are complete)
-        Stage.QA: [],  # Regression QA runs independently after sprints
-        Stage.DevOps: [Stage.QA],
-        Stage.Document: [Stage.DevOps],
-        Stage.Retro: [Stage.Document],
-        # Sprint-internal stages are NOT listed here.
-        # They are managed by SprintSupervisor via SprintGraph:
-        # ScrumMaster, FileStructurePlanner, BackendDeveloper, FrontendDeveloper,
-        # TechLead, BugAnalyst, SprintDeploy, SprintReview
-    }
+    @classmethod
+    def _load_config(cls) -> None:
+        """Load stage definitions from workflow.json."""
+        if cls.STAGE_ORDER:
+            return
+        
+        config_path = Path(__file__).parent / "workflow.json"
+        if not config_path.exists():
+            return
+            
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+            for stage in data.get("stages", []):
+                name = stage["name"]
+                cls.STAGE_ORDER.append(name)
+                
+                try:
+                    stage_enum = Stage(resolve_stage_name(name))
+                    deps = []
+                    for req in stage.get("requires", []):
+                        # Convert requirement names to Stage if they match
+                        for r_stage in data.get("stages", []):
+                            if req in r_stage.get("emits", []):
+                                deps.append(Stage(resolve_stage_name(r_stage["name"])))
+                    cls.STAGE_DEPENDENCIES[stage_enum] = deps
+                except Exception:
+                    continue
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Failed to load workflow.json: %s", e)
 
     def has_dependency(self, stage: str) -> bool:
         """Return True if stage has at least one prerequisite in STAGE_DEPENDENCIES.
@@ -64,6 +64,7 @@ class DependencyGraph:
         every stage except ProductOwner look dependency-free — meaning the graph
         was never consulted for any other stage.
         """
+        self.__class__._load_config()
         try:
             resolved = resolve_stage_name(stage)
             stage_enum = Stage(resolved)
@@ -77,6 +78,7 @@ class DependencyGraph:
     @classmethod
     def ordered_stages(cls) -> list[Stage]:
         """Return STAGE_ORDER's registry keys resolved to their canonical Stage enum members, in pipeline order."""
+        cls._load_config()
         return [Stage(resolve_stage_name(key)) for key in cls.STAGE_ORDER]
 
     @classmethod
@@ -94,4 +96,7 @@ class DependencyGraph:
     @classmethod
     def get_stage_dependencies(cls, stage: Stage) -> list[Stage]:
         """Return the stages that must complete before stage can run."""
+        cls._load_config()
         return cls.STAGE_DEPENDENCIES.get(stage, [])
+
+DependencyGraph._load_config()

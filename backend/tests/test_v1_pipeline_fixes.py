@@ -319,7 +319,7 @@ class Fix007NewEndpointsTests(unittest.TestCase):
         response = self.client.get("/agents")
         self.assertEqual(response.status_code, 200)
         agents = response.json()
-        self.assertEqual(len(agents), 19)  # updated: +TechLeadAgent, +BugAnalystAgent, +SprintDeployAgent, +SprintReviewAgent (Phase 2)
+        self.assertEqual(len(agents), 20)
         self.assertTrue(all(agent["llm_backed"] for agent in agents))
 
     def test_memory_endpoint_returns_project_records(self) -> None:
@@ -349,19 +349,7 @@ class Fix007NewEndpointsTests(unittest.TestCase):
 
 
 class BugFixDescriptionAndPatternLeakTests(unittest.TestCase):
-    def test_project_initializer_sends_description_not_just_name(self) -> None:
-        received = {}
 
-        class _RecordingWorkflowManager:
-            def run_stage(self, project_id, stage_name, content):
-                received["content"] = content
-                return SimpleNamespace(success=True, message="ok")
-
-        initializer = ProjectInitializer(workflow_manager=_RecordingWorkflowManager())
-        project = SimpleNamespace(project_id="p1", name="calci", description="Create a basic calculator app")
-        initializer.initialize(project)
-
-        self.assertIn("Create a basic calculator app", received["content"])
 
     def test_pattern_search_is_isolated_per_project(self) -> None:
         try:

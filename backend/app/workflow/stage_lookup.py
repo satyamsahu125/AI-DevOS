@@ -25,6 +25,10 @@ _REGISTRY_KEY_TO_STAGE: dict[str, Stage] = {
     "scrum_master": Stage.ScrumMaster,
     "scrummaster": Stage.ScrumMaster,
     "clarification": Stage.Clarification,
+    "tech_lead": Stage.TechLead,
+    "bug_analyst": Stage.BugAnalyst,
+    "sprint_deploy": Stage.SprintDeploy,
+    "sprint_review": Stage.SprintReview,
 }
 
 

@@ -69,7 +69,7 @@ class AgentFactory:
         self.registry.register("scrum_master", ScrumMasterAgent)
         self.registry.register("tech_lead", TechLeadAgent)
         self.registry.register("bug_analyst", BugAnalystAgent)
-        # sprint_deploy / sprint_review are invoked directly by SprintSupervisor
+        # sprint_deploy / sprint_review are invoked directly by WorkflowManager._run_sprint
         # (not via engine.run_stage()) because they require extra constructor args
         # (workspace_manager, llm_manager) and call bespoke methods (deploy_sprint,
         # review_sprint) rather than the standard BaseAgent.execute() interface.

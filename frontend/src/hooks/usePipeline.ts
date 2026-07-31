@@ -15,6 +15,7 @@ export interface PipelineState {
   sprint_name: string
   sprint_progress: string
   estimated_completion: string
+  total_stages: number
 }
 
 const EMPTY: PipelineState = {
@@ -30,6 +31,7 @@ const EMPTY: PipelineState = {
   sprint_name: "",
   sprint_progress: "",
   estimated_completion: "",
+  total_stages: 11,
 }
 
 const TERMINAL = new Set(["done", "deployable", "failed", "empty"])
@@ -48,6 +50,7 @@ function fromStatus(s: WorkflowStatus): PipelineState {
     sprint_name: s.sprint_name ?? "",
     sprint_progress: s.sprint_progress ?? "",
     estimated_completion: s.estimated_completion ?? "",
+    total_stages: s.total_stages ?? 11,
   }
 }
 

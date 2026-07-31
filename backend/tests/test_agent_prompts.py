@@ -38,11 +38,12 @@ class AgentPromptTests(unittest.TestCase):
     def test_product_owner_agent_uses_role_specific_prompt(self) -> None:
         llm = _StubLLMManager()
         agent = ProductOwnerAgent(llm_manager=llm)
-        artifact = agent.execute(SimpleNamespace(content="build a CRM app"))
+        from app.execution.exceptions import SchemaValidationError
+        with self.assertRaises(SchemaValidationError):
+            agent.execute(SimpleNamespace(content="build a CRM app"))
 
-        self.assertIn("Product Owner", artifact.content)
-        self.assertIn("build a CRM app", artifact.content)
-        self.assertIn("Product Owner", llm.last_prompt)
+        self.assertIn("Product Manager", llm.last_prompt)
+        self.assertIn("build a CRM app", llm.last_prompt)
 
     def test_backend_agent_without_a_file_plan_produces_an_empty_manifest(self) -> None:
         """No FileStructurePlanner output exists for this ad-hoc call (no project_id, no seeded

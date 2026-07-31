@@ -64,14 +64,13 @@ class ActionLayerTests(unittest.TestCase):
         self.assertGreater(output.latency_ms, 0)
         self.assertEqual(llm.last_stage, "WriteRequirements")
 
-    def test_write_requirements_action_tolerates_non_json_response(self) -> None:
+    def test_write_requirements_action_raises_validation_error_on_non_json_response(self) -> None:
         llm = _StubLLMManager(content="Sure, here are the requirements: build a login page.")
         action = WriteRequirementsAction()
 
-        output = action.run(SimpleNamespace(content="build a login page"), llm)
-
-        self.assertIsInstance(output.structured, dict)
-        self.assertIn("login page", output.content)
+        from app.execution.exceptions import SchemaValidationError
+        with self.assertRaises(SchemaValidationError):
+            action.run(SimpleNamespace(content="build a login page"), llm)
 
     def test_action_falls_back_to_measured_latency_when_response_has_none(self) -> None:
         class _NoLatencyLLM:
@@ -79,7 +78,15 @@ class ActionLayerTests(unittest.TestCase):
                 return SimpleNamespace(content="{}", usage={}, latency=None)
 
         action = WriteRequirementsAction()
-        output = action.run(SimpleNamespace(content="x"), _NoLatencyLLM())
+        
+        # Test falls back to measured latency by using an action that DOES NOT raise SchemaValidationError on empty
+        # WriteRequirementsAction raises SchemaValidationError on empty dict. We can use a raw LLMAction instead.
+        class GenericLLMAction(LLMAction):
+            name = "Test"
+            def _parse_structured(self, text): return {}
+            
+        test_action = GenericLLMAction(action.prompt_builder)
+        output = test_action.run(SimpleNamespace(content="x"), _NoLatencyLLM())
         self.assertGreaterEqual(output.latency_ms, 0)
 
     def test_base_agent_execute_delegates_to_primary_action(self) -> None:

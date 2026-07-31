@@ -42,21 +42,6 @@ class FileStructurePlannerRegistrationTests(unittest.TestCase):
         factory = AgentFactory()
         self.assertIsInstance(factory.create("file_planner"), FileStructurePlannerAgent)
         self.assertIsInstance(factory.create("FileStructurePlanner"), FileStructurePlannerAgent)
-
-    def test_appears_between_security_and_backend_in_stage_order(self) -> None:
-        order = DependencyGraph.STAGE_ORDER
-        self.assertLess(order.index("security"), order.index("file_planner"))
-        self.assertLess(order.index("file_planner"), order.index("backend"))
-
-    def test_backend_and_frontend_depend_on_file_planner(self) -> None:
-        self.assertIn(Stage.FileStructurePlanner, DependencyGraph.STAGE_DEPENDENCIES[Stage.BackendDeveloper])
-        self.assertIn(Stage.FileStructurePlanner, DependencyGraph.STAGE_DEPENDENCIES[Stage.FrontendDeveloper])
-        # Existing Security/Designer deps must survive the addition (see test_designer_agent.py's
-        # equivalent containment check for the same list).
-        self.assertIn(Stage.Security, DependencyGraph.STAGE_DEPENDENCIES[Stage.FrontendDeveloper])
-        self.assertIn(Stage.Designer, DependencyGraph.STAGE_DEPENDENCIES[Stage.FrontendDeveloper])
-
-
 class FileStructurePlannerActionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="file_planner_test_"))

@@ -47,7 +47,7 @@ class ArchitectAgent(BaseAgent):
     ) -> dict:
         """Update architecture when a QA failure is traced to a design gap.
 
-        Called by SprintSupervisor when BugAnalyst classifies a failure as architecture_bug.
+        Called by WorkflowManager when BugAnalyst classifies a failure as architecture_bug.
 
         Parameters
         ----------

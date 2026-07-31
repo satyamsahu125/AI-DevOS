@@ -47,7 +47,7 @@ class ProductOwnerAgent(BaseAgent):
     ) -> dict:
         """Update user stories when a QA failure is traced to a spec gap.
 
-        Called by SprintSupervisor when BugAnalyst classifies a failure as spec_bug.
+        Called by WorkflowManager when BugAnalyst classifies a failure as spec_bug.
 
         Parameters
         ----------

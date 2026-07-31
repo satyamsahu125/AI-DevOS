@@ -88,7 +88,7 @@ class Container:
         # MemoryOrchestrator is not called anywhere in the live pipeline and has an
         # internal name collision (self.store is both an attribute and a method).
         # Disabled until it is redesigned and actually wired into the pipeline.
-        # self._dependencies.register_singleton("memory_orchestrator", MemoryOrchestrator)
+        self._dependencies.register_singleton("memory_orchestrator", MemoryOrchestrator)
         self._dependencies.register_singleton(
             "artifact_manager",
             lambda: ArtifactManager(workspace_manager=self._dependencies.resolve("workspace_manager")),

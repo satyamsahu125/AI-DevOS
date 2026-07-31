@@ -8,7 +8,7 @@ review verdict:
     {"approved": bool, "violations": [...], "iteration": N}
 
 If ``approved`` is ``True`` the sprint pipeline continues to QA.
-If ``approved`` is ``False`` the SprintSupervisor (Phase 3) will route
+If ``approved`` is ``False`` the WorkflowManager (Phase 3) will route
 back to the dev agents for fixes (max 3 iterations, configurable).
 
 Output is written to::
