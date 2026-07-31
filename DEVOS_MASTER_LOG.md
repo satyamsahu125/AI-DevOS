@@ -822,3 +822,35 @@ These failures do not represent bugs in the new architecture — they test the o
 ---
 
 <!-- NEW LOG ENTRIES GO HERE -->
+
+### 2026-07-31
+
+**Task: Implement Global LLM Retry Logic**
+
+*   **Change:** Implemented a robust, centralized retry mechanism for all LLM API calls to handle transient errors.
+*   **Implementation:**
+    *   Added 	enacity library to equirements.txt.
+    *   Created a retry decorator in ackend/app/llm/manager.py configured for exponential backoff and specific exceptions (like urllib.error.URLError, TimeoutError, etc.).
+    *   Applied the decorator directly to the generate_text method in LLMManager, ensuring ALL downstream agents automatically inherit retry logic without modifying every single agent file.
+*   **Outcome:** The system is now resilient to temporary LLM provider failures (e.g., rate limits, network issues), preventing premature workflow crashes and improving overall reliability.
+
+
+### 2026-08-01: End-to-End Architecture Validation (Image Captioner CLI)
+
+**Outcome:** PARTIAL / INTERRUPTED
+
+**Execution Details:**
+*   **Project Initiation:** The \un_cli_project.py\ script successfully initiated the project (ID: bd4e603f-f17e-4ec7-a99f-05ac91892215) with the defined goal of an Image Captioner CLI and transitioned it into the background orchestrator.
+*   **Discovery Phase:** The \StrategicReview\ and \DomainResearcher\ successfully initialized. The ArtifactStore successfully captured and versioned the \DomainResearch.json\ and \DomainResearch.md\ documents in the \	emp-workspace/artifacts/\ directory, proving that the file I/O layer and the initial graph nodes are functioning correctly.
+*   **Sprint & Release Phases:** Could not be validated.
+
+**Unexpected Behavior & Failures Encountered:**
+*   The system experienced severe instability at the underlying infrastructure layer (LLM API disconnections and \wsasend/wsarecv\ TCP connection drops from the cloud provider). 
+*   Because the local Ollama LLM interactions can be long-running, the external AI platform orchestrating this pair-programming session suffered timeout disconnects (\daily-cloudcode-pa.googleapis.com\ stream reading errors) before the \AI-DevOS3\ pipeline could advance into the Sprint phase.
+
+**Conclusion:**
+The new graph-driven architecture, artifact versioning, and state management are structurally sound and functioning correctly as observed in the Discovery phase. However, the system's reliance on lengthy, synchronous model generation blocks makes it highly vulnerable to external network/infrastructure timeouts.
+
+**Next Logical Focus Area:**
+We need to decouple the generative processes further. Implementing **Agent Checkpointing** (allowing a task to resume exactly where it left off inside a stage if the backend is killed) and introducing **Streaming WebSocket Responses** to the frontend (to keep connections alive and show real-time agent thoughts) will prevent these TCP timeouts and make the system truly resilient.
+

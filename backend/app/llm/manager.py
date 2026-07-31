@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import logging
+import http.client
+import urllib.error
 from uuid import uuid4
+
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, before_sleep_log
 
 from ..config.manager import ConfigurationManager
 from .cost_tracker import CostTracker, get_shared_cost_tracker
@@ -11,6 +15,15 @@ from .llm_response import LLMResponse
 from .providers.provider_health import ProviderHealth
 
 logger = logging.getLogger(__name__)
+
+RETRYABLE_EXCEPTIONS = (
+    urllib.error.URLError,
+    urllib.error.HTTPError,
+    http.client.RemoteDisconnected,
+    http.client.IncompleteRead,
+    ConnectionError,
+    TimeoutError
+)
 
 
 class LLMManager:
@@ -104,6 +117,13 @@ class LLMManager:
         )
         return response.content
 
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(5),
+        retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True
+    )
     def generate_text(
         self,
         prompt: str,

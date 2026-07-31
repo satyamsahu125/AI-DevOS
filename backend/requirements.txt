@@ -11,5 +11,6 @@ sentence-transformers>=3.0.0
 transformers>=4.0.0
 python-dotenv>=1.0.0
 docker>=6.1.0
+tenacity>=8.2.3
 
 # sqlite3 is part of the Python standard library -- not installed via pip.
