@@ -56,13 +56,21 @@ the most critical root cause (if multiple bugs exist, pick the blocking one):
 
 {
   "type": "code_bug | spec_bug | architecture_bug | security_violation",
+  "summary": "<short description of the bug>",
+  "file_path": "<path to the file containing the bug>",
+  "function_name": "<name of the function/class with the bug>",
+  "line_number": <approximate line number of the bug>,
   "root_artifact": "backend code | frontend code | user_stories | architecture | security_rules",
   "affected_agent": "Backend | Frontend | ProductOwner | Architect | Security",
-  "fix_instruction": "<specific, actionable instruction for the affected agent>",
+  "targeted_fix_instruction": "<specific, actionable instruction for the affected agent>",
   "failures_analysed": <integer — how many distinct failures were found>,
   "sprint": <sprint number integer>,
   "iteration": <analysis iteration integer, starting at 1>
 }
+
+CRITICAL RULE: Your analysis must be precise. You MUST identify the specific file (file_path), function (function_name), and approximate line number (line_number) where the bug occurs.
+
+CRITICAL RULE: Your targeted_fix_instruction must be a clear, single, actionable instruction for a developer agent. Do not just repeat the problem; describe the specific code change required to fix it.
 
 Classification rules:
 - code_bug: the spec and design are correct but the implementation is wrong.
@@ -77,10 +85,6 @@ Classification rules:
 - security_violation: a security rule was violated (hardcoded secret, missing auth, SQL injection).
   root_artifact = "security_rules".
   affected_agent = Backend or Frontend.
-
-The fix_instruction must be specific enough that the affected agent can act on it
-without re-reading this analysis. Include file paths, function names, or story IDs
-where relevant.
 
 Output ONLY the JSON object — no markdown, no explanation outside it.
 """
@@ -120,8 +124,8 @@ class _BugAnalysisAction(BaseAction):
             structured["type"] = "code_bug"
         if "affected_agent" not in structured:
             structured["affected_agent"] = "Backend"
-        if "fix_instruction" not in structured:
-            structured["fix_instruction"] = "See qa_findings for details."
+        if "targeted_fix_instruction" not in structured:
+            structured["targeted_fix_instruction"] = "See qa_findings for details."
         structured.setdefault("sprint", sprint)
         structured.setdefault("iteration", iteration)
         structured.setdefault("root_artifact", "backend code")
@@ -175,8 +179,13 @@ class BugAnalystAgent(BaseAgent):
         architecture: str = "",
         file_plan: str = "",
         iteration: int = 1,
+        sandbox_results: str = "",
     ) -> dict:
         """Build context from named inputs, run analysis, and return a plain dict.
+
+        Phase 5: accepts sandbox_results (pre-formatted text from SandboxResult.to_prompt_text())
+        so BugAnalyst grounds its analysis in real lint/test/build results rather than
+        the LLM-generated QA report alone.
 
         When ``workspace_manager`` is wired, the result is also persisted
         to the sprint-scoped ArtifactStore.
@@ -184,6 +193,9 @@ class BugAnalystAgent(BaseAgent):
         from types import SimpleNamespace
 
         parts = [f"QA FINDINGS:\n{qa_findings}"]
+        # Phase 5: real execution results — include before user stories so they appear early
+        if sandbox_results:
+            parts.append(f"REAL EXECUTION RESULTS (sandbox lint/test/build):\n{sandbox_results}")
         if user_stories:
             parts.append(f"USER STORIES:\n{user_stories}")
         if architecture:
@@ -220,8 +232,12 @@ class BugAnalystAgent(BaseAgent):
 
         return artifact.structured_content or {
             "type": "code_bug",
+            "summary": "Unknown bug in sprint",
+            "file_path": "unknown",
+            "function_name": "unknown",
+            "line_number": 0,
             "affected_agent": "Backend",
-            "fix_instruction": "See qa_findings for details.",
+            "targeted_fix_instruction": "See qa_findings for details.",
             "sprint": sprint_number,
             "iteration": iteration,
         }

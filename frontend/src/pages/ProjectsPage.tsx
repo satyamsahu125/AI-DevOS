@@ -26,6 +26,7 @@ function statusLabel(s: string) {
 function NewProjectModal({ onClose, onCreate }: { onClose: () => void; onCreate: (id: string) => void }) {
   const [name, setName] = useState("")
   const [desc, setDesc] = useState("")
+  const [mode, setMode] = useState<"full" | "quick">("full")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
 
@@ -35,8 +36,8 @@ function NewProjectModal({ onClose, onCreate }: { onClose: () => void; onCreate:
     setLoading(true)
     setError("")
     try {
-      const res = await api.createProject(name.trim(), desc.trim())
-      onCreate(res.project.project_id)
+      const res = await api.createAndRunProject(name.trim(), desc.trim(), mode)
+      onCreate(res.id)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to create project")
     } finally {
@@ -70,6 +71,32 @@ function NewProjectModal({ onClose, onCreate }: { onClose: () => void; onCreate:
           rows={4}
           className="mb-4 w-full resize-none rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-indigo-500"
         />
+
+        {/* Build mode */}
+        <label className="mb-1 block text-xs font-medium text-zinc-400">Build Mode</label>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          {[
+            { id: "full", icon: "🏗️", label: "Full Pipeline", sub: "19 stages · Production quality" },
+            { id: "quick", icon: "⚡", label: "Quick Build", sub: "~11 stages · Prototype fast" },
+          ].map(opt => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => setMode(opt.id as "full" | "quick")}
+              style={{
+                flex: 1, padding: "10px 12px", borderRadius: 10, border: "2px solid",
+                borderColor: mode === opt.id ? "var(--color-accent)" : "var(--color-divider)",
+                background: mode === opt.id ? "var(--color-accent-dim)" : "transparent",
+                cursor: "pointer", textAlign: "left", fontFamily: "var(--font-sans)",
+                transition: "all .12s",
+              }}
+            >
+              <div style={{ fontSize: 16, marginBottom: 4 }}>{opt.icon}</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: mode === opt.id ? "var(--color-accent)" : "var(--color-text)" }}>{opt.label}</div>
+              <div style={{ fontSize: 10, color: "var(--color-muted)", marginTop: 2 }}>{opt.sub}</div>
+            </button>
+          ))}
+        </div>
 
         {error && <p className="mb-4 rounded-lg bg-rose-500/10 px-3 py-2 text-xs text-rose-400">{error}</p>}
 
@@ -219,6 +246,14 @@ function ProjectCard({ project, onOpen, onDelete }: {
         <div className="mb-3 flex items-center gap-2">
           <StatusDot status={project.status} />
           <span className="text-[11px] text-zinc-500">{statusLabel(project.status)}</span>
+          {project.mode === "quick" && (
+            <span style={{
+              fontSize: 10, padding: "1px 6px", borderRadius: 4,
+              background: "var(--color-accent-dim)", color: "var(--color-accent)",
+              fontWeight: 600, border: "1px solid var(--color-accent-border)",
+              lineHeight: "16px",
+            }}>⚡ Quick</span>
+          )}
         </div>
         <h3 className="mb-1 font-semibold text-zinc-100 line-clamp-1">{project.name}</h3>
         {project.current_stage && (

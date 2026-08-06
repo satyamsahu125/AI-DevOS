@@ -48,6 +48,9 @@ _REQUIRED_STRUCTURED_KEYS: dict[str, list[str]] = {
     "WriteSecurityReport": ["threats", "recommendations"],
     "WriteQAReport":      ["test_cases"],
     "WriteDeployment":    ["infrastructure", "deployment_steps"],
+    # FileStructurePlanner: empty files list means both dev stages will find nothing to write.
+    # Must be critical so the retry loop in WriteFilePlanAction._parse_structured kicks in.
+    "WriteFilePlan":      ["files"],
 }
 
 # Schemas whose empty required keys escalate to ASK_HUMAN (block approval).
@@ -59,6 +62,7 @@ _CRITICAL_SCHEMAS: frozenset[str] = frozenset({
     "WriteDesign",
     "WriteBackendFiles",
     "WriteFrontendFiles",
+    "WriteFilePlan",
 })
 
 
@@ -255,6 +259,13 @@ class Reviewer:
         # Critical schemas (Architect, Requirements, Design, BackendDev, FrontendDev)
         # gate the entire downstream pipeline — empty required fields escalate to
         # ASK_HUMAN (blocks approval). Non-critical schemas get FLAG (advisory only).
+        #
+        # Special case for WriteArchitecture: api_endpoints and data_models can
+        # legitimately be empty for static-frontend / simple projects. The
+        # WriteArchitectureAction already guards the fully-empty case (no modules,
+        # no endpoints, no models). Here we only raise ASK_HUMAN if *modules*
+        # itself is empty — that is ALWAYS wrong. Empty api_endpoints/data_models
+        # alone is demoted to FLAG so the pipeline can continue.
         required_keys = _REQUIRED_STRUCTURED_KEYS.get(artifact.schema_type or "", [])
         if required_keys and artifact.structured_content:
             empty_required = [
@@ -263,29 +274,55 @@ class Reviewer:
             ]
             if empty_required:
                 is_critical = (artifact.schema_type or "") in _CRITICAL_SCHEMAS
-                if is_critical:
-                    finding = ReviewFinding(
-                        tier=ReviewTier.ASK_HUMAN,
-                        description=(
-                            f"Critical stage '{artifact.schema_type}' produced empty required fields: "
-                            f"{', '.join(empty_required)}. Downstream stages cannot proceed."
-                        ),
-                        suggestion="Retry with higher max_tokens, switch to Claude/Gemini provider, or reduce prompt context",
-                    )
-                    findings.append(finding)
-                    human_questions.append(finding.description)
-                    logger.warning(
-                        "reviewer: critical schema empty fields stage=%s empty=%s",
-                        artifact.schema_type, empty_required,
-                    )
-                else:
-                    finding = ReviewFinding(
-                        tier=ReviewTier.FLAG,
-                        description=f"Required structured fields are empty: {', '.join(empty_required)}",
-                        suggestion="Agent likely produced a stub output — retry with higher max_tokens or slim context",
-                    )
-                    findings.append(finding)
-                    flags.append(finding.description)
+
+                # For WriteArchitecture, split into truly-blocking vs advisory empties.
+                if is_critical and artifact.schema_type == "WriteArchitecture":
+                    blocking = [k for k in empty_required if k == "modules"]
+                    advisory = [k for k in empty_required if k != "modules"]
+                    if advisory:
+                        finding = ReviewFinding(
+                            tier=ReviewTier.FLAG,
+                            description=(
+                                f"Architecture fields are empty: {', '.join(advisory)}. "
+                                "This may be intentional for simple / static-frontend projects."
+                            ),
+                            suggestion=(
+                                "If this is a full-stack project, retry with higher max_tokens "
+                                "or switch to Claude/Gemini. If frontend-only, this is expected."
+                            ),
+                        )
+                        findings.append(finding)
+                        flags.append(finding.description)
+                        logger.warning(
+                            "reviewer: advisory empty fields stage=%s empty=%s",
+                            artifact.schema_type, advisory,
+                        )
+                    empty_required = blocking  # only block on missing modules
+
+                if empty_required:
+                    if is_critical:
+                        finding = ReviewFinding(
+                            tier=ReviewTier.ASK_HUMAN,
+                            description=(
+                                f"Critical stage '{artifact.schema_type}' produced empty required fields: "
+                                f"{', '.join(empty_required)}. Downstream stages cannot proceed."
+                            ),
+                            suggestion="Retry with higher max_tokens, switch to Claude/Gemini provider, or reduce prompt context",
+                        )
+                        findings.append(finding)
+                        human_questions.append(finding.description)
+                        logger.warning(
+                            "reviewer: critical schema empty fields stage=%s empty=%s",
+                            artifact.schema_type, empty_required,
+                        )
+                    else:
+                        finding = ReviewFinding(
+                            tier=ReviewTier.FLAG,
+                            description=f"Required structured fields are empty: {', '.join(empty_required)}",
+                            suggestion="Agent likely produced a stub output — retry with higher max_tokens or slim context",
+                        )
+                        findings.append(finding)
+                        flags.append(finding.description)
 
     def _check_design_stage(
         self, artifact: StageArtifact, architecture_endpoints: list[str] | None,

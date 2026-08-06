@@ -5,8 +5,27 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+import os
+
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
+
+# BUG-6 fix: valid API keys for WebSocket authentication.
+# Read from the same env var as APIKeyMiddleware (VALID_API_KEYS, comma-separated).
+def _get_valid_api_keys() -> set[str]:
+    raw = os.getenv("VALID_API_KEYS", "")
+    if not raw:
+        return set()  # empty = auth disabled (dev mode)
+    return {k.strip() for k in raw.split(",") if k.strip()}
+
+
+def _is_valid_token(token: str) -> bool:
+    """Return True if token is valid, or if auth is disabled (no keys configured)."""
+    valid = _get_valid_api_keys()
+    if not valid:
+        return True  # dev mode — no keys configured
+    import hmac
+    return any(hmac.compare_digest(token, k) for k in valid)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -66,6 +85,20 @@ class ConnectionManager:
     def has_connections(self, project_id: str) -> bool:
         return bool(self._connections.get(project_id))
 
+    def broadcast_sync(self, project_id: str, message: dict) -> None:
+        """
+        A synchronous wrapper to broadcast a message to a WebSocket.
+        This gets the running event loop and schedules the async broadcast coroutine
+        to be executed without blocking the synchronous caller.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.run_coroutine_threadsafe(self.broadcast(project_id, message), loop)
+        except RuntimeError:
+            logger.error("No running asyncio event loop found for broadcast_sync.")
+        except Exception as e:
+            logger.error("Error in broadcast_sync: %s", e)
+
 
 # Singleton — shared across all requests
 ws_manager = ConnectionManager()
@@ -73,11 +106,23 @@ ws_manager = ConnectionManager()
 
 @router.websocket("/ws/{project_id}")
 @router.websocket("/api/ws/{project_id}")
-async def project_websocket(websocket: WebSocket, project_id: str) -> None:
+async def project_websocket(
+    websocket: WebSocket,
+    project_id: str,
+    token: str = Query(default=""),
+) -> None:
     """WebSocket endpoint for a project.
+
+    BUG-6 fix: validates the token query param against VALID_API_KEYS before
+    accepting the connection. In dev mode (no keys configured) all connections
+    are accepted. In production, clients must pass ?token=<api_key>.
 
     Client connects once and receives all pipeline events in real time without polling.
     """
+    if not _is_valid_token(token):
+        logger.warning("WebSocket rejected: invalid token for project=%s", project_id)
+        await websocket.close(code=4001)
+        return
     await ws_manager.connect(websocket, project_id)
     try:
         # Send current state immediately on connect

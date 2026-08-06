@@ -78,17 +78,18 @@ class EventBroadcaster:
         stage: str,
         attempt: int,
         duration_seconds: float = 0,
+        progress_percent: int | None = None,
     ) -> None:
-        self._send(
-            project_id,
-            {
-                "type": "stage_complete",
-                "stage": stage,
-                "attempt": attempt,
-                "duration_seconds": round(duration_seconds, 1),
-                "message": f"{stage.replace('_', ' ').title()} completed on attempt {attempt}",
-            },
-        )
+        msg: dict = {
+            "type": "stage_complete",
+            "stage": stage,
+            "attempt": attempt,
+            "duration_seconds": round(duration_seconds, 1),
+            "message": f"{stage.replace('_', ' ').title()} completed on attempt {attempt}",
+        }
+        if progress_percent is not None:
+            msg["progress_percent"] = progress_percent
+        self._send(project_id, msg)
 
     def stage_failed(self, project_id: str, stage: str, reason: str) -> None:
         self._send(
@@ -211,6 +212,28 @@ class EventBroadcaster:
                 "total_stages": len(stages_completed),
                 "duration_seconds": round(duration_seconds, 1),
                 "message": "Pipeline complete!",
+            },
+        )
+
+    def context_warning(
+        self,
+        project_id: str,
+        used_tokens: int,
+        limit_tokens: int,
+        pct: int,
+    ) -> None:
+        """R7: Broadcast a context window usage warning when approaching the provider limit."""
+        self._send(
+            project_id,
+            {
+                "type": "context_warning",
+                "used_tokens": used_tokens,
+                "limit_tokens": limit_tokens,
+                "pct": pct,
+                "message": (
+                    f"Context window {pct}% full ({used_tokens:,} / {limit_tokens:,} tokens). "
+                    f"Consider completing remaining work in fewer stages."
+                ),
             },
         )
 

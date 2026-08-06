@@ -1,0 +1,21 @@
+{
+  "service": "jwt_auth",
+  "display_name": "JWT Authentication",
+  "description": "Stateless JWT token authentication with refresh tokens",
+  "keywords": ["auth", "authentication", "jwt", "login", "token", "user", "oauth", "session"],
+  "env_vars": [
+    {"name": "JWT_SECRET_KEY", "description": "Secret key for signing JWT tokens (min 32 chars)", "required": true},
+    {"name": "JWT_ALGORITHM", "description": "JWT signing algorithm (default HS256)", "required": false},
+    {"name": "JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "description": "Access token TTL in minutes (default 30)", "required": false},
+    {"name": "JWT_REFRESH_TOKEN_EXPIRE_DAYS", "description": "Refresh token TTL in days (default 7)", "required": false}
+  ],
+  "python": {
+    "packages": ["python-jose[cryptography]>=3.3.0", "passlib[bcrypt]>=1.7.4"],
+    "snippet": "from datetime import datetime, timedelta\nfrom typing import Optional\nfrom jose import JWTError, jwt\nfrom passlib.context import CryptContext\nfrom fastapi import Depends, HTTPException, status\nfrom fastapi.security import OAuth2PasswordBearer\n\nSECRET_KEY = os.getenv('JWT_SECRET_KEY')\nALGORITHM = os.getenv('JWT_ALGORITHM', 'HS256')\nACCESS_EXPIRE = int(os.getenv('JWT_ACCESS_TOKEN_EXPIRE_MINUTES', '30'))\nREFRESH_EXPIRE = int(os.getenv('JWT_REFRESH_TOKEN_EXPIRE_DAYS', '7'))\n\npwd_context = CryptContext(schemes=['bcrypt'], deprecated='auto')\noauth2_scheme = OAuth2PasswordBearer(tokenUrl='/auth/token')\n\ndef hash_password(password: str) -> str:\n    return pwd_context.hash(password)\n\ndef verify_password(plain: str, hashed: str) -> bool:\n    return pwd_context.verify(plain, hashed)\n\ndef create_access_token(subject: str, expires_delta: Optional[timedelta] = None) -> str:\n    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_EXPIRE))\n    return jwt.encode({'sub': subject, 'exp': expire, 'type': 'access'}, SECRET_KEY, algorithm=ALGORITHM)\n\ndef create_refresh_token(subject: str) -> str:\n    expire = datetime.utcnow() + timedelta(days=REFRESH_EXPIRE)\n    return jwt.encode({'sub': subject, 'exp': expire, 'type': 'refresh'}, SECRET_KEY, algorithm=ALGORITHM)\n\nasync def get_current_user(token: str = Depends(oauth2_scheme)) -> str:\n    credentials_exc = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Could not validate credentials', headers={'WWW-Authenticate': 'Bearer'})\n    try:\n        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])\n        subject: str = payload.get('sub')\n        if subject is None:\n            raise credentials_exc\n        return subject\n    except JWTError:\n        raise credentials_exc"
+  },
+  "node": {
+    "packages": ["jsonwebtoken@^9.0.0", "bcryptjs@^2.4.3"],
+    "snippet": "const jwt = require('jsonwebtoken');\nconst bcrypt = require('bcryptjs');\n\nconst SECRET = process.env.JWT_SECRET_KEY;\nconst ALGORITHM = process.env.JWT_ALGORITHM || 'HS256';\nconst ACCESS_EXPIRE = `${process.env.JWT_ACCESS_TOKEN_EXPIRE_MINUTES || 30}m`;\nconst REFRESH_EXPIRE = `${process.env.JWT_REFRESH_TOKEN_EXPIRE_DAYS || 7}d`;\n\nconst hashPassword = (pw) => bcrypt.hash(pw, 10);\nconst verifyPassword = (pw, hash) => bcrypt.compare(pw, hash);\nconst createAccessToken = (subject) => jwt.sign({ sub: subject, type: 'access' }, SECRET, { algorithm: ALGORITHM, expiresIn: ACCESS_EXPIRE });\nconst createRefreshToken = (subject) => jwt.sign({ sub: subject, type: 'refresh' }, SECRET, { algorithm: ALGORITHM, expiresIn: REFRESH_EXPIRE });\n\nconst authenticateToken = (req, res, next) => {\n  const authHeader = req.headers['authorization'];\n  const token = authHeader && authHeader.split(' ')[1];\n  if (!token) return res.status(401).json({ error: 'No token' });\n  try {\n    const payload = jwt.verify(token, SECRET);\n    req.user = payload.sub;\n    next();\n  } catch (e) {\n    return res.status(401).json({ error: 'Invalid token' });\n  }\n};"
+  },
+  "docs_url": "https://jwt.io/introduction"
+}

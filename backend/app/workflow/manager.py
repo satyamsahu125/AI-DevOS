@@ -53,6 +53,11 @@ class WorkflowManager:
         container: Any | None = None,
         sprint_monitor: Any | None = None,
         domain_researcher: Any | None = None,
+        config_manager: ConfigurationManager | None = None,
+        file_indexer: Any | None = None,
+        code_sandbox: Any | None = None,
+        dependency_pinner: Any | None = None,
+        preview_manager: Any | None = None,
     ) -> None:
         """Wire the engine, workspace_manager, execution_state registry, agent_factory, project_validator, and DI container.
 
@@ -90,13 +95,21 @@ class WorkflowManager:
         self.domain_researcher = domain_researcher  # None = feature disabled
 
         # Wire up Phase 3: PipelineSupervisor and SprintSupervisor
-        self._settings = ConfigurationManager().load()
+        config_mgr = config_manager or ConfigurationManager()
+        self._settings = config_mgr.load() if hasattr(config_mgr, "load") else getattr(config_mgr, "settings", lambda: getattr(config_mgr, "_settings", None))()
+        if not self._settings and hasattr(config_mgr, "load"):
+             self._settings = config_mgr.load()
+        self._sprint_retry = getattr(self._settings, "sprint_retry", None)
         self._llm_manager = getattr(self.engine, "llm_manager", None) or LLMManager()
         self._pipeline_supervisor = PipelineSupervisor(
             workspace=self.workspace_manager,
             engine=self.engine,
             workflow_manager=self,
             settings=self._settings,
+            file_indexer=file_indexer,           # Phase 3: intelligence indexing trigger
+            code_sandbox=code_sandbox,           # Phase 5: code execution sandbox
+            dependency_pinner=dependency_pinner,  # R2: pin requirements to stable versions
+            preview_manager=preview_manager,      # R5: live app preview
         )
 
     def _get_agent(self, stage_name: str) -> BaseAgent:
@@ -218,26 +231,36 @@ class WorkflowManager:
 
         state = self.workspace.get_state(project_id)
 
-        # EMPTY = brand-new project; enter Q&A flow before running any agent.
-        # ProjectInitializer sets CLARIFYING; this guard covers cases where the
-        # workspace was created without calling ProjectInitializer (e.g. tests,
-        # direct workspace creation) and state was never advanced past EMPTY.
-        if state == ProjectState.EMPTY:
-            self._transition(project_id, ProjectState.CLARIFYING)
-            state = ProjectState.CLARIFYING
-
-        # Handle CLARIFYING state: domain research → Q&A question generation
-        if state == ProjectState.CLARIFYING:
-            return self._handle_clarifying_state(project_id, request, skip_qa)
-
-        # Handle Q&A states (pre-discovery)
-        if state in [ProjectState.QA_PENDING, ProjectState.QA_IN_PROGRESS]:
-            return self._handle_qa_flow(project_id, request)
-
-        # For all other states, use PipelineSupervisor (Phase 3)
+        # Mark running for the duration of this workflow invocation (including Clarifying/QA)
         self.execution_state.mark_running(project_id)
         self.workspace.update_project_json(project_id, {"stopped": False})
         try:
+            # EMPTY = brand-new project; enter Q&A flow before running any agent.
+            # ProjectInitializer sets CLARIFYING; this guard covers cases where the
+            # workspace was created without calling ProjectInitializer (e.g. tests,
+            # direct workspace creation) and state was never advanced past EMPTY.
+            if state == ProjectState.EMPTY:
+                self._transition(project_id, ProjectState.CLARIFYING)
+                state = ProjectState.CLARIFYING
+
+            # Handle CLARIFYING state: domain research → Q&A question generation
+            if state == ProjectState.CLARIFYING:
+                return self._handle_clarifying_state(project_id, request, skip_qa)
+
+            # Handle Q&A states (pre-discovery)
+            if state in [ProjectState.QA_PENDING, ProjectState.QA_IN_PROGRESS]:
+                return self._handle_qa_flow(project_id, request)
+
+            # Phase 4: Human collaboration gate states — return pause result.
+            # Resumption happens via POST /workflow/{id}/gates/{gate}/approve.
+            if state == ProjectState.ARCHITECTURE_REVIEW_PENDING:
+                return self._await_gate(project_id, "architecture")
+            if state == ProjectState.DESIGN_REVIEW_PENDING:
+                return self._await_gate(project_id, "design")
+            if state == ProjectState.SPRINT_PLAN_REVIEW_PENDING:
+                return self._await_gate(project_id, "sprint_plan")
+
+            # For all other states, use PipelineSupervisor (Phase 3)
             return self._pipeline_supervisor.run(project_id, request)
         finally:
             self.execution_state.mark_stopped(project_id)
@@ -256,12 +279,7 @@ class WorkflowManager:
             if result.success:
                 self._transition(project_id, ProjectState.REQUIREMENTS_READY)
                 # Continue pipeline via PipelineSupervisor
-                self.execution_state.mark_running(project_id)
-                self.workspace.update_project_json(project_id, {"stopped": False})
-                try:
-                    return self._pipeline_supervisor.run(project_id, request)
-                finally:
-                    self.execution_state.mark_stopped(project_id)
+                return self._pipeline_supervisor.run(project_id, request)
             else:
                 return self._fail(project_id, "StrategicReview", result)
         else:
@@ -272,8 +290,15 @@ class WorkflowManager:
             questions = []
             for attempt in range(max_retries):
                 try:
+                    self.broadcaster.status_update(
+                        project_id=project_id,
+                        state=ProjectState.CLARIFYING.value,
+                        current_stage="Clarifying"
+                    )
+                    self.broadcaster.log_line(project_id, "DomainResearch", f"Attempt {attempt+1}/{max_retries}: Running domain research...")
                     # Run domain research BEFORE generating questions so Q&A is domain-aware
                     domain_brief = self._run_domain_research(project_id, request)
+                    self.broadcaster.log_line(project_id, "Clarifying", f"Attempt {attempt+1}/{max_retries}: Generating clarification questions...")
                     agent = self._get_agent("clarification")
                     if isinstance(agent, ClarificationAgent):
                         q_set = agent.generate_questions(request, domain_brief=domain_brief)
@@ -286,10 +311,7 @@ class WorkflowManager:
                         # On final failure, mark project as FAILED so user sees it in the UI
                         return self._fail(
                             project_id, "Clarifying",
-                            PipelineResult(
-                                project_id=project_id, state=ProjectState.FAILED,
-                                success=False, message=f"Failed to generate clarification questions: {exc}"
-                            )
+                            SimpleNamespace(message=f"Failed to generate clarification questions: {exc}")
                         )
             if questions:
                 self.workspace.save_qa_questions(project_id, questions)
@@ -305,16 +327,52 @@ class WorkflowManager:
                     completed_stages=completed_stages,
                 )
             else:
+                # Bug A fix: question generation returned empty list — QA bypassed silently.
+                # Save a minimal Clarification artifact so ProductOwner always has context.
+                logger.warning(
+                    "QA bypassed for %s: question generation returned empty list. "
+                    "Saving minimal clarification artifact and proceeding without Q&A.",
+                    project_id,
+                )
+                import json as _json_bugA
+                minimal_clarification = {
+                    "original_request": request,
+                    "project_description": request,
+                    "functional_requirements": [],
+                    "non_functional_requirements": [],
+                    "scale_profile": {
+                        "user_count": "unknown",
+                        "auth_needed": False,
+                        "database_needed": False,
+                        "infrastructure_tier": "unknown",
+                    },
+                    "explicit_non_requirements": [],
+                    "open_questions": [],
+                    "inferred_scope": (
+                        "QA was bypassed — question generation returned no questions. "
+                        "Infer full scope from the original request only."
+                    ),
+                }
+                self.artifact_manager.save_artifact(
+                    project_id=project_id,
+                    stage=Stage.Clarification,
+                    content=_json_bugA.dumps(minimal_clarification, indent=2),
+                    structured_content=minimal_clarification,
+                )
+                # Phase 1: write to per-stage episodic memory so MemoryOrchestrator
+                # can read it during ProductOwner context assembly.
+                _mo = getattr(getattr(self, "engine", None), "memory_orchestrator", None)
+                if _mo is not None:
+                    _mo.record_approval(project_id, Stage.Clarification, minimal_clarification)
+                else:
+                    _mm = getattr(getattr(self, "engine", None), "memory_manager", None)
+                    if _mm is not None:
+                        _mm.store_stage_output(project_id, Stage.Clarification.value, _json_bugA.dumps(minimal_clarification, indent=2))
                 result = self._run_stage(project_id, "StrategicReview", request)
                 if result.success:
                     self._transition(project_id, ProjectState.REQUIREMENTS_READY)
                     # Continue pipeline via PipelineSupervisor
-                    self.execution_state.mark_running(project_id)
-                    self.workspace.update_project_json(project_id, {"stopped": False})
-                    try:
-                        return self._pipeline_supervisor.run(project_id, request)
-                    finally:
-                        self.execution_state.mark_stopped(project_id)
+                    return self._pipeline_supervisor.run(project_id, request)
                 else:
                     return self._fail(project_id, "StrategicReview", result)
 
@@ -346,6 +404,13 @@ class WorkflowManager:
                 state = ProjectState.QA_IN_PROGRESS  # update local variable so next block fires
 
         if state == ProjectState.QA_IN_PROGRESS:
+            self.broadcaster.status_update(
+                project_id=project_id,
+                state=ProjectState.QA_IN_PROGRESS.value,
+                current_stage="Synthesizing Requirements"
+            )
+            self.broadcaster.log_line(project_id, "Clarifying", "Synthesizing requirements from Q&A session...")
+            
             from ..agents.clarification import ClarificationAgent
             agent = self._get_agent("clarification")
             qa = self.workspace.get_qa_session(project_id)
@@ -370,6 +435,15 @@ class WorkflowManager:
                 content=_json.dumps(clarification_struct, indent=2),
                 structured_content=clarification_struct,
             )
+            # Phase 1: write to per-stage episodic memory so MemoryOrchestrator
+            # can load this during ProductOwner context assembly.
+            _mo = getattr(getattr(self, "engine", None), "memory_orchestrator", None)
+            if _mo is not None:
+                _mo.record_approval(project_id, Stage.Clarification, clarification_struct)
+            else:
+                _mm = getattr(getattr(self, "engine", None), "memory_manager", None)
+                if _mm is not None:
+                    _mm.store_stage_output(project_id, Stage.Clarification.value, _json.dumps(clarification_struct, indent=2))
             self.workspace.mark_qa_complete(project_id)
 
             # ── Phase C: run StrategicReview as a real LLM stage ─────────────────
@@ -540,6 +614,32 @@ class WorkflowManager:
             "resuming_from": affected[0] if affected else None,
         }
 
+    def _await_gate(self, project_id: str, gate: str) -> PipelineResult:
+        """Return a requires_user_action PipelineResult for the given gate.
+
+        Called when run() is called while a human collaboration gate is active.
+        The user must call POST /workflow/{id}/gates/{gate}/approve (or revise/adjust)
+        to resume the pipeline. This method never blocks — it just returns the pause state.
+        """
+        _gate_to_action = {
+            "architecture": ("review_architecture", "Architecture ready for review. Approve or request revisions via the gates API."),
+            "design":       ("review_design",       "Design ready for review. Approve or request revisions via the gates API."),
+            "sprint_plan":  ("review_sprint_plan",  "Sprint plan ready for review. Approve or adjust via the gates API."),
+        }
+        state = self.workspace.get_state(project_id)
+        action_needed, message = _gate_to_action.get(gate, ("review", "Awaiting review."))
+        data = self.workspace.load_project_json(project_id) or {}
+        logger.info("_await_gate: project=%s gate=%s state=%s", project_id, gate, state)
+        return PipelineResult(
+            project_id=project_id,
+            state=state,
+            success=False,
+            requires_user_action=True,
+            action_needed=action_needed,
+            message=message,
+            completed_stages=list(data.get("stages_completed", [])),
+        )
+
     def _transition(self, project_id: str, new_state: ProjectState) -> None:
         """Persist state change immediately."""
         self.workspace.update_state(project_id, new_state)
@@ -598,10 +698,10 @@ class WorkflowManager:
             return self._run_default_sprint(project_id)
         for sprint in plan.sprints:
             if sprint.status == SprintStatus.PLANNED:
-                return self._run_sprint_with_retry(project_id, sprint, max_attempts=2)
+                return self._run_sprint_with_retry(project_id, sprint)
         return SprintResult(all_sprints_complete=True)
 
-    def _run_sprint_with_retry(self, project_id: str, sprint: Sprint, max_attempts: int = 2) -> SprintResult:
+    def _run_sprint_with_retry(self, project_id: str, sprint: Sprint, max_attempts: int | None = None) -> SprintResult:
         """Run a sprint, retrying once on failure before giving up.
 
         Sprint-level retry is distinct from stage-level retry (WorkflowEngine.run()
@@ -611,6 +711,9 @@ class WorkflowManager:
         This handles transient execution errors (e.g. file write race, LLM timeout)
         that are unlikely to repeat on a second full attempt.
         """
+        if max_attempts is None:
+            max_attempts = getattr(self._sprint_retry, 'max_dev_review_iterations', 2) if self._sprint_retry else 2
+            
         last_result: SprintResult | None = None
         for attempt in range(1, max_attempts + 1):
             last_result = self._run_sprint(project_id, sprint)
@@ -693,6 +796,25 @@ class WorkflowManager:
             try:
                 data = json.loads(plan_json.read_text(encoding="utf-8"))
                 struct = data.get("structured") or data
+                # Normalise: WriteFilePlanAction saves files as list[PlannedFile]
+                # but FilePlan.files expects dict[str, FileSpec].  Convert so that
+                # tech_stack and sprint metadata are accessible to the sprint runner.
+                raw_files = struct.get("files")
+                if isinstance(raw_files, list):
+                    files_dict: dict = {}
+                    for entry in raw_files:
+                        if isinstance(entry, dict):
+                            path = entry.get("path", "")
+                        else:
+                            path = getattr(entry, "path", "")
+                        if path:
+                            files_dict[path] = {
+                                "file_path": path,
+                                "purpose": (entry.get("purpose", "") if isinstance(entry, dict)
+                                            else getattr(entry, "purpose", "")),
+                            }
+                    struct = {**struct, "files": files_dict,
+                              "project_id": project_id, "sprint_number": sprint_number}
                 return FilePlan.model_validate(struct)
             except Exception as exc:
                 logger.warning("Failed to parse file plan json: %s", exc)
@@ -743,10 +865,14 @@ class WorkflowManager:
 
         arch = self.artifact_manager.get_artifact(project_id, Stage.Architect)
         plan_context = self._build_sprint_context(project_id, sprint, arch)
+        self.broadcaster.stage_started(project_id, "FileStructurePlanner", 1)
         plan_result = self._run_stage(project_id, "file_planner", plan_context)
 
         if not plan_result.success:
+            self.broadcaster.stage_failed(project_id, "FileStructurePlanner", plan_result.message)
             return SprintResult(success=False, message=plan_result.message)
+        
+        self.broadcaster.stage_complete(project_id, "FileStructurePlanner", 1, 0)
 
         # Mirror file_plan into sprint-scoped ArtifactStore.
         self._persist_to_artifact_store(
@@ -762,11 +888,52 @@ class WorkflowManager:
             tech_stack = getattr(file_plan, "tech_stack", {}) or {}
             self.project_writer.initialize_project(project_id, tech_stack)
 
+        self.broadcaster.stage_started(project_id, "BackendDeveloper", 1)
         backend_result = self.run_stage(project_id, "backend", plan_context)
+        if backend_result.success:
+            self.broadcaster.stage_complete(project_id, "BackendDeveloper", 1, 0)
+        else:
+            self.broadcaster.stage_failed(project_id, "BackendDeveloper", backend_result.message)
+
+        self.broadcaster.stage_started(project_id, "FrontendDeveloper", 1)
         frontend_result = self.run_stage(project_id, "frontend", plan_context)
+        if frontend_result.success:
+            self.broadcaster.stage_complete(project_id, "FrontendDeveloper", 1, 0)
+        else:
+            self.broadcaster.stage_failed(project_id, "FrontendDeveloper", frontend_result.message)
 
         all_success = bool(backend_result.success and frontend_result.success)
         if all_success:
+            # FIX A-03: Run sprint_deploy and sprint_review manually and emit status events
+            try:
+                # Deploy
+                self.broadcaster.stage_started(project_id, "SprintDeploy")
+                deploy_agent = self._agent_factory.create("sprint_deploy")
+                deploy_agent._workspace_manager = self.workspace_manager
+                file_plan_dict = file_plan.model_dump(mode="json") if hasattr(file_plan, "model_dump") else (file_plan if isinstance(file_plan, dict) else {})
+                deploy_status = deploy_agent.deploy_sprint(
+                    project_id, 
+                    sprint.sprint_number, 
+                    file_plan_dict
+                )
+                self.broadcaster.stage_complete(project_id, "SprintDeploy", 1, 0)
+
+                # Review
+                self.broadcaster.stage_started(project_id, "SprintReview")
+                review_agent = self._agent_factory.create("sprint_review")
+                review_agent._workspace_manager = self.workspace_manager
+                qa_findings = self.workspace.load_project_json(project_id).get(f"sprint_{sprint.sprint_number}_issues", [])
+                
+                scrum_art = self.artifact_manager.get_artifact(project_id, Stage.ScrumMaster)
+                user_stories = getattr(scrum_art, "structured_content", {}) if scrum_art else {}
+                if not isinstance(user_stories, dict):
+                    user_stories = {}
+                
+                review_agent.review_sprint(project_id, sprint.sprint_number, user_stories, deploy_status, qa_findings)
+                self.broadcaster.stage_complete(project_id, "SprintReview", 1, 0)
+            except Exception as e:
+                logger.warning("Failed to run sprint deploy/review for %s: %s", project_id, e, exc_info=True)
+
             self.workspace.mark_sprint_complete(project_id, sprint.sprint_number)
             # FIX 3: Validate sprint output against architecture contracts (non-blocking)
             if self.sprint_monitor is not None:

@@ -15,6 +15,7 @@ from ..workspace.dependency_detector import (
     detect_node_dependencies,
     detect_python_dependencies,
 )
+from ..workspace.file_registry import FileRegistry
 from ..workspace.project_files import ProjectFileManager
 from ..workspace.project_readme import summarize_area
 from .architecture_summary import summarize_architecture
@@ -50,12 +51,18 @@ class WriteProjectFilesAction(BaseAction):
         prompt_builder: Any,
         artifact_manager: ArtifactManager | None = None,
         project_file_manager: ProjectFileManager | None = None,
+        file_registry: FileRegistry | None = None,
     ) -> None:
         """Wire the role-specific prompt builder, the ArtifactManager used to fetch the File Plan
-        and Architecture, and the ProjectFileManager used to write real files."""
+        and Architecture, the ProjectFileManager used to write real files, and the optional
+        FileRegistry that tracks existing files for Agile update semantics."""
         self.prompt_builder = prompt_builder
         self.artifact_manager = artifact_manager or ArtifactManager()
         self.project_file_manager = project_file_manager or ProjectFileManager(self.artifact_manager.workspace_manager)
+        # Phase 8: FileRegistry tracks which files already exist so Sprint 2+ can update them
+        self.file_registry = file_registry or FileRegistry(
+            workspace_manager=getattr(self.artifact_manager, "workspace_manager", None)
+        )
 
     def run(self, context: object, llm: object) -> ActionOutput:
         """Generate and write every file this stage is responsible for, one focused LLM call each."""
@@ -73,7 +80,7 @@ class WriteProjectFilesAction(BaseAction):
         total_latency = 0.0
 
         for planned_file in assigned:
-            prompt = self._build_file_prompt(planned_file, architecture, base_content, siblings)
+            prompt = self._build_file_prompt(planned_file, architecture, base_content, siblings, project_id=project_id)
             started = time.time()
             response = llm.generate_text(prompt, system_prompt=self._system_prompt(), stage=self.name, agent=self.name, project_id=project_id)
             elapsed_ms = (time.time() - started) * 1000
@@ -90,6 +97,9 @@ class WriteProjectFilesAction(BaseAction):
             written.append(planned_file.path)
             file_contents.append(file_content)
             siblings.append(f"{planned_file.path}: {planned_file.purpose}")
+            # Phase 8: record in FileRegistry so future sprints know this file exists
+            sprint_number = getattr(context, "sprint_number", 0) or 0
+            self.file_registry.record(project_id, planned_file.path, sprint_number)
 
         manifest_path = self._write_dependency_manifest(project_id, written, file_contents)
         if manifest_path:
@@ -143,7 +153,13 @@ class WriteProjectFilesAction(BaseAction):
         project/backend/backend/models/Task.js. planned_file.path itself is
         left untouched for the written/skipped manifest, which stays
         readable either way.
+
+        When area="" (mobile projects writing to project root), no prefix is
+        stripped — the path is used verbatim.
         """
+        if not self.area:
+            # Mobile / root-level writes: path is already relative to project root
+            return path
         prefix = f"{self.area}/"
         if path.lower().startswith(prefix.lower()):
             return path[len(prefix):]
@@ -178,17 +194,64 @@ class WriteProjectFilesAction(BaseAction):
             return None
 
     def _build_file_prompt(
-        self, planned_file: PlannedFile, architecture: ArchitectureArtifact | None, base_content: str, siblings: list[str],
+        self,
+        planned_file: PlannedFile,
+        architecture: ArchitectureArtifact | None,
+        base_content: str,
+        siblings: list[str],
+        project_id: str = "",
     ) -> str:
         siblings_text = "\n".join(siblings) or "(none yet)"
-        detail = (
-            f"File to implement: {planned_file.path}\n"
-            f"Module: {planned_file.module}\n"
-            f"Purpose: {planned_file.purpose}\n\n"
-            f"Relevant architecture:\n{summarize_architecture(architecture)}\n\n"
-            f"Files already written this run (for import/naming consistency):\n{siblings_text}\n\n"
-            f"Project context:\n{base_content}"
-        )
+        operation = getattr(planned_file, "operation", "create") or "create"
+        change_description = getattr(planned_file, "change_description", "") or ""
+
+        # Phase 8: for update/patch, read existing file content and inject it.
+        existing_content: str | None = None
+        if operation in ("update", "patch") and project_id:
+            relative_path = self._relative_write_path(planned_file.path)
+            existing_content = self.project_file_manager.read_file(project_id, self.area, relative_path)
+
+        if operation == "create" or existing_content is None:
+            # Standard create prompt — no existing content available
+            detail = (
+                f"Operation: CREATE (new file)\n"
+                f"File to implement: {planned_file.path}\n"
+                f"Module: {planned_file.module}\n"
+                f"Purpose: {planned_file.purpose}\n\n"
+                f"Relevant architecture:\n{summarize_architecture(architecture)}\n\n"
+                f"Files already written this run (for import/naming consistency):\n{siblings_text}\n\n"
+                f"Project context:\n{base_content}"
+            )
+        elif operation == "patch":
+            # Targeted change — include existing content and specific change instruction
+            change_instruction = change_description or planned_file.purpose
+            detail = (
+                f"Operation: PATCH (targeted change to existing file)\n"
+                f"File: {planned_file.path}\n"
+                f"What to change: {change_instruction}\n\n"
+                f"EXISTING FILE CONTENT (apply your changes to this):\n"
+                f"```\n{existing_content}\n```\n\n"
+                f"Return the COMPLETE updated file with the patch applied. "
+                f"Do NOT rewrite unrelated parts of the file.\n\n"
+                f"Relevant architecture:\n{summarize_architecture(architecture)}\n\n"
+                f"Files already written this run:\n{siblings_text}"
+            )
+        else:
+            # update — rewrite with new features/sprint goals added
+            change_instruction = change_description or planned_file.purpose
+            detail = (
+                f"Operation: UPDATE (evolve existing file for new sprint)\n"
+                f"File: {planned_file.path}\n"
+                f"Module: {planned_file.module}\n"
+                f"What to add/change: {change_instruction}\n\n"
+                f"EXISTING FILE CONTENT (extend and update this — preserve working functionality):\n"
+                f"```\n{existing_content}\n```\n\n"
+                f"Return the COMPLETE updated file content including both existing and new code.\n\n"
+                f"Relevant architecture:\n{summarize_architecture(architecture)}\n\n"
+                f"Files already written this run:\n{siblings_text}\n\n"
+                f"Project context:\n{base_content}"
+            )
+
         return self.prompt_builder.build(detail)
 
     def _build_manifest(self, project_id: str, assigned: list[PlannedFile], written: list[str], skipped: list[str]) -> str:

@@ -9,6 +9,7 @@ import { usePipeline } from "../hooks/usePipeline"
 import { useLogs } from "../hooks/useLogs"
 import { DesignReviewModal } from "../components/design/DesignReviewModal"
 import { QAPanel } from "../components/qa/QAPanel"
+import { ClarificationPanel } from "../components/ClarificationPanel"
 
 // ── Icon primitives ──────────────────────────────────────────────────────────
 function IcDone() {
@@ -305,6 +306,62 @@ function ArtifactsPanel({ artifacts }: { artifacts: ArtifactSummary[] }) {
   )
 }
 
+// ── Integrations panel ────────────────────────────────────────────────────────
+function IntegrationsPanel({ projectId }: { projectId: string }) {
+  const [data, setData] = useState<import("../lib/api").ProjectIntegrations | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    api.getProjectIntegrations(projectId)
+      .then(setData)
+      .catch(() => setData(null))
+      .finally(() => setLoading(false))
+  }, [projectId])
+
+  if (loading) return (
+    <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <span style={{ width:20, height:20, borderRadius:"50%", border:"2px solid var(--color-divider)", borderTopColor:"var(--color-accent)", animation:"spin .8s linear infinite", display:"inline-block" }} />
+    </div>
+  )
+  if (!data || data.detected_services.length === 0) return (
+    <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:12, opacity:.4, textAlign:"center", padding:32 }}>
+      <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1} strokeLinecap="round"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z M13 2v7h7" /></svg>
+      <div style={{ fontSize:13 }}>No integrations detected yet.<br /><span style={{ fontSize:11, color:"var(--color-muted)" }}>Run the pipeline — the Integration agent will detect services from your project description.</span></div>
+    </div>
+  )
+  return (
+    <div style={{ flex:1, overflowY:"auto", padding:"0 4px" }}>
+      <div className="ws-section-title" style={{ marginBottom:12 }}>Detected Integrations</div>
+      <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+        {data.detected_services.map(svc => {
+          const vars = data.env_vars_needed.filter(v => v.service === svc)
+          return (
+            <div key={svc} style={{ background:"var(--color-surface)", border:"1px solid var(--color-divider)", borderRadius:"var(--radius-md)", overflow:"hidden" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 14px", borderBottom: vars.length ? "1px solid var(--color-divider)" : "none" }}>
+                <span style={{ width:8, height:8, borderRadius:"50%", background:"var(--color-accent)", display:"inline-block", flexShrink:0 }} />
+                <span style={{ fontSize:13, fontWeight:600, textTransform:"capitalize" }}>{svc.replace(/_/g, " ")}</span>
+                <span style={{ marginLeft:"auto", fontSize:10, padding:"2px 7px", borderRadius:4, background:"var(--color-accent-dim)", color:"var(--color-accent)" }}>
+                  {vars.length} env var{vars.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+              {vars.length > 0 && (
+                <div style={{ padding:"8px 14px", display:"flex", flexDirection:"column", gap:4 }}>
+                  {vars.map(v => (
+                    <div key={v.var_name} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <code style={{ fontSize:11, fontFamily:"var(--font-mono)", color: v.required ? "var(--color-text)" : "var(--color-muted)", flex:1 }}>{v.var_name}</code>
+                      {v.required && <span style={{ fontSize:9, padding:"1px 6px", borderRadius:3, background:"rgba(244,63,94,.1)", color:"var(--color-error)", border:"1px solid rgba(244,63,94,.2)" }}>required</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── Metrics panel ─────────────────────────────────────────────────────────────
 function MetricsPanel({ cost, pipeline }: { cost: CostSummary | null; pipeline: { progress_percent: number; stages_completed: string[]; current_sprint: number; total_sprints: number; total_stages: number } }) {
   const rows: { label: string; value: string | number }[] = [
@@ -330,6 +387,261 @@ function MetricsPanel({ cost, pipeline }: { cost: CostSummary | null; pipeline: 
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// ── Gate modal ────────────────────────────────────────────────────────────────
+function GateModal({ projectId, gate, onDone }: { projectId: string; gate: string; onDone: () => void }) {
+  const [feedback, setFeedback] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+
+  const gateLabel = gate === "architecture" ? "Architecture Review" : gate === "sprint_plan" ? "Sprint Plan Review" : gate
+
+  async function approve() {
+    setLoading(true); setError("")
+    try { await api.approveGate(projectId, gate); onDone() }
+    catch (e: unknown) { setError(e instanceof Error ? e.message : "Failed") }
+    finally { setLoading(false) }
+  }
+
+  async function revise() {
+    if (!feedback.trim()) { setError("Please provide feedback for revision"); return }
+    setLoading(true); setError("")
+    try { await api.reviseGate(projectId, gate, feedback.trim()); onDone() }
+    catch (e: unknown) { setError(e instanceof Error ? e.message : "Failed") }
+    finally { setLoading(false) }
+  }
+
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:50, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,.6)", backdropFilter:"blur(4px)" }}>
+      <div style={{ width:"100%", maxWidth:480, margin:16, background:"var(--color-surface)", border:"1px solid var(--color-divider)", borderRadius:16, padding:28, boxShadow:"0 24px 64px rgba(0,0,0,.5)" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:20 }}>
+          <span style={{ width:32, height:32, borderRadius:8, background:"rgba(245,158,11,.12)", border:"1px solid rgba(245,158,11,.25)", display:"grid", placeItems:"center" }}>
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="var(--color-warning)" strokeWidth={2} strokeLinecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z M12 9v4 M12 17h.01" /></svg>
+          </span>
+          <div>
+            <div style={{ fontSize:15, fontWeight:700 }}>{gateLabel}</div>
+            <div style={{ fontSize:12, color:"var(--color-muted)" }}>Review required before pipeline continues</div>
+          </div>
+        </div>
+
+        <div style={{ marginBottom:16 }}>
+          <label style={{ display:"block", fontSize:11, fontWeight:600, color:"var(--color-muted)", marginBottom:6, letterSpacing:".04em", textTransform:"uppercase" }}>Revision feedback (optional)</label>
+          <textarea
+            value={feedback}
+            onChange={e => setFeedback(e.target.value)}
+            placeholder="Leave blank to approve as-is, or describe what needs changing…"
+            rows={3}
+            style={{ width:"100%", resize:"none", padding:"10px 12px", borderRadius:8, border:"1px solid var(--color-divider)", background:"var(--color-bg)", color:"var(--color-text)", fontSize:13, fontFamily:"var(--font-sans)", outline:"none", boxSizing:"border-box" }}
+          />
+        </div>
+
+        {error && <div style={{ marginBottom:12, padding:"8px 12px", borderRadius:8, background:"rgba(244,63,94,.08)", border:"1px solid rgba(244,63,94,.2)", color:"var(--color-error)", fontSize:12 }}>{error}</div>}
+
+        <div style={{ display:"flex", gap:10 }}>
+          <button onClick={revise} disabled={loading}
+            style={{ flex:1, padding:"10px 0", borderRadius:8, border:"1px solid var(--color-divider)", background:"transparent", color:"var(--color-text)", fontSize:13, cursor:"pointer", fontFamily:"var(--font-sans)" }}>
+            Request Revision
+          </button>
+          <button onClick={approve} disabled={loading}
+            style={{ flex:1, padding:"10px 0", borderRadius:8, border:"none", background:"var(--color-accent)", color:"#fff", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"var(--font-sans)", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+            {loading && <span style={{ width:12, height:12, borderRadius:"50%", border:"2px solid rgba(255,255,255,.3)", borderTopColor:"#fff", animation:"spin .8s linear infinite", display:"inline-block" }} />}
+            ✓ Approve
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Requirement change panel ──────────────────────────────────────────────────
+type ImpactAnalysis = {
+  change_id: string
+  description: string
+  affected_stages: string[]
+  safe_stages: string[]
+  affected_files: string[]
+  sprints_to_replan: number[]
+  estimated_rerun_time: string
+  explanation: string
+  can_preserve: string[]
+}
+
+function RequirementChangePanel({ projectId }: { projectId: string }) {
+  const [description, setDescription] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [impact, setImpact] = useState<ImpactAnalysis | null>(null)
+  const [confirming, setConfirming] = useState(false)
+  const [done, setDone] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [history, setHistory] = useState<ImpactAnalysis[]>([])
+
+  // Load existing changes on mount
+  useEffect(() => {
+    api.listChanges(projectId).then(res => {
+      setHistory((res.changes ?? []) as ImpactAnalysis[])
+    }).catch(() => {})
+  }, [projectId])
+
+  async function analyze() {
+    if (!description.trim()) return
+    setError(null)
+    setLoading(true)
+    setImpact(null)
+    setDone(null)
+    try {
+      const res = await api.submitChange(projectId, description.trim())
+      setImpact(res as unknown as ImpactAnalysis)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Analysis failed")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function confirm() {
+    if (!impact) return
+    setConfirming(true)
+    try {
+      await api.confirmChange(projectId, impact.change_id, true, "")
+      setDone("confirmed")
+      setHistory(h => [impact!, ...h])
+      setImpact(null)
+      setDescription("")
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Confirm failed")
+    } finally { setConfirming(false) }
+  }
+
+  async function cancel() {
+    if (!impact) return
+    try {
+      await api.cancelChange(projectId, impact.change_id)
+    } catch { /* ignore */ }
+    setImpact(null)
+    setDone("cancelled")
+  }
+
+  const pill = (text: string, color: string) => (
+    <span style={{ fontSize:11, padding:"2px 8px", borderRadius:100, background:`rgba(${color},.12)`, color:`rgb(${color})`, border:`1px solid rgba(${color},.25)` }}>
+      {text}
+    </span>
+  )
+
+  return (
+    <div style={{ flex:1, overflowY:"auto", padding:4, display:"flex", flexDirection:"column", gap:16 }}>
+
+      {/* Input card */}
+      <div style={{ background:"var(--color-surface)", borderRadius:"var(--radius-md)", boxShadow:"0 0 0 1px rgba(233,233,237,.08)", padding:16, display:"flex", flexDirection:"column", gap:12 }}>
+        <div className="ws-section-title">Request a Requirement Change</div>
+        <p style={{ fontSize:12, color:"var(--color-muted)", margin:0 }}>
+          Describe what you want to add, remove, or modify. The system will analyze which stages need to re-run and which can be preserved.
+        </p>
+        <textarea
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+          placeholder="e.g. Add a dark mode toggle to the settings page…"
+          rows={3}
+          style={{ width:"100%", padding:"8px 10px", fontSize:13, background:"var(--color-bg)", border:"1px solid var(--color-divider)", borderRadius:"var(--radius-md)", color:"var(--color-text)", fontFamily:"var(--font-sans)", resize:"vertical", outline:"none", boxSizing:"border-box" }}
+        />
+        {error && (
+          <div style={{ padding:"8px 12px", borderRadius:8, background:"rgba(244,63,94,.08)", border:"1px solid rgba(244,63,94,.2)", color:"var(--color-error)", fontSize:12 }}>{error}</div>
+        )}
+        {done === "confirmed" && (
+          <div style={{ padding:"8px 12px", borderRadius:8, background:"rgba(16,185,129,.08)", border:"1px solid rgba(16,185,129,.2)", color:"var(--color-success)", fontSize:12 }}>
+            ✓ Change confirmed — pipeline will re-run affected stages.
+          </div>
+        )}
+        {done === "cancelled" && (
+          <div style={{ padding:"8px 12px", borderRadius:8, background:"rgba(233,233,237,.05)", border:"1px solid var(--color-divider)", color:"var(--color-muted)", fontSize:12 }}>
+            Change cancelled.
+          </div>
+        )}
+        <button
+          onClick={analyze}
+          disabled={loading || !description.trim()}
+          style={{ alignSelf:"flex-start", padding:"8px 18px", border:"none", borderRadius:"var(--radius-md)", background:"var(--color-accent)", color:"#fff", fontSize:13, fontWeight:600, cursor:loading||!description.trim()?"not-allowed":"pointer", fontFamily:"var(--font-sans)", opacity:loading||!description.trim()?.6:1, display:"flex", alignItems:"center", gap:8 }}>
+          {loading && <span style={{ width:12, height:12, borderRadius:"50%", border:"2px solid rgba(255,255,255,.3)", borderTopColor:"#fff", animation:"spin .8s linear infinite", display:"inline-block" }} />}
+          Analyze Impact
+        </button>
+      </div>
+
+      {/* Impact analysis result */}
+      {impact && (
+        <div style={{ background:"var(--color-surface)", borderRadius:"var(--radius-md)", boxShadow:"0 0 0 1px rgba(233,233,237,.08)", padding:16, display:"flex", flexDirection:"column", gap:14 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <div className="ws-section-title" style={{ flex:1 }}>Impact Analysis</div>
+            <span style={{ fontSize:11, color:"var(--color-muted)" }}>{impact.estimated_rerun_time}</span>
+          </div>
+
+          <p style={{ fontSize:13, color:"var(--color-text)", margin:0, lineHeight:1.55 }}>{impact.explanation}</p>
+
+          {impact.affected_stages.length > 0 && (
+            <div>
+              <div style={{ fontSize:11, fontWeight:600, color:"var(--color-warning)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:6 }}>
+                Must Re-run ({impact.affected_stages.length} stages)
+              </div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {impact.affected_stages.map(s => pill(s.replace(/_/g," "), "245,158,11"))}
+              </div>
+            </div>
+          )}
+
+          {impact.can_preserve.length > 0 && (
+            <div>
+              <div style={{ fontSize:11, fontWeight:600, color:"var(--color-success)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:6 }}>
+                Preserved ({impact.can_preserve.length} artifacts)
+              </div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {impact.can_preserve.map(s => pill(s.replace(/_/g," "), "16,185,129"))}
+              </div>
+            </div>
+          )}
+
+          {impact.affected_files.length > 0 && (
+            <div>
+              <div style={{ fontSize:11, fontWeight:600, color:"var(--color-muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:6 }}>
+                Files to Regenerate ({impact.affected_files.length})
+              </div>
+              <div style={{ maxHeight:120, overflowY:"auto", display:"flex", flexDirection:"column", gap:3 }}>
+                {impact.affected_files.map((f, i) => (
+                  <span key={i} style={{ fontSize:11, fontFamily:"var(--font-mono, monospace)", color:"var(--color-muted)", padding:"1px 6px", background:"rgba(233,233,237,.04)", borderRadius:4 }}>{f}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display:"flex", gap:10, marginTop:4 }}>
+            <button onClick={cancel} disabled={confirming}
+              style={{ flex:1, padding:"9px 0", borderRadius:8, border:"1px solid var(--color-divider)", background:"transparent", color:"var(--color-text)", fontSize:13, cursor:"pointer", fontFamily:"var(--font-sans)" }}>
+              Cancel
+            </button>
+            <button onClick={confirm} disabled={confirming}
+              style={{ flex:2, padding:"9px 0", borderRadius:8, border:"none", background:"var(--color-accent)", color:"#fff", fontSize:13, fontWeight:600, cursor:confirming?"not-allowed":"pointer", fontFamily:"var(--font-sans)", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+              {confirming && <span style={{ width:12, height:12, borderRadius:"50%", border:"2px solid rgba(255,255,255,.3)", borderTopColor:"#fff", animation:"spin .8s linear infinite", display:"inline-block" }} />}
+              ✓ Confirm Change
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Change history */}
+      {history.length > 0 && (
+        <div style={{ background:"var(--color-surface)", borderRadius:"var(--radius-md)", boxShadow:"0 0 0 1px rgba(233,233,237,.08)", padding:16, display:"flex", flexDirection:"column", gap:10 }}>
+          <div className="ws-section-title">Change History</div>
+          {history.map((c, i) => (
+            <div key={i} style={{ padding:"10px 12px", borderRadius:8, border:"1px solid var(--color-divider)", display:"flex", flexDirection:"column", gap:6 }}>
+              <div style={{ fontSize:12, color:"var(--color-text)", lineHeight:1.4 }}>{c.description}</div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
+                <span style={{ fontSize:11, color:"var(--color-warning)" }}>~{c.affected_stages?.length ?? 0} stages affected</span>
+                {c.estimated_rerun_time && <span style={{ fontSize:11, color:"var(--color-muted)" }}>• {c.estimated_rerun_time}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -372,12 +684,14 @@ export function WorkspacePage() {
   const [starting, setStarting] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [designOpen, setDesignOpen] = useState(false)
+  const [contextWarning, setContextWarning] = useState<{ pct: number; used: number; limit: number } | null>(null)
+  const [gateOpen, setGateOpen] = useState<string | null>(null)
   // Track whether the user explicitly dismissed the modal without completing review.
   // Prevents the modal from re-opening on every WebSocket state update while the
   // pipeline is still in design_review state.
   const designDismissedRef = useRef(false)
 
-  const { pipeline, liveLogs, connected, refresh } = usePipeline(projectId ?? null)
+  const { pipeline, liveLogs, connected, refresh } = usePipeline(projectId ?? null, setContextWarning)
   const logEvents = useLogs(projectId ?? null)
 
   const loadProject = useCallback(() => {
@@ -395,9 +709,14 @@ export function WorkspacePage() {
       if (!designDismissedRef.current) {
         setDesignOpen(true)
       }
+    } else if (s === "architecture_review_pending") {
+      setGateOpen("architecture")
+    } else if (s === "sprint_plan_review_pending") {
+      setGateOpen("sprint_plan")
     } else {
       // Pipeline moved past design_review — reset dismissed flag for the next review
       designDismissedRef.current = false
+      setGateOpen(null)
     }
   }, [pipeline.state])
 
@@ -417,7 +736,7 @@ export function WorkspacePage() {
   }
 
   const s = pipeline.state.toLowerCase()
-  const showQA     = s === "qa_pending" || s === "qa_in_progress"
+  const showQA     = s === "qa_pending"
   const notStarted = pipeline.status === "not_started" || pipeline.status === "stopped"
 
   // Sprint badge text
@@ -476,6 +795,13 @@ export function WorkspacePage() {
             </span>
           )}
 
+          {/* Quick Build mode badge */}
+          {project.mode === "quick" && (
+            <span style={{ fontSize:11, padding:"3px 10px", borderRadius:4, background:"rgba(16,185,129,.12)", color:"var(--color-success)", border:"1px solid rgba(16,185,129,.2)" }}>
+              ⚡ Quick Build
+            </span>
+          )}
+
           {/* Action buttons */}
           {pipeline.status === "running" ? (
             <button onClick={handleStop} disabled={stopping}
@@ -499,18 +825,24 @@ export function WorkspacePage() {
           {pipeline.requires_user_action && (
             <button
               onClick={() => {
-                if (s === "qa_pending" || s === "qa_in_progress") {
+                if (s === "qa_pending") {
                   alert("Please go to the Q&A tab to answer questions.")
-                }
-                else if (s.includes("design_review") || s === "design_ready") {
+                } else if (s.includes("design_review") || s === "design_ready") {
                   designDismissedRef.current = false
                   setDesignOpen(true)
+                } else if (s === "architecture_review_pending") {
+                  setGateOpen("architecture")
+                } else if (s === "sprint_plan_review_pending") {
+                  setGateOpen("sprint_plan")
+                } else {
+                  alert(`Pipeline is paused in state: ${pipeline.state}. Please check the server logs for errors.`)
                 }
-                else alert(`Pipeline is paused in state: ${pipeline.state}. Please check the server logs for errors.`)
               }}
               style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 14px", border:"1px solid rgba(245,158,11,.3)", borderRadius:"var(--radius-md)", background:"rgba(245,158,11,.08)", color:"var(--color-warning)", fontSize:13, cursor:"pointer", fontFamily:"var(--font-sans)", animation:"pulse-o 2s ease-in-out infinite" }}>
-              {s === "qa_pending" || s === "qa_in_progress" ? "⚡ Answer Q&A" : 
+              {s === "qa_pending" ? "⚡ Answer Q&A" :
                (s.includes("design_review") || s === "design_ready") ? "⚡ Review Design" :
+               s === "architecture_review_pending" ? "⚡ Review Architecture" :
+               s === "sprint_plan_review_pending" ? "⚡ Review Sprint Plan" :
                "⚡ Action Needed"}
             </button>
           )}
@@ -584,7 +916,39 @@ export function WorkspacePage() {
             <ChatPanel projectId={projectId!} />
           </div>
         )}
+
+        {/* Tab: integrations */}
+        {activeTab === "integrations" && (
+          <div style={{ flex:1, display:"flex", flexDirection:"column", minHeight:0 }}>
+            <IntegrationsPanel projectId={projectId!} />
+          </div>
+        )}
+
+        {/* Tab: changes */}
+        {activeTab === "changes" && (
+          <div style={{ flex:1, display:"flex", flexDirection:"column", minHeight:0 }}>
+            <RequirementChangePanel projectId={projectId!} />
+          </div>
+        )}
       </div>
+
+      {/* Context window warning banner */}
+      {contextWarning && (
+        <div style={{ position:"fixed", bottom:16, right:16, zIndex:40, maxWidth:340, padding:"12px 16px", borderRadius:12, background:"rgba(245,158,11,.1)", border:"1px solid rgba(245,158,11,.3)", color:"var(--color-warning)", fontSize:12, display:"flex", alignItems:"center", gap:10, boxShadow:"0 8px 24px rgba(0,0,0,.3)", animation:"slide-up .2s ease-out" }}>
+          <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" style={{ flexShrink:0 }}><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z M12 9v4 M12 17h.01" /></svg>
+          <span style={{ flex:1 }}>Context window {contextWarning.pct}% full ({Math.round(contextWarning.used/1000)}K / {Math.round(contextWarning.limit/1000)}K tokens)</span>
+          <button onClick={() => setContextWarning(null)} style={{ background:"none", border:"none", cursor:"pointer", color:"var(--color-warning)", padding:0, fontSize:14, lineHeight:1 }}>✕</button>
+        </div>
+      )}
+
+      {/* Architecture / Sprint plan gate modal */}
+      {gateOpen && (
+        <GateModal
+          projectId={projectId!}
+          gate={gateOpen}
+          onDone={() => { setGateOpen(null); loadProject(); refresh() }}
+        />
+      )}
 
       {/* Design review modal */}
       {designOpen && (
@@ -599,6 +963,19 @@ export function WorkspacePage() {
             // Review completed — clear dismissed flag, pipeline will advance past design_review
             designDismissedRef.current = false
             setDesignOpen(false)
+            loadProject()
+            await refresh()
+          }}
+        />
+      )}
+
+      {/* Clarification panel (legacy overlay) — kept for cases where clarification_questions
+          appear before the QA state machine has taken over (state === "clarifying" still). */}
+      {pipeline.status === "paused" && pipeline.state === "clarifying" && pipeline.clarification_questions && pipeline.clarification_questions.length > 0 && (
+        <ClarificationPanel
+          projectId={projectId!}
+          questions={pipeline.clarification_questions}
+          onComplete={async () => {
             loadProject()
             await refresh()
           }}

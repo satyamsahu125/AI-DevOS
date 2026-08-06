@@ -18,11 +18,11 @@ from ..workspace.manager import WorkspaceManager
 from ..workspace.project_files import ProjectFileManager
 
 
-_container = Container().build()
-
-
 def get_container() -> Container:
-    return _container
+    from ..main import kernel
+    if not kernel._lifecycle._started:
+        kernel.start()
+    return kernel.container
 
 
 def get_project_manager(container: Container = Depends(get_container)) -> ProjectManager:

@@ -45,18 +45,55 @@ YOUR PROCESS (follow exactly):
 THE 7 CATEGORIES OF QUESTIONS (ask from these)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-CATEGORY 1 — WHAT IS IT?
-  What type of application is this?
-  (Web app / Mobile app / Desktop / Browser extension / CLI / API)
+CATEGORY 1 — WHAT IS IT? (MOST CRITICAL — ask this first)
+  What type of project is this? Choose the closest match:
 
-  What is the app's CORE purpose in one sentence?
-  (If you can't say it in one sentence, requirements are unclear)
+  ┌─────────────────┬────────────────────────────────────────────────────┐
+  │ web_fullstack   │ Web app with both backend API and frontend UI      │
+  │ web_frontend    │ Static site or frontend-only (no server)           │
+  │ api_service     │ Backend REST/GraphQL API only (no UI)              │
+  │ mobile_app      │ iOS/Android native app (React Native/Flutter/Expo) │
+  │ ml_pipeline     │ AI/ML model: training, evaluation, inference       │
+  │ cli_tool        │ Command-line application / terminal tool           │
+  │ data_pipeline   │ ETL / data processing / workflow automation        │
+  │ desktop_app     │ Native desktop app (Electron/PyQt/Tauri)           │
+  │ library         │ Reusable package, SDK, or shared module            │
+  └─────────────────┴────────────────────────────────────────────────────┘
 
-  What is the MOST IMPORTANT single feature?
-  (Everything else supports this)
+  This single answer changes EVERYTHING the architect builds.
+  A calculator app ≠ an LSTM training pipeline ≠ a mobile app.
 
+  ADDITIONAL TYPE-SPECIFIC QUESTIONS:
+
+  For ml_pipeline — ALWAYS ask:
+    - What framework? (PyTorch / TensorFlow / JAX / scikit-learn / other)
+    - What is the model type? (LSTM / Transformer / CNN / regression / etc.)
+    - Is an inference/serving API needed, or training scripts only?
+    - Experiment tracking? (MLflow / Weights & Biases / none)
+    - Data source? (local CSV / S3 / database / API)
+
+  For mobile_app — ALWAYS ask:
+    - Target platform: iOS only / Android only / both?
+    - Framework preference: React Native + Expo / Flutter / native Swift/Kotlin?
+    - Offline-first? (full functionality without internet)
+
+  For cli_tool — ALWAYS ask:
+    - Target OS: Linux / macOS / Windows / cross-platform?
+    - Language preference: Python / Go / Rust / Node.js?
+    - Distribution: pip package / homebrew / binary download?
+
+  For data_pipeline — ALWAYS ask:
+    - Orchestration: Airflow / Prefect / cron / none?
+    - Data volume: MB / GB / TB per run?
+    - Scheduling: real-time streaming / batch / manual trigger?
+
+  For library — ALWAYS ask:
+    - Language/ecosystem: Python / JavaScript / Go / Rust?
+    - Distribution: PyPI / npm / private registry?
+    - Does it need a demo CLI or example scripts?
+
+  What is the CORE purpose in one sentence?
   What features are explicitly NOT needed in v1?
-  (This prevents the architect from inventing unused complexity)
 
 CATEGORY 2 — WHO ARE THE USERS?
   Who will use this? Be specific:
@@ -252,6 +289,41 @@ SCALE_PROFILE RULES:
   1000+        → small_cloud or higher
   auth_needed  → true only if user explicitly said yes
   database_needed → false if no persistent data and under 1000 users
+
+PROJECT_TYPE RULES (MANDATORY — you MUST set this field):
+  Read what type of project the user described and set project_type to
+  EXACTLY one of these values (lowercase, underscore):
+
+    web_fullstack   — web app with backend + frontend
+    web_frontend    — static site or frontend-only
+    api_service     — backend API only, no UI
+    mobile_app      — iOS/Android native (React Native/Flutter/Expo)
+    ml_pipeline     — AI/ML model training, evaluation, inference
+    cli_tool        — command-line application
+    data_pipeline   — ETL, Airflow, Spark, data processing
+    desktop_app     — Electron/PyQt/Tauri native desktop
+    library         — reusable package/SDK
+
+  If the user said "LSTM", "train a model", "neural network", "PyTorch",
+  "TensorFlow", "ML", "AI model", "dataset" → project_type = "ml_pipeline"
+
+  If the user said "mobile app", "iOS", "Android", "React Native",
+  "Flutter", "Expo" → project_type = "mobile_app"
+
+  If the user said "CLI", "command line", "terminal tool",
+  "script" → project_type = "cli_tool"
+
+  Default only if nothing matches: "web_fullstack"
+
+TECH_PREFERENCES RULES:
+  Capture technology preferences from user answers as key-value pairs:
+    ml_framework:  PyTorch | TensorFlow | JAX | scikit-learn
+    serving:       FastAPI | Flask | none
+    tracking:      MLflow | wandb | none
+    mobile_framework: expo | flutter | bare_rn
+    language:      python | typescript | go | rust
+    db:            sqlite | postgres | mysql | none
+  Only include keys where the user gave a clear answer.
 """
 
 
@@ -266,8 +338,15 @@ class ClarificationPromptBuilder(PromptBuilder):
         body = f"Clarification Prompt:\n{base}" if base else "Clarification Prompt"
         return f"{SYSTEM_PROMPT}\n\n{body}"
 
-    def build_generate_prompt(self, request: str, domain_brief: dict | None = None) -> str:
+    def build_generate_prompt(self, request: str, domain_brief=None) -> str:
+        """Build the question-generation prompt, optionally enriched with DomainBrief context.
+
+        domain_brief may be a dict OR a DomainBrief Pydantic model — both are supported.
+        """
         domain_section = ""
+        # Normalise: convert Pydantic model to dict so we can use .get() uniformly.
+        if domain_brief is not None and hasattr(domain_brief, "model_dump"):
+            domain_brief = domain_brief.model_dump()
         if domain_brief and domain_brief.get("domain"):
             q_to_ask = domain_brief.get("questions_to_ask", [])
             q_not_ask = domain_brief.get("questions_not_to_ask", [])

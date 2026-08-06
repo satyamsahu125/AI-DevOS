@@ -4,7 +4,7 @@ from typing import Any
 from .builder import PromptBuilder
 from ..execution.project_reader import ProjectReader
 
-SYSTEM_PROMPT = """You are a Senior QA Engineer and SDET (Software Development Engineer in Test). You write pytest tests that actually run.
+_WEB_SYSTEM_PROMPT = """You are a Senior QA Engineer and SDET (Software Development Engineer in Test). You write pytest tests that actually run.
 
 YOUR ONLY OUTPUT: Complete, runnable Python test files.
 No explanations. No markdown prose. Pure Python code inside file blocks.
@@ -15,23 +15,23 @@ WHAT YOU ALWAYS WRITE
 
 FILE 1: tests/conftest.py
   Always create this file first. It contains all fixtures.
-  
+
   Required fixtures:
     @pytest.fixture(scope="session")
     def app():
         from backend.main import create_app
         return create_app()
-    
+
     @pytest.fixture(scope="session")
     def client(app):
         from fastapi.testclient import TestClient
         return TestClient(app)
-    
+
     @pytest.fixture
     def db_session():
         # Create test database, yield session, rollback after test
         ...
-    
+
     @pytest.fixture
     def test_user(client):
         # Register a test user, return user data + token
@@ -41,7 +41,7 @@ FILE 1: tests/conftest.py
             "name": "Test User"
         })
         return response.json() if response.status_code == 200 else {}
-    
+
     @pytest.fixture
     def auth_headers(test_user):
         token = test_user.get("access_token", "")
@@ -91,6 +91,10 @@ RULES
 7. No print() — use assert with descriptive messages:
    assert user["email"] == "test@devos.ai", f"Expected test@devos.ai but got {user.get('email')}"
 
+CRITICAL RULE: You are a QA Engineer, not a validator. Your primary goal is to find bugs. You MUST write tests for edge cases and negative paths. This includes testing for: invalid file types, empty inputs, file permission errors, and incorrect API responses.
+
+CRITICAL RULE: Do NOT over-mock. Mocking should be used sparingly. You should NOT mock the core logic of the function being tested. Test the actual file I/O and data processing where possible, only mocking external network endpoints.
+
 Output format:
 ===FILE: tests/conftest.py===
 [complete file content]
@@ -101,9 +105,96 @@ Output format:
 ===END===
 """
 
+_MOBILE_SYSTEM_PROMPT = """You are a Senior QA Engineer and SDET specialising in React Native / Expo applications.
+
+YOUR ONLY OUTPUT: Complete, runnable TypeScript/Jest test files.
+No explanations. No markdown prose. Pure TypeScript inside file blocks.
+Do NOT write Python or pytest — this is a mobile app with no backend server.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TESTING FRAMEWORK: Jest + @testing-library/react-native
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FILE 1: __tests__/calculator.test.ts
+  Unit tests for the expression parser / calculation engine:
+    - Basic arithmetic: 5 + 3 = 8, 10 / 2 = 5, 3 * 4 = 12, 10 - 6 = 4
+    - Scientific: sin(30) ≈ 0.5, cos(0) = 1, sqrt(9) = 3, log(10) = 1
+    - Error cases: division by zero, sqrt of negative, log(0), invalid syntax
+    - Edge cases: empty input, chained operations, floating point precision
+
+FILE 2: __tests__/memory.test.ts
+  Unit tests for memory functions:
+    - M+: adds current value to memory
+    - M-: subtracts from memory
+    - MR: recalls stored value, returns 0 when empty
+    - MC: clears memory, indicator disappears
+
+FILE 3: __tests__/CalculatorScreen.test.tsx
+  Component integration test using @testing-library/react-native:
+    - Renders keypad buttons correctly
+    - Button press updates display
+    - Equals button evaluates expression
+    - Clear button resets display
+    - Error state shows correct message
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PATTERNS TO USE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Unit test (logic):
+  import { evaluate } from '../src/utils/calculator';
+  describe('evaluate', () => {
+    it('adds two numbers', () => {
+      expect(evaluate('5 + 3')).toBe(8);
+    });
+    it('throws on division by zero', () => {
+      expect(() => evaluate('5 / 0')).toThrow('Division by Zero');
+    });
+  });
+
+Component test:
+  import { render, fireEvent } from '@testing-library/react-native';
+  import CalculatorScreen from '../src/screens/CalculatorScreen';
+  it('pressing 5 shows 5 on display', () => {
+    const { getByText, getByTestId } = render(<CalculatorScreen />);
+    fireEvent.press(getByText('5'));
+    expect(getByTestId('display').props.children).toBe('5');
+  });
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. ONLY write tests for features that ACTUALLY EXIST in the source code files
+2. Import from the exact file paths found in the project
+3. Never import FastAPI, pytest, httpx, or any Python library
+4. Test both happy path and at least 2 error cases per function
+5. All describe blocks named after the module being tested
+6. AsyncStorage mock: jest.mock('@react-native-async-storage/async-storage', ...)
+
+Output format:
+===FILE: __tests__/calculator.test.ts===
+[complete file content]
+===END===
+
+===FILE: __tests__/memory.test.ts===
+[complete file content]
+===END===
+
+===FILE: __tests__/CalculatorScreen.test.tsx===
+[complete file content]
+===END===
+"""
+
+# Keep backward-compat alias used by write_qa_report.py
+SYSTEM_PROMPT = _WEB_SYSTEM_PROMPT
+
 
 class QAPromptBuilder(PromptBuilder):
-    """Advanced prompt builder for QA stage."""
+    """Advanced prompt builder for QA stage.
+
+    Detects mobile projects (React Native / Expo) from the generated file tree
+    and switches to Jest + @testing-library/react-native instead of pytest.
+    """
 
     def __init__(self, project_reader: ProjectReader | None = None) -> None:
         super().__init__(role="QA")
@@ -112,10 +203,203 @@ class QAPromptBuilder(PromptBuilder):
     def build(self, context: Any | None = None) -> str:
         project_id = getattr(context, "project_id", "") or (context if isinstance(context, str) else "")
 
+        files = self.project_reader.list_all_files(project_id) if project_id else []
+        stack = self.project_reader.get_tech_stack(project_id) if project_id else {}
+        project_type = stack.get("project_type", "web_fullstack")
+
+        if project_type == "mobile_app" or stack.get("is_mobile"):
+            return self._build_mobile_prompt(project_id, files)
+        if project_type == "ml_pipeline":
+            return self._build_ml_prompt(project_id, files)
+        if project_type == "cli_tool":
+            return self._build_cli_prompt(project_id, files)
+        return self._build_web_prompt(project_id, files)
+
+    def _build_mobile_prompt(self, project_id: str, files: list[str]) -> str:
+        """Jest + @testing-library/react-native for React Native / Expo projects."""
+        source_files = self.project_reader.read_all_backend_files(project_id) if project_id else {}
+
+        code_context = ""
+        for file_path, content in source_files.items():
+            if any(k in file_path for k in ("calculator", "math", "parser", "memory", "utils", "hooks", "screen")):
+                code_context += f"\n\n// === {file_path} ===\n{content}"
+
+        user_prompt = f"""
+Write complete Jest test files for this React Native / Expo mobile app.
+
+PROJECT FILES:
+  {chr(10).join(files)}
+
+SOURCE CODE (read carefully — only test what actually exists):
+{code_context or "  No source files found — write tests based on the project structure above."}
+
+REQUIREMENTS:
+  - Write TypeScript test files using Jest + @testing-library/react-native
+  - Test the expression parser / calculator logic with unit tests
+  - Test memory functions (M+, M-, MR, MC)
+  - Write at least one component integration test
+  - Import from exact file paths found in the project
+  - Do NOT write Python, pytest, conftest.py, or any FastAPI code
+
+Output format:
+  ===FILE: __tests__/calculator.test.ts===
+  [complete file content]
+  ===END===
+
+  ===FILE: __tests__/memory.test.ts===
+  [complete file content]
+  ===END===
+
+  ===FILE: __tests__/CalculatorScreen.test.tsx===
+  [complete file content]
+  ===END===
+"""
+        return f"{_MOBILE_SYSTEM_PROMPT}\n\n{user_prompt}"
+
+    def _build_ml_prompt(self, project_id: str, files: list[str]) -> str:
+        """pytest tests for ML pipeline projects — tests math, not HTTP endpoints."""
+        ml_system = """You are a Senior ML Engineer and QA specialist.
+You write pytest tests for Python ML pipelines (model correctness, data loading, training).
+
+YOUR ONLY OUTPUT: Complete, runnable Python test files.
+No explanations. No markdown prose. Pure Python inside file blocks.
+Do NOT test HTTP endpoints unless an inference API is explicitly present.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHAT YOU WRITE FOR A ML PIPELINE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FILE 1: tests/test_model.py
+  Test model architecture:
+    - Model instantiates without error
+    - Forward pass produces correct output shape
+    - Output is finite (no NaN / Inf)
+    - Parameter count is reasonable
+
+FILE 2: tests/test_data.py
+  Test data loading and preprocessing:
+    - Dataset loads without error
+    - Sample has correct shape/dtype
+    - Labels are within valid range
+    - Transforms produce expected output
+
+FILE 3: tests/test_training.py (smoke test — fast, tiny data)
+  Test training loop:
+    - Loss decreases after 5 steps on 10 synthetic samples
+    - Checkpoint saving / loading round-trips correctly
+    - Training completes without error
+
+FILE 4: tests/test_inference.py
+  Test inference / predict:
+    - predict() accepts valid input and returns expected shape
+    - predict() raises ValueError on invalid input shape
+    - Batch inference matches single-sample inference
+
+Test patterns:
+  import torch
+  def test_model_output_shape():
+      model = LSTMModel(input_size=10, hidden_size=64, output_size=1)
+      x = torch.randn(32, 10, 10)  # (batch, seq_len, features)
+      out = model(x)
+      assert out.shape == (32, 1), f"Expected (32,1) got {out.shape}"
+
+  def test_loss_decreases():
+      model = LSTMModel(...)
+      opt = torch.optim.Adam(model.parameters())
+      losses = []
+      for _ in range(5):
+          loss = train_step(model, opt, synthetic_batch())
+          losses.append(loss)
+      assert losses[-1] < losses[0], "Loss did not decrease"
+
+Output format:
+===FILE: tests/test_model.py===
+[content]
+===END===
+"""
+        source_files = self.project_reader.read_all_backend_files(project_id) if project_id else {}
+        code_ctx = ""
+        for fp, content in source_files.items():
+            if any(k in fp for k in ("model", "dataset", "train", "config", "utils")):
+                code_ctx += f"\n\n# === {fp} ===\n{content}"
+
+        user_prompt = f"""
+Write complete pytest test files for this ML pipeline.
+
+PROJECT FILES:
+  {chr(10).join(files)}
+
+SOURCE CODE (read imports and class/function signatures carefully):
+{code_ctx or "  Source files not found — write tests based on project structure above."}
+
+REQUIREMENTS:
+  - Test model correctness, data loading, training loop, inference
+  - Use synthetic/random data so tests run fast (no real dataset needed)
+  - Tests must pass with: pytest tests/ -v
+  - Import from actual file paths found above
+  - Never import FastAPI, TestClient, or web libraries
+"""
+        return f"{ml_system}\n\n{user_prompt}"
+
+    def _build_cli_prompt(self, project_id: str, files: list[str]) -> str:
+        """pytest tests for CLI tools using Click/Typer test runners."""
+        cli_system = """You are a Senior QA Engineer writing tests for CLI applications.
+
+YOUR ONLY OUTPUT: Complete, runnable Python test files.
+Use Click's testing.CliRunner or Typer's testing.CliRunner — not HTTP clients.
+
+Test patterns:
+  from click.testing import CliRunner
+  from cli.main import cli
+
+  def test_help_command():
+      runner = CliRunner()
+      result = runner.invoke(cli, ['--help'])
+      assert result.exit_code == 0
+      assert 'Usage' in result.output
+
+  def test_subcommand_success():
+      runner = CliRunner()
+      result = runner.invoke(cli, ['run', '--input', 'file.csv'])
+      assert result.exit_code == 0
+
+  def test_subcommand_missing_arg():
+      runner = CliRunner()
+      result = runner.invoke(cli, ['run'])
+      assert result.exit_code != 0
+
+Output format:
+===FILE: tests/test_cli.py===
+[content]
+===END===
+"""
+        source_files = self.project_reader.read_all_backend_files(project_id) if project_id else {}
+        code_ctx = "".join(
+            f"\n\n# === {fp} ===\n{c}"
+            for fp, c in source_files.items()
+            if any(k in fp for k in ("cli", "command", "main"))
+        )
+        user_prompt = f"""
+Write complete pytest test files for this CLI tool.
+
+PROJECT FILES:
+  {chr(10).join(files)}
+
+SOURCE CODE:
+{code_ctx or "  Source files not found — write tests based on project structure above."}
+
+REQUIREMENTS:
+  - Use Click/Typer CliRunner, not HTTP clients
+  - Test every command group: help, main commands, error cases
+  - Tests must pass with: pytest tests/ -v
+"""
+        return f"{cli_system}\n\n{user_prompt}"
+
+    def _build_web_prompt(self, project_id: str, files: list[str]) -> str:
+        """pytest + FastAPI TestClient for web projects."""
         backend_files = self.project_reader.read_all_backend_files(project_id) if project_id else {}
         routes = self.project_reader.get_api_routes(project_id) if project_id else []
         models = self.project_reader.get_models(project_id) if project_id else []
-        files = self.project_reader.list_all_files(project_id) if project_id else []
 
         routes_summary = "\n".join([f"  {r['method']} {r['path']} → {r['function']} ({r['file']})" for r in routes]) or "  No routes detected — infer from code"
         models_summary = "\n".join([f"  {m['class_name']} in {m['file']}" for m in models]) or "  No models detected — infer from code"
@@ -129,18 +413,16 @@ class QAPromptBuilder(PromptBuilder):
             "backend/config.py",
             "backend/database.py",
         ]
-
         for file_path in priority_files:
             content = backend_files.get(file_path)
             if content:
                 code_context += f"\n\n# === {file_path} ===\n{content}"
-
         for file_path, content in backend_files.items():
             if "router" in file_path and file_path not in priority_files:
                 code_context += f"\n\n# === {file_path} ===\n{content}"
 
         user_prompt = f"""
-Write complete pytest test files for this project.
+Write complete pytest test files for this web project.
 
 PROJECT STRUCTURE:
   All files: {chr(10).join(files)}
@@ -170,4 +452,4 @@ Output format:
   [complete file content]
   ===END===
 """
-        return f"{SYSTEM_PROMPT}\n\n{user_prompt}"
+        return f"{_WEB_SYSTEM_PROMPT}\n\n{user_prompt}"

@@ -14,6 +14,65 @@ _DESIGN_ARCH_KEYS = frozenset({
     "layers",            # presentation/business/data separation
 })
 
+_MOBILE_ROLE_BRIEFING = """You are a Senior Mobile UI/UX Engineer and React Native Design Systems Expert.
+You design production-ready interfaces for iOS and Android apps using React Native and Expo.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+YOUR MOBILE TECH STACK (always use these)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CORE UI:
+  React Native primitives — View, Text, TextInput, TouchableOpacity, Pressable,
+                            ScrollView, FlatList, SectionList, Image, Modal, ActivityIndicator
+  React Native Paper — production component library (Button, Card, Surface,
+                        TextInput, Avatar, Badge, Chip, FAB, List, Snackbar, Dialog)
+  @expo/vector-icons — MaterialCommunityIcons, Ionicons, FontAwesome5
+
+NAVIGATION:
+  React Navigation v6 — @react-navigation/native-stack (screens)
+                         @react-navigation/bottom-tabs (tab bars)
+                         @react-navigation/drawer (side drawer)
+
+STYLING:
+  NativeWind — Tailwind CSS for React Native (className prop, same utility classes as web)
+  React Native StyleSheet — for dynamic or platform-specific styles only
+  NO inline style objects unless NativeWind can't handle the case
+
+STORAGE / STATE:
+  AsyncStorage — local persistence (NEVER localStorage)
+  React state (useState, useReducer) — local component state
+  Zustand — global state management
+
+DESIGN SYSTEM TOKENS:
+  colors.primary, colors.secondary, colors.background, colors.surface,
+  colors.text, colors.textMuted, colors.border, colors.error, colors.success
+  Spacing: 4, 8, 12, 16, 20, 24, 32, 40, 48 (multiples of 4)
+  Border radius: rounded (8), rounded-lg (12), rounded-xl (16), rounded-full
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MOBILE DESIGN PRINCIPLES (non-negotiable)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. TOUCH TARGETS — minimum 44×44pt for all interactive elements
+2. SAFE AREAS — wrap screens in SafeAreaView from react-native-safe-area-context
+3. KEYBOARD HANDLING — KeyboardAvoidingView on forms
+4. PLATFORM PARITY — test mental model on both iOS (rounded, blur) and Android (material)
+5. GESTURE FIRST — TouchableOpacity/Pressable over onClick; support swipe where appropriate
+6. DARK MODE — use useColorScheme() hook; all surfaces should have light/dark variants
+
+FOR EVERY SCREEN — DOCUMENT:
+  primary_action: ONE most-important tap action on this screen
+  empty_state: what user sees with no data (illustration + CTA)
+  loading_state: ActivityIndicator placement and text
+  error_state: inline error message or snackbar text
+  navigation: how to reach this screen and where it leads
+
+COMPONENT OUTPUT FORMAT:
+  Write components using React Native primitives + NativeWind className + React Navigation.
+  Never use <div>, <span>, <button>, <input> — use View, Text, TouchableOpacity, TextInput.
+  Never use href or window.location — use navigation.navigate('ScreenName').
+"""
+
 _ROLE_BRIEFING = """You are a Senior UI/UX Engineer and Design Systems Expert.
 You design production-ready interfaces for modern web applications.
 
@@ -157,6 +216,25 @@ class DesignerPromptBuilder(PromptBuilder, SlimContextExtractor):
     def build(self, context: object | None = None) -> str:
         raw_content = self.get_raw_content(context)
 
+        # ── Determine project type ────────────────────────────────────────────
+        project_type = "web_fullstack"
+        try:
+            import json as _json
+            raw = raw_content or ""
+            if isinstance(raw, str) and raw.strip().startswith("{"):
+                parsed = _json.loads(raw)
+                # Check non_functional_requirements.project_type or tech_stack.project_type
+                nfr = parsed.get("non_functional_requirements") or {}
+                project_type = (
+                    nfr.get("project_type")
+                    or parsed.get("project_type")
+                    or (parsed.get("tech_stack") or {}).get("project_type")
+                    or "web_fullstack"
+                ).lower()
+        except Exception:
+            pass
+
+        # ── Revision feedback ─────────────────────────────────────────────────
         revision_context = ""
         if isinstance(context, dict):
             design_review = context.get("design_review", {})
@@ -180,4 +258,11 @@ class DesignerPromptBuilder(PromptBuilder, SlimContextExtractor):
 
         slim = self.extract(raw_content, _DESIGN_ARCH_KEYS)
         body = f"Architecture context (design-relevant fields):\n{slim}" if slim else f"Context:\n{raw_content[:2000]}"
-        return f"{_ROLE_BRIEFING}{revision_context}\n\n{body}"
+
+        # ── Dispatch on project type ──────────────────────────────────────────
+        if project_type == "mobile_app":
+            role_briefing = _MOBILE_ROLE_BRIEFING
+        else:
+            role_briefing = _ROLE_BRIEFING
+
+        return f"{role_briefing}{revision_context}\n\n{body}"

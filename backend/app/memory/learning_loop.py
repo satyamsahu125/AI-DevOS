@@ -133,6 +133,37 @@ class LearningLoop:
                 self.knowledge_memory.store(key, value, category=category, source="learning_loop")
                 logger.debug("approved trajectory embedded into knowledge memory: key=%s category=%s", key, category)
 
+    def record_success(
+        self,
+        stage: str,
+        task_description: str,
+        artifact_summary: str,
+        retry_count: int = 0,
+        reviewer_feedback: str = "",
+        agent_model: str = "",
+        tokens_used: int = 0,
+        latency_ms: float = 0.0,
+        project_id: str = "",
+    ) -> None:
+        """Convenience wrapper around record_trajectory for approved outcomes.
+
+        Called by MemoryOrchestrator.record_approval() so callers don't need
+        to construct a Trajectory object directly.
+        """
+        trajectory = Trajectory(
+            stage=stage,
+            task_description=task_description,
+            artifact_summary=artifact_summary,
+            retry_count=retry_count,
+            approved=True,
+            reviewer_feedback=reviewer_feedback,
+            agent_model=agent_model,
+            tokens_used=tokens_used,
+            latency_ms=latency_ms,
+            project_id=project_id,
+        )
+        self.record_trajectory(trajectory, project_id=project_id)
+
     def get_project_trajectories(self, project_id: str, stage: str | None = None) -> list[dict]:
         """Query trajectories for a specific project."""
         with self._lock:

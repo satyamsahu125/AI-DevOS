@@ -45,5 +45,9 @@ class AgentResolver:
             "sprintdeploy": "sprint_deploy",
             "sprint_review": "sprint_review",
             "sprintreview": "sprint_review",
+            # R6: Integration Developer
+            "integration": "integration",
+            "integrationdeveloper": "integration",
+            "integration_developer": "integration",
         }
         return mapping.get(normalized, normalized)

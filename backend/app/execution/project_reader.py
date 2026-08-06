@@ -21,28 +21,46 @@ class ProjectReader:
     def get_project_dir(self, project_id: str) -> Path:
         return self.workspace.get_workspace_path(project_id) / "project"
 
-    def read_all_backend_files(self, project_id: str) -> dict[str, str]:
-        """Returns dict of {relative_path: file_content} for all Python files in backend/ directory.
+    # Source file extensions to include when reading backend files.
+    # Covers Python, TypeScript, JavaScript, and their JSX/TSX variants.
+    _SOURCE_EXTENSIONS = frozenset({
+        ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    })
 
-        Truncates files over 2000 chars to save context.
+    def read_all_backend_files(self, project_id: str) -> dict[str, str]:
+        """Returns {relative_path: file_content} for backend source files.
+
+        Reads Python, TypeScript, and JavaScript files from the backend/
+        directory (and the project root if no backend/ subdirectory exists).
+        Falls back to scanning the whole project dir when backend/ is absent,
+        so TypeScript-only and monorepo projects work correctly.
+
+        Truncates individual files over 2000 chars to keep context manageable.
         """
         project_dir = self.get_project_dir(project_id)
         backend_dir = project_dir / "backend"
 
-        if not backend_dir.exists():
-            logger.warning("No backend directory found for %s", project_id)
-            return {}
+        # Allow scanning the project root when there is no backend/ subdir
+        # (happens with JS/TS projects whose structure has no Python backend).
+        scan_dirs = [backend_dir] if backend_dir.exists() else [project_dir]
 
-        files = {}
-        for path in sorted(backend_dir.rglob("*.py")):
-            rel_path = str(path.relative_to(project_dir)).replace("\\", "/")
-            try:
-                content = path.read_text(encoding="utf-8")
-                if len(content) > 2000:
-                    content = content[:2000] + "\n# ... [truncated]"
-                files[rel_path] = content
-            except Exception as e:
-                logger.warning("Could not read file %s: %s", path, e)
+        files: dict[str, str] = {}
+        for scan_dir in scan_dirs:
+            for path in sorted(scan_dir.rglob("*")):
+                if path.suffix.lower() not in self._SOURCE_EXTENSIONS:
+                    continue
+                # Skip node_modules, __pycache__, hidden dirs, test files
+                parts = path.parts
+                if any(p in ("node_modules", "__pycache__", ".git", "venv", ".venv") for p in parts):
+                    continue
+                rel_path = str(path.relative_to(project_dir)).replace("\\", "/")
+                try:
+                    content = path.read_text(encoding="utf-8")
+                    if len(content) > 2000:
+                        content = content[:2000] + "\n// ... [truncated]"
+                    files[rel_path] = content
+                except Exception as e:
+                    logger.warning("Could not read file %s: %s", path, e)
 
         logger.info("Read %d backend files for project %s", len(files), project_id)
         return files
@@ -115,16 +133,22 @@ class ProjectReader:
         return routes
 
     def get_models(self, project_id: str) -> list[dict]:
-        """Parse model files to extract SQLAlchemy models.
+        """Parse model files to extract class definitions.
 
-        Returns list of {class_name, file} Used by QA and DevOps to understand data
-        structure.
+        Only processes Python (.py) files — JS/TS files use a different AST
+        and would raise SyntaxError if fed to the Python parser.
+
+        Returns list of {class_name, file} used by QA and DevOps to understand
+        the data structure.
         """
         models = []
         backend_files = self.read_all_backend_files(project_id)
 
         for file_path, content in backend_files.items():
             if "model" not in file_path:
+                continue
+            # Only attempt Python AST parsing on .py files
+            if not file_path.endswith(".py"):
                 continue
             try:
                 tree = ast.parse(content)
@@ -148,18 +172,42 @@ class ProjectReader:
     def get_tech_stack(self, project_id: str) -> dict:
         """Infer tech stack from existing files.
 
-        Used by DevOps to write correct Dockerfile.
+        Used by DevOps and QA to write correct configs and tests.
+        Detects mobile (React Native / Expo) vs. web projects.
         """
         files = self.list_all_files(project_id)
         file_set = set(files)
 
+        # Mobile detection signals — checked in priority order.
+        # 1. Expo-specific config files on disk
+        mobile_config_files = {"app.json", "metro.config.js", "babel.config.js", "eas.json"}
+        has_mobile_configs = bool(mobile_config_files & file_set)
+
+        # 2. React Native imports in package.json
+        pkg_content = (
+            self.read_file(project_id, "package.json")
+            or self.read_file(project_id, "frontend/package.json")
+            or ""
+        )
+        has_react_native_dep = "react-native" in pkg_content or '"expo"' in pkg_content
+
+        # 3. No backend/ directory and no requirements.txt → client-only → likely mobile
+        has_backend_dir = any(f.startswith("backend/") for f in files)
+        has_requirements = any("requirements" in f for f in files)
+
+        is_mobile = has_mobile_configs or has_react_native_dep or (
+            has_react_native_dep and not has_backend_dir
+        )
+
         stack = {
-            "backend_language": "python",
+            "backend_language": "none" if is_mobile else "python",
+            "is_mobile": is_mobile,
+            "has_expo": has_mobile_configs or ('"expo"' in pkg_content),
             "has_fastapi": any("fastapi" in f or "main.py" in f for f in files),
             "has_react": any("package.json" in f or ".tsx" in f for f in files),
             "has_typescript": any(".ts" in f or ".tsx" in f for f in files),
-            "has_requirements": any("requirements" in f for f in files),
-            "has_package_json": "frontend/package.json" in file_set,
+            "has_requirements": has_requirements,
+            "has_package_json": "package.json" in file_set or "frontend/package.json" in file_set,
             "backend_entry": self._find_entry_point(project_id),
             "backend_port": 8000,
             "frontend_port": 3000,
@@ -171,6 +219,37 @@ class ProjectReader:
         stack["uses_redis"] = "redis" in reqs.lower()
         stack["uses_celery"] = "celery" in reqs.lower()
 
+        # ── Project type detection from file heuristics ──────────────────────
+        # Priority: most-specific signals checked first.
+        ml_files = {"train.py", "evaluate.py", "predict.py"}
+        has_ml_files = bool(ml_files & file_set)
+        has_ml_reqs = any(kw in pkg_content for kw in ("torch", "tensorflow", "keras", "sklearn", "jax"))
+        has_ml_reqs = has_ml_reqs or any(kw in (self.get_requirements_txt(project_id) or "") for kw in ("torch", "tensorflow", "keras", "sklearn"))
+
+        has_airflow = any("airflow" in f or "dag" in f for f in files)
+        has_prefect = any("flow" in f and ".py" in f for f in files)
+        has_cli = any(f in file_set for f in {"cli/main.py", "main.go", "cmd/main.go"}) or any("typer" in pkg_content or "click" in pkg_content for _ in ["once"])
+
+        if is_mobile:
+            project_type = "mobile_app"
+        elif has_ml_files or has_ml_reqs:
+            project_type = "ml_pipeline"
+        elif has_airflow or has_prefect:
+            project_type = "data_pipeline"
+        elif has_cli:
+            project_type = "cli_tool"
+        elif not has_backend_dir and not has_requirements:
+            # SPA / static site
+            project_type = "web_frontend"
+        else:
+            project_type = "web_fullstack"
+
+        stack["project_type"] = project_type
+
+        logger.info(
+            "Tech stack for %s: project_type=%s is_mobile=%s has_expo=%s has_fastapi=%s",
+            project_id, project_type, is_mobile, stack["has_expo"], stack["has_fastapi"],
+        )
         return stack
 
     def _find_entry_point(self, project_id: str) -> str:

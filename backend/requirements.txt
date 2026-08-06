@@ -12,5 +12,13 @@ transformers>=4.0.0
 python-dotenv>=1.0.0
 docker>=6.1.0
 tenacity>=8.2.3
+boto3>=1.34.0
+
+# Phase 6 — Infrastructure & Production Hardening
+celery>=5.3.0               # task queue (replaces daemon threads when Redis is available)
+redis>=5.0.0                # Celery broker + result backend
+structlog>=24.0.0           # structured logging (optional — system uses stdlib if absent)
+opentelemetry-sdk>=1.24.0                         # distributed tracing
+opentelemetry-instrumentation-fastapi>=0.45b0     # FastAPI auto-instrumentation
 
 # sqlite3 is part of the Python standard library -- not installed via pip.

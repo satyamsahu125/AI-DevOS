@@ -41,12 +41,28 @@ export function DesignReviewModal({ projectId, onClose, onActionCompleted }: Pro
   const [feedback, setFeedback] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [activeSection, setActiveSection] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<"spec" | "preview">("spec")
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
 
   useEffect(() => {
     api.getDesignReview(projectId)
       .then(d => { setData(d); setLoading(false) })
       .catch(() => setLoading(false))
   }, [projectId])
+
+  function loadPreview() {
+    if (previewHtml) return
+    setPreviewLoading(true)
+    api.getDesignPreview(projectId)
+      .then(r => { setPreviewHtml(r.html); setPreviewLoading(false) })
+      .catch(() => { setPreviewHtml("<p style='padding:20px;color:#888'>Preview unavailable.</p>"); setPreviewLoading(false) })
+  }
+
+  function handleViewMode(mode: "spec" | "preview") {
+    setViewMode(mode)
+    if (mode === "preview") loadPreview()
+  }
 
   async function approve() {
     setSubmitting(true)
@@ -96,7 +112,41 @@ export function DesignReviewModal({ projectId, onClose, onActionCompleted }: Pro
               </div>
             )}
 
-            {/* Design sections */}
+            {/* View mode tabs */}
+            <div className="border-b border-zinc-800 px-8 pt-3 flex gap-1">
+              {(["spec", "preview"] as const).map(mode => (
+                <button
+                  key={mode}
+                  onClick={() => handleViewMode(mode)}
+                  className={`px-4 py-1.5 text-xs rounded-t-md border-b-2 capitalize transition-colors ${
+                    viewMode === mode
+                      ? "border-indigo-500 text-indigo-300 bg-indigo-500/5"
+                      : "border-transparent text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  {mode === "spec" ? "Design Spec" : "Visual Preview"}
+                </button>
+              ))}
+            </div>
+
+            {/* Preview iframe */}
+            {viewMode === "preview" && (
+              <div className="overflow-hidden" style={{ height: "55vh" }}>
+                {previewLoading ? (
+                  <div className="flex h-full items-center justify-center"><Spinner size={28} className="text-indigo-500" /></div>
+                ) : (
+                  <iframe
+                    srcDoc={previewHtml ?? ""}
+                    sandbox="allow-same-origin"
+                    title="Design Preview"
+                    style={{ width: "100%", height: "100%", border: "none", background: "#0f0f0f" }}
+                  />
+                )}
+              </div>
+            )}
+
+            {/* Design spec sections */}
+            {viewMode === "spec" && (
             <div className="divide-y divide-zinc-800/60 overflow-y-auto max-h-[55vh]">
               {sections.length === 0 ? (
                 <p className="px-8 py-6 text-sm text-zinc-500">No design data available.</p>
@@ -117,6 +167,7 @@ export function DesignReviewModal({ projectId, onClose, onActionCompleted }: Pro
                 </div>
               ))}
             </div>
+            )}
 
             {/* Feedback + actions */}
             <div className="border-t border-zinc-800 px-8 py-5 space-y-4">

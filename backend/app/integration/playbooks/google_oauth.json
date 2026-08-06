@@ -1,0 +1,20 @@
+{
+  "service": "google_oauth",
+  "display_name": "Google OAuth 2.0",
+  "description": "Sign in with Google — OAuth 2.0 authorization code flow",
+  "keywords": ["google", "oauth", "sso", "social login", "google auth", "openid", "google signin"],
+  "env_vars": [
+    {"name": "GOOGLE_CLIENT_ID", "description": "Google OAuth client ID from Google Cloud Console", "required": true},
+    {"name": "GOOGLE_CLIENT_SECRET", "description": "Google OAuth client secret", "required": true},
+    {"name": "GOOGLE_REDIRECT_URI", "description": "Authorized redirect URI registered in Google Cloud Console", "required": true}
+  ],
+  "python": {
+    "packages": ["authlib>=1.2.0", "httpx>=0.24.0"],
+    "snippet": "from authlib.integrations.starlette_client import OAuth\nfrom starlette.config import Config\nfrom starlette.requests import Request\n\nconfig = Config(environ=os.environ)\noauth = OAuth(config)\n\noauth.register(\n    name='google',\n    client_id=os.getenv('GOOGLE_CLIENT_ID'),\n    client_secret=os.getenv('GOOGLE_CLIENT_SECRET'),\n    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',\n    client_kwargs={'scope': 'openid email profile'},\n)\n\nasync def google_login(request: Request):\n    redirect_uri = os.getenv('GOOGLE_REDIRECT_URI')\n    return await oauth.google.authorize_redirect(request, redirect_uri)\n\nasync def google_callback(request: Request) -> dict:\n    token = await oauth.google.authorize_access_token(request)\n    userinfo = token.get('userinfo')\n    return {\n        'email': userinfo['email'],\n        'name': userinfo.get('name'),\n        'picture': userinfo.get('picture'),\n        'sub': userinfo['sub'],  # Google user ID\n    }"
+  },
+  "node": {
+    "packages": ["passport@^0.7.0", "passport-google-oauth20@^2.0.0", "express-session@^1.17.0"],
+    "snippet": "const passport = require('passport');\nconst GoogleStrategy = require('passport-google-oauth20').Strategy;\n\npassport.use(new GoogleStrategy({\n  clientID: process.env.GOOGLE_CLIENT_ID,\n  clientSecret: process.env.GOOGLE_CLIENT_SECRET,\n  callbackURL: process.env.GOOGLE_REDIRECT_URI,\n}, async (accessToken, refreshToken, profile, done) => {\n  // TODO: upsert user in DB\n  return done(null, { id: profile.id, email: profile.emails[0].value, name: profile.displayName });\n}));\n\n// Routes\napp.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));\napp.get('/auth/google/callback', passport.authenticate('google', { failureRedirect: '/login' }), (req, res) => {\n  res.redirect('/dashboard');\n});"
+  },
+  "docs_url": "https://developers.google.com/identity/protocols/oauth2"
+}

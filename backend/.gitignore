@@ -1,0 +1,21 @@
+# BUG-7 fix: never commit .env — it contains real credentials.
+.env
+.env.local
+.env.production
+
+# Python runtime
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# Runtime data
+data/*.db
+data/*.hnsw
+data/*.sqlite
+
+# Temp workspace
+temp-workspace/

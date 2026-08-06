@@ -14,20 +14,24 @@ class ExecutionStateRegistry:
 
     def __init__(self) -> None:
         self._lock = Lock()
-        self._running: set[str] = set()
+        self._running: dict[str, int] = {}
         self._stop_requested: set[str] = set()
 
     def mark_running(self, project_id: str) -> None:
         """Mark project_id as actively executing, clearing any stale stop request left over
         from a previous run (a fresh run should never be born already-stopped)."""
         with self._lock:
-            self._running.add(project_id)
-            self._stop_requested.discard(project_id)
+            self._running[project_id] = self._running.get(project_id, 0) + 1
+            if self._running[project_id] == 1:
+                self._stop_requested.discard(project_id)
 
     def mark_stopped(self, project_id: str) -> None:
         """Mark project_id as no longer executing (call in a finally: block)."""
         with self._lock:
-            self._running.discard(project_id)
+            if project_id in self._running:
+                self._running[project_id] -= 1
+                if self._running[project_id] <= 0:
+                    del self._running[project_id]
 
     def is_running(self, project_id: str) -> bool:
         with self._lock:

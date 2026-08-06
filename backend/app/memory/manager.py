@@ -88,6 +88,20 @@ class MemoryManager:
         record = self._find_record(namespaced)
         return record.content if record is not None else None
 
+    def store_stage_output(self, project_id: str, stage_name: str, content: str) -> None:
+        """Persist an approved stage output under a per-stage namespace key.
+
+        Replaces the single-slot workflow:latest_message pattern. Each stage's
+        output is stored independently so any downstream stage can read any
+        predecessor without it being overwritten by the next stage.
+        """
+        self.store(project_id, f"workflow:stage:{stage_name}", content)
+        logger.debug("store_stage_output: project=%s stage=%s bytes=%d", project_id, stage_name, len(content))
+
+    def load_stage_output(self, project_id: str, stage_name: str) -> str | None:
+        """Return the approved output for stage_name, or None if not yet run."""
+        return self.load(project_id, f"workflow:stage:{stage_name}")
+
     def list_for_project(self, project_id: str) -> list[MemoryRecord]:
         """Return every record namespaced under project_id (title starting with "{project_id}:")."""
         prefix = f"{project_id}:"

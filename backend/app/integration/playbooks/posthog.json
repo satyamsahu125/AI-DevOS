@@ -1,0 +1,19 @@
+{
+  "service": "posthog",
+  "display_name": "PostHog Product Analytics",
+  "description": "PostHog event tracking — user analytics, feature flags, A/B tests",
+  "keywords": ["analytics", "posthog", "tracking", "events", "feature flags", "product analytics", "telemetry"],
+  "env_vars": [
+    {"name": "POSTHOG_API_KEY", "description": "PostHog project API key (phc_...)", "required": true},
+    {"name": "POSTHOG_HOST", "description": "PostHog instance URL (default https://app.posthog.com)", "required": false}
+  ],
+  "python": {
+    "packages": ["posthog>=3.0.0"],
+    "snippet": "import posthog\n\nposthog.api_key = os.getenv('POSTHOG_API_KEY')\nposthog.host = os.getenv('POSTHOG_HOST', 'https://app.posthog.com')\nposthog.disabled = os.getenv('ENVIRONMENT', 'development') == 'development'  # skip in dev\n\ndef capture_event(distinct_id: str, event: str, properties: dict | None = None) -> None:\n    posthog.capture(distinct_id, event, properties or {})\n\ndef identify_user(distinct_id: str, properties: dict | None = None) -> None:\n    posthog.identify(distinct_id, properties or {})\n\ndef is_feature_enabled(flag_key: str, distinct_id: str) -> bool:\n    return posthog.feature_enabled(flag_key, distinct_id) or False\n\ndef get_feature_flag_payload(flag_key: str, distinct_id: str):\n    return posthog.get_feature_flag_payload(flag_key, distinct_id)"
+  },
+  "node": {
+    "packages": ["posthog-node@^4.0.0"],
+    "snippet": "const { PostHog } = require('posthog-node');\n\nconst ph = new PostHog(process.env.POSTHOG_API_KEY, {\n  host: process.env.POSTHOG_HOST || 'https://app.posthog.com',\n  disabled: process.env.NODE_ENV === 'development',\n});\n\nconst captureEvent = (distinctId, event, properties = {}) =>\n  ph.capture({ distinctId, event, properties });\n\nconst identifyUser = (distinctId, properties = {}) =>\n  ph.identify({ distinctId, properties });\n\nconst isFeatureEnabled = async (flagKey, distinctId) =>\n  ph.isFeatureEnabled(flagKey, distinctId);\n\nprocess.on('exit', () => ph.shutdown());"
+  },
+  "docs_url": "https://posthog.com/docs/libraries"
+}

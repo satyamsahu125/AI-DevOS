@@ -60,8 +60,15 @@ class WriteArchitectureAction(LLMAction):
         # This happens when the LLM mistakenly puts everything in out_of_scope
         # (e.g. misreading auth/database requirements). A valid architecture
         # must have at least some modules, endpoints, or data models.
+        # Normalize api_design alias → api_endpoints.
+        # Some models (e.g. qwen3 on Bedrock) emit "api_design" instead of
+        # "api_endpoints". We copy it over so every downstream consumer
+        # (reviewer, context_extractor, backend_builder) sees the canonical key.
+        if not parsed.get("api_endpoints") and parsed.get("api_design"):
+            parsed["api_endpoints"] = parsed.pop("api_design")
+
         modules = parsed.get("modules") or []
-        api_endpoints = parsed.get("api_endpoints") or parsed.get("api_design") or []
+        api_endpoints = parsed.get("api_endpoints") or []
         data_models = parsed.get("data_models") or []
         if not modules and not api_endpoints and not data_models:
             out_of_scope = parsed.get("out_of_scope", [])

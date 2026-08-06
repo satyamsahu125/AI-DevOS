@@ -70,17 +70,61 @@ def summarize_area(area: str, files: list[str]) -> AreaSummary:
     return AreaSummary(area=area, files=sorted(files), detected_stack=_detect_stack(files), has_manifest=_has_manifest(files))
 
 
-def build_run_instructions(project_name: str, description: str, backend_files: list[str], frontend_files: list[str]) -> str:
-    """Build a deterministic README covering what was generated and how to run it."""
+def build_run_instructions(
+    project_name: str,
+    description: str,
+    backend_files: list[str],
+    frontend_files: list[str],
+    has_dockerfile: bool = True,
+    integration_env_vars: list[dict] | None = None,
+) -> str:
+    """Build a deterministic README covering what was generated and how to run it.
+
+    R3: Includes Docker section when Dockerfile is present (has_dockerfile=True by default
+    since DevOps stage now always generates one).
+    R6: Includes "Required Environment Variables" section when integrations are detected.
+    """
     backend = summarize_area("backend", backend_files)
     frontend = summarize_area("frontend", frontend_files)
 
     lines = [f"# {project_name}", "", description.strip() or "_No description provided._", ""]
 
+    # R3: Docker section — primary run method when DevOps stage produced a Dockerfile
+    if has_dockerfile:
+        lines += [
+            "## Running with Docker (Recommended)",
+            "",
+            "```bash",
+            "docker compose up",
+            "```",
+            "",
+            "The application will be available at http://localhost:8000",
+            "",
+            "> First time setup: copy `.env.example` to `.env` and fill in your values.",
+            "",
+        ]
+
+    # R6: Required environment variables from integration playbooks
+    if integration_env_vars:
+        lines += [
+            "## Required Environment Variables",
+            "",
+            "Set these in `.env` before running the application.",
+            "",
+            "| Variable | Service | Required | Description |",
+            "|---|---|---|---|",
+        ]
+        for ev in integration_env_vars:
+            required = "Yes" if ev.get("required") else "No"
+            lines.append(
+                f"| `{ev.get('name', '')}` | {ev.get('service', '')} | {required} | {ev.get('description', '')} |"
+            )
+        lines.append("")
+
     for summary in (backend, frontend):
         if not summary.files:
             continue
-        lines.append(f"## {summary.area.capitalize()}")
+        lines.append(f"## {summary.area.capitalize()} (local development)")
         lines.append("")
         lines.append(f"**Detected stack:** {summary.detected_stack or 'unknown'}")
         if not summary.has_manifest:
@@ -92,7 +136,7 @@ def build_run_instructions(project_name: str, description: str, backend_files: l
         for file_path in summary.files:
             lines.append(f"- `{summary.area}/{file_path}`")
         lines.append("")
-        lines.append("**To run:**")
+        lines.append("**To run locally:**")
         lines.append("```bash")
         lines.append(f"cd {summary.area}")
         for step in _RUN_STEPS.get(summary.detected_stack or "", ["npm install && npm start"]):

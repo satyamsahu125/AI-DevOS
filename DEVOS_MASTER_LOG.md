@@ -854,3 +854,124 @@ The new graph-driven architecture, artifact versioning, and state management are
 **Next Logical Focus Area:**
 We need to decouple the generative processes further. Implementing **Agent Checkpointing** (allowing a task to resume exactly where it left off inside a stage if the backend is killed) and introducing **Streaming WebSocket Responses** to the frontend (to keep connections alive and show real-time agent thoughts) will prevent these TCP timeouts and make the system truly resilient.
 
+
+### 2026-08-01 PASS — Implemented Real-Time WebSocket Streaming
+
+**Task:** Address the TCP timeout failures identified in the last validation run by implementing a real-time WebSocket communication channel for agent activity.
+
+**Change:**
+- Implemented a robust WebSocket layer to stream agent thoughts and heartbeats from the backend to the frontend. This keeps the underlying TCP connection active during long-running LLM generation tasks, preventing timeouts. It also provides crucial real-time visibility into the agent's process for the user.
+
+**Backend Implementation:**
+- **\ackend/app/api/websocket.py\:**
+    - Modified \ConnectionManager\ to add a \roadcast_sync\ utility that safely schedules async WebSocket message dispatches from synchronous code.
+- **\ackend/app/llm/manager.py\:**
+    - Integrated calls to the \ws_manager\ to send 'thinking' and 'parsing' heartbeats before and after the main LLM call. This ensures the connection stays active even with non-streaming models. The \project_id\ is now used to correctly route messages to the frontend.
+
+**Frontend Implementation:**
+- Verified that the frontend already has an advanced WebSocket implementation (\WorkspacePage.tsx\, \usePipeline.ts\) that handles \log_line\ events and seamlessly displays them in the live LogPanel UI.
+
+**Outcome:** The system is now architecturally resilient to the \wsarecv\ timeout errors that previously blocked progress. The end-to-end validation run completed successfully without network-related interruptions.
+
+
+## SECTION 6 â€” POST-VALIDATION RETROSPECTIVE
+
+**Project Evaluated:** Image Captioner CLI
+**Outcome:** Full End-to-End Success
+
+With the underlying infrastructure stabilized via WebSockets, the pipeline completed the Discovery, Sprint, and Release phases successfully. A retrospective analysis of the generated artifacts (\project\ directory and \rtifacts\ repository) reveals critical insights into agent performance and areas for refinement.
+
+### Strengths
+
+1.  **Orchestration & State Management:** The new graph-based \PipelineSupervisor\ and \SprintSupervisor\ seamlessly managed state transitions. The \ArtifactStore\ successfully persisted intermediate states (e.g., \sprint_plan.json\, \qa_findings.json\), proving the architecture's core reliability.
+2.  **Domain Research & Planning:** The \DomainResearcher\ and \SprintPlannerAgent\ collaborated well. The resulting \sprint_plan.json\ logically separated the CLI scaffolding, the directory watcher logic, and the local AI model integration into distinct, manageable sprints.
+3.  **Documentation Clarity:** The \TechnicalWriterAgent\ produced a highly readable \README.md\ and \documentation.json\ that accurately described the CLI usage, installation steps, and basic configuration, providing a solid starting point for human developers.
+
+### Areas for Improvement
+
+1.  **Code Quality (BackendDeveloperAgent):** 
+    *   While the core logic for the directory watcher (\watchdog\) and CSV appending was functional, the agent **consistently failed to include comprehensive docstrings** (violating PEP 257) and lacked robust error handling for edge cases (e.g., file permission errors during CSV writes, or graceful degradation if the local AI model is unreachable).
+2.  **Test Quality (QAAgent):** 
+    *   The tests in the \	ests/\ directory were overly reliant on trivial 'happy path' testing. The agent heavily mocked the file system and AI model, but **failed to test critical edge cases**, such as handling non-image files mistakenly dropped in the directory, or handling images with corrupted metadata.
+3.  **Planning Efficiency (ScrumMasterAgent):** 
+    *   The task list (\	asks.json\) created by the \ScrumMasterAgent\ was functional but contained overly granular, redundant tasks that caused the \BackendDeveloperAgent\ to spin its wheels (e.g., separating the creation of a utility file and its imports into two separate tasks).
+4.  **Feedback Loop Rigidity:**
+    *   The \BugAnalyst\ correctly identified a mocked bug during the simulated QA feedback loop, but the routing back to the \BackendDeveloperAgent\ lacked specific context. The developer agent had to re-read the entire QA report rather than receiving a targeted patch instruction.
+
+### Next Steps (Prioritized Action Items)
+
+1.  **Prompt Engineering â€” Code Standards:** Refine the \BackendDeveloperAgent's system prompt (in \ackend/app/prompt/backend_developer_builder.py\) to explicitly enforce PEP 257 docstrings, type hinting (PEP 484), and strict error handling patterns.
+2.  **Prompt Engineering â€” Test Rigor:** Update the \QAAgent's prompt to mandate negative testing, edge-case coverage (e.g., empty directories, invalid file types), and limit the over-use of mocks for critical I/O boundaries.
+3.  **Task Consolidation:** Adjust the \ScrumMasterAgent\ logic to group tightly coupled code changes into single, cohesive tasks to reduce unnecessary context-switching overhead during the Sprint phase.
+4.  **Enhance Feedback Payload:** Modify the \BugAnalyst\ action schema to generate a structured \diff_proposal\ or \	argeted_fix_instruction\ to send back to the developer agent, streamlining the sprint feedback loops.
+
+### 2026-08-01 PASS â€” Surgical Upgrade of Agent System Prompts
+
+**Task:** Address the quality deficits identified in the post-validation retrospective by upgrading the system prompts for the \BackendDeveloperAgent\ and \QAAgent\.
+
+**Change:**
+- **\BackendDeveloperAgent\ (\ackend/app/prompt/backend_builder.py\):**
+    - Inserted a strict rule mandating clear, concise PEP 257 compliant docstrings for every class and function.
+    - Added a non-negotiable rule requiring robust error handling (wrapping I/O operations and external API calls in \	ry...except\ blocks).
+    - Included a 'Golden Example' directly in the prompt demonstrating high-quality code with both comprehensive docstrings and explicit exception handling (\FileNotFoundError\, \JSONDecodeError\).
+- **\QAAgent\ (\ackend/app/prompt/qa_builder.py\):**
+    - Added a strict rule emphasizing the agent's role as a bug finder and mandating tests for edge cases and negative paths (e.g., invalid file types, empty inputs).
+    - Inserted a rule explicitly restricting the over-use of mocks, requiring that the core logic and actual file I/O be tested meaningfully.
+    - Provided a 'Golden Example' of a negative test utilizing \pytest.raises\ to assert an expected failure.
+
+**Outcome:** The system prompts have been successfully upgraded. Future AI-DevOS project runs will generate significantly more robust, well-documented backend code and thorough, edge-case-aware QA tests, directly addressing the weaknesses found in the Image Captioner CLI retrospective.
+
+### 2026-08-01 PASS â€” Refinement of ScrumMasterAgent Prompt for Task Consolidation
+
+**Task:** Address the planning inefficiency identified in the retrospective by stopping the \ScrumMasterAgent\ from decomposing sprints into overly granular, trivial tasks.
+
+**Change:**
+- **\ScrumMasterAgent\ (\ackend/app/prompt/scrum_master_builder.py\):**
+    - Inserted a core principle (\CRITICAL RULE\) mandating the agent to create cohesive, efficient tasks and explicitly forbidding trivial single-line operations (e.g., 'add import statement').
+    - Included a 'Task Granularity Examples' section providing clear 'BAD' (too granular) and 'GOOD' (cohesive and efficient) examples of task breakdowns.
+
+**Outcome:** The system prompt for the \ScrumMasterAgent\ has been successfully refined. This change directly improves sprint efficiency by reducing unnecessary task granularity, which in turn reduces context-switching and overhead for the \BackendDeveloperAgent\ during execution.
+
+### 2026-08-01 PASS — Enhancement of BugAnalyst payload and QA Feedback Loop
+
+**Task:** Upgrade the BugAnalystAgent schema and pipeline routing to enable precise, targeted fix instructions during the bug-fixing loop.
+
+**Change:**
+- **\BugAnalystAgent\ Output Schema (\ackend/app/agents/bug_analyst.py\):**
+    - Modified the output schema to include \summary\, \ile_path\, \unction_name\, \line_number\, and \	argeted_fix_instruction\.
+    - Updated system prompt rules mandating explicit, actionable code changes directly within the payload (rather than generic QA pointers).
+- **\PipelineSupervisor\ (\ackend/app/workflow/pipeline_supervisor.py\):**
+    - Engineered the \code_bug\ handler to intercept BugAnalyst output.
+    - Configured it to dynamically route the precise \	argeted_fix_instruction\ directly to the affected agent (BackendDeveloper/FrontendDeveloper) in a targeted, isolated fix prompt.
+    - Wired the state transition to appropriately flush release-stage memory and restart the QA phase for verifying the code change.
+
+**Outcome:** The QA feedback loop is now vastly more efficient. Developer agents no longer receive the entire, noisy QA report. Instead, they receive surgical, single-action fix instructions, resolving the final inefficiency identified in the Image Captioner CLI retrospective.
+
+## SECTION 7 — STRATEGIC ROADMAP: THE NEXT EVOLUTION
+
+### Strategic Vision
+Through systematic refactoring, the AI DevOS platform has successfully progressed through three major evolutionary phases:
+1. **Infrastructure Resilience:** Resolving brittle I/O boundaries and state management issues (e.g., WebSocket timeouts).
+2. **Architectural Maturity:** Implementing graph-based orchestration (PipelineSupervisor, WorkflowManager) and robust artifact persistence.
+3. **Agent Output Quality:** Enforcing strict code standards, comprehensive testing, and precision-targeted feedback loops via advanced prompt engineering and schema design.
+
+With a stable, resilient, and high-quality core established, the next major frontier for improvement is **Expanding Capability and Optimizing the Agentic Workflow**. We must evolve the system from a closed, single-language factory into an adaptive, multi-lingual ecosystem that seamlessly integrates human expertise and specialized, deterministic tooling. 
+
+### Prioritized Roadmap
+
+#### 1. Interactive Human-in-the-Loop Interventions
+*   **Problem Statement:** While the system handles automated feedback loops (like the BugAnalyst loop) well, it currently lacks a robust mechanism for human developers to directly intervene when an agent gets stuck (SPRINT_BLOCKED) or makes a nuanced domain error that automated tests miss.
+*   **Proposed Solution:** Implement an interactive intervention protocol. When the pipeline pauses, a new SteeringAgent will capture human feedback via the chat interface, parse it, and translate it into direct contextual updates or precise code patches injected into the agent's memory before resuming the pipeline.
+
+#### 2. Automated Security & Static Analysis Integration
+*   **Problem Statement:** The system relies entirely on the LLM's intrinsic knowledge to write secure and performant code. It has no automated awareness of zero-day vulnerabilities, anti-patterns, or linting errors (e.g., hardcoded credentials, SQL injection).
+*   **Proposed Solution:** Integrate a SecurityAuditAgent into the Release Phase that wraps standard static analysis tools (e.g., andit for Python, eslint for JS). The agent will parse the deterministic scanner outputs and autonomously generate 	argeted_fix_instruction payloads to preemptively resolve flaws before manual code review.
+
+#### 3. Multi-Language & Polyglot Capabilities
+*   **Problem Statement:** The system's prompt structures and validators are currently heavily optimized for a Python ecosystem. Modern applications require diverse tech stacks (e.g., TypeScript, Go, Rust), and the current pipeline does not dynamically adapt to different language idioms.
+*   **Proposed Solution:** Abstract the project validators and file writers using a Strategy pattern keyed to the 	ech_stack defined in the Discovery phase. Implement dynamic prompt injection for developer agents that automatically enforces language-specific best practices and documentation standards (e.g., JSDoc for TypeScript, strict typing for Go).
+
+#### 4. Self-Healing Test Suites
+*   **Problem Statement:** When requirement changes or major structural refactors occur, existing tests often fail simply because they are outdated, not because the new implementation is broken. The QAAgent currently struggles to distinguish between a legitimate code bug and a stale test.
+*   **Proposed Solution:** Introduce a TestHealerAgent into the QA feedback loop. When a test suite fails, this agent will analyze the stack trace alongside the diff of the implementation files. If the new implementation correctly maps to the updated architecture spec, the agent will autonomously rewrite the broken tests to align with the new code contracts.
+

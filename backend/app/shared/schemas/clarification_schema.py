@@ -45,5 +45,21 @@ class ClarificationArtifact(BaseModel):
             infrastructure_tier="static_frontend_only",
         )
     )
+    # Canonical project archetype — set by Clarifying, propagated through every
+    # downstream stage so each agent picks the right templates/tests/devops.
+    # Valid values:
+    #   web_fullstack   FastAPI/Express + React/Vue
+    #   web_frontend    Static site or React-only, no backend
+    #   api_service     Backend REST/GraphQL API, no frontend
+    #   mobile_app      React Native / Flutter / Expo
+    #   ml_pipeline     Python ML training + inference scripts
+    #   cli_tool        Command-line application
+    #   data_pipeline   ETL / Airflow / Spark
+    #   desktop_app     Electron / PyQt / Tauri
+    #   library         Reusable package or SDK
+    project_type: str = "web_fullstack"
+    # Free-text technology preferences captured from Q&A
+    # e.g. {"ml_framework": "PyTorch", "serving": "FastAPI", "tracking": "MLflow"}
+    tech_preferences: dict[str, str] = Field(default_factory=dict)
     confidence_score: float = 1.0
     ready_for_requirements: bool = True

@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>AI DevOS — CTO Strategy Report</title>
+<style>
+:root{--bg:#0d1117;--s1:#161b22;--s2:#21262d;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--blue:#58a6ff;--green:#3fb950;--yellow:#d29922;--red:#f85149;--purple:#bc8cff;--orange:#ffa657;--pink:#f778ba;--teal:#39d353;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:15px;line-height:1.7;}
+.hero{background:linear-gradient(135deg,#0a0e17,#1a1f2e,#0a0e17);border-bottom:1px solid var(--border);padding:56px 40px 40px;text-align:center;position:relative;overflow:hidden;}
+.hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 80% 60% at 50% 0%,rgba(88,166,255,0.1) 0%,transparent 70%);}
+.hero h1{font-size:2.6rem;font-weight:800;letter-spacing:-1px;background:linear-gradient(135deg,#58a6ff 0%,#bc8cff 50%,#f778ba 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;position:relative;}
+.hero .sub{color:var(--muted);font-size:1.05rem;margin-top:10px;position:relative;}
+.hero .tags{display:flex;justify-content:center;flex-wrap:wrap;gap:10px;margin-top:24px;position:relative;}
+.tag{background:var(--s2);border:1px solid var(--border);border-radius:20px;padding:5px 14px;font-size:0.82rem;color:var(--muted);}
+.tag b{color:var(--text);}
+nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 40px;display:flex;gap:0;overflow-x:auto;position:sticky;top:0;z-index:100;}
+nav a{display:block;padding:14px 16px;font-size:0.82rem;color:var(--muted);text-decoration:none;white-space:nowrap;border-bottom:2px solid transparent;transition:color 0.2s,border-color 0.2s;}
+nav a:hover{color:var(--blue);border-bottom-color:var(--blue);}
+.wrap{max-width:1100px;margin:0 auto;padding:48px 24px;}
+section{margin-bottom:72px;}
+h2{font-size:1.5rem;font-weight:700;margin-bottom:24px;display:flex;align-items:center;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--border);}
+h2 .n{background:linear-gradient(135deg,var(--blue),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:0.9rem;font-weight:800;letter-spacing:1px;text-transform:uppercase;}
+h3{font-size:1.05rem;font-weight:700;color:var(--blue);margin:24px 0 10px;}
+p{color:var(--muted);margin-bottom:14px;}
+strong{color:var(--text);}
+/* Cards */
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;}
+.card{background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:20px;transition:border-color 0.2s;}
+.card:hover{border-color:var(--blue);}
+.card-title{font-size:0.95rem;font-weight:700;margin-bottom:8px;}
+.card p{font-size:0.85rem;margin:0;}
+/* Status chips */
+.chip{display:inline-block;font-size:0.72rem;font-weight:700;letter-spacing:.8px;text-transform:uppercase;padding:3px 10px;border-radius:12px;margin-bottom:8px;}
+.chip-red{background:rgba(248,81,73,.15);color:var(--red);border:1px solid rgba(248,81,73,.3);}
+.chip-green{background:rgba(63,185,80,.15);color:var(--green);border:1px solid rgba(63,185,80,.3);}
+.chip-yellow{background:rgba(210,153,34,.15);color:var(--yellow);border:1px solid rgba(210,153,34,.3);}
+.chip-blue{background:rgba(88,166,255,.15);color:var(--blue);border:1px solid rgba(88,166,255,.3);}
+.chip-purple{background:rgba(188,140,255,.15);color:var(--purple);border:1px solid rgba(188,140,255,.3);}
+.chip-orange{background:rgba(255,166,87,.15);color:var(--orange);border:1px solid rgba(255,166,87,.3);}
+/* Tables */
+table{width:100%;border-collapse:collapse;font-size:0.86rem;margin:16px 0;}
+th{background:var(--s2);color:var(--muted);font-weight:700;text-transform:uppercase;font-size:0.72rem;letter-spacing:.8px;padding:10px 14px;text-align:left;border:1px solid var(--border);}
+td{padding:10px 14px;border:1px solid var(--border);color:var(--muted);vertical-align:top;}
+tr:hover td{background:var(--s2);}
+.ok{color:var(--green);font-weight:700;}
+.warn{color:var(--yellow);font-weight:700;}
+.bad{color:var(--red);font-weight:700;}
+/* Bug list */
+.bug{background:var(--s1);border:1px solid rgba(248,81,73,.3);border-left:3px solid var(--red);border-radius:8px;padding:16px;margin-bottom:12px;}
+.bug-title{font-weight:700;color:var(--text);font-size:0.9rem;margin-bottom:6px;}
+.bug-loc{font-family:'Courier New',monospace;font-size:0.78rem;color:var(--blue);margin-bottom:6px;}
+.bug-detail{font-size:0.84rem;color:var(--muted);}
+/* Phase cards for roadmap */
+.phase{background:var(--s1);border:1px solid var(--border);border-radius:12px;margin-bottom:24px;overflow:hidden;}
+.phase-head{padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:16px;}
+.phase-num{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;font-weight:800;flex-shrink:0;}
+.phase-body{padding:20px 24px;}
+.phase-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;}
+.criteria{background:var(--s2);border-radius:8px;padding:14px;}
+.criteria h4{font-size:0.78rem;text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:10px;}
+.criteria h4.green{color:var(--green);}
+.criteria h4.red{color:var(--red);}
+.criteria li{font-size:0.83rem;color:var(--muted);margin-left:16px;padding:2px 0;}
+ul{list-style:disc;}
+/* Verdict */
+.verdict{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin:20px 0;}
+.v-box{background:var(--s1);border-radius:10px;padding:20px;}
+.v-box.pos{border-left:3px solid var(--green);}
+.v-box.neg{border-left:3px solid var(--red);}
+.v-box h4{font-size:0.82rem;text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:12px;}
+.v-box.pos h4{color:var(--green);}
+.v-box.neg h4{color:var(--red);}
+.v-item{font-size:0.85rem;color:var(--muted);padding:4px 0 4px 14px;position:relative;}
+.v-item::before{content:'•';position:absolute;left:0;}
+.v-box.pos .v-item::before{color:var(--green);}
+.v-box.neg .v-item::before{color:var(--red);}
+/* Fixed banner */
+.fix-banner{background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.3);border-radius:8px;padding:16px 20px;margin-bottom:20px;display:flex;gap:12px;align-items:flex-start;}
+.fix-banner .icon{font-size:1.2rem;flex-shrink:0;}
+.fix-banner p{margin:0;font-size:0.87rem;color:var(--text);}
+code{font-family:'Courier New',monospace;background:var(--s2);padding:2px 6px;border-radius:4px;font-size:0.82rem;color:var(--text);}
+footer{text-align:center;padding:40px 24px;color:var(--muted);font-size:0.82rem;border-top:1px solid var(--border);}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>AI DevOS — CTO Strategy Report</h1>
+  <div class="sub">Root cause fix · Full assessment · Emergent comparison · New roadmap</div>
+  <div class="tags">
+    <div class="tag">Prepared by: <b>Principal Architect</b></div>
+    <div class="tag">Date: <b>August 2026</b></div>
+    <div class="tag">Phases analysed: <b>9 implemented + 10 planned</b></div>
+    <div class="tag">Crash: <b>FIXED</b></div>
+  </div>
+</div>
+
+<nav>
+  <a href="#fix">🔧 Root Cause Fix</a>
+  <a href="#exec">01 Executive Summary</a>
+  <a href="#assess">02 AI DevOS Assessment</a>
+  <a href="#emergent">03 Emergent Summary</a>
+  <a href="#compare">04 Comparison</a>
+  <a href="#bugs">05 Critical Bugs</a>
+  <a href="#missing">06 Missing Features</a>
+  <a href="#reject">07 Reject</a>
+  <a href="#adopt">08 Adopt</a>
+  <a href="#vision">09 Product Vision</a>
+  <a href="#roadmap">10 New Roadmap</a>
+  <a href="#risks">11 Risks</a>
+  <a href="#order">12 Implementation Order</a>
+  <a href="#next">13 Immediate Next Step</a>
+</nav>
+
+<div class="wrap">
+
+<!-- ══════════════════════════════════════════════════════════════
+     ROOT CAUSE FIX
+══════════════════════════════════════════════════════════════ -->
+<section id="fix">
+  <h2><span class="n">Critical Fix</span> Root Cause &amp; Fix — Server Startup Crash</h2>
+
+  <div class="fix-banner">
+    <div class="icon">✅</div>
+    <p><strong>FIXED.</strong> The server crash was a Python SyntaxError in <code>backend/app/execution/code_sandbox.py</code> at line 142. The fix has been applied. The server will now start correctly.</p>
+  </div>
+
+  <div class="bug">
+    <div class="bug-title">SyntaxError: starred expression in conditional context</div>
+    <div class="bug-loc">backend/app/execution/code_sandbox.py — line 142 — detect_stack()</div>
+    <div class="bug-detail">
+      <p><strong>Root cause:</strong> Python does not allow a starred unpacking expression (<code>*expr</code>) with a conditional (<code>if … else</code>) inside a tuple literal. The expression <code>*project_dir.iterdir() if project_dir.is_dir() else []</code> is syntactically invalid — the starred operator only applies in a flat unpacking context, not as a ternary operand inside a tuple.</p>
+      <p style="margin-top:8px"><strong>Why this broke startup:</strong> Python's import system executes the module body at import time. The SyntaxError in <code>code_sandbox.py</code> causes the module to fail to load, which propagates up through <code>kernel/container.py</code> → <code>api/dependencies.py</code> → <code>api/artifacts.py</code> → <code>api/router.py</code> → <code>app/main.py</code>, crashing the entire uvicorn process before it can serve a single request.</p>
+      <p style="margin-top:8px"><strong>Fix applied:</strong></p>
+      <pre style="background:var(--s2);padding:12px;border-radius:6px;font-size:0.82rem;margin-top:6px;overflow-x:auto;">
+<span style="color:var(--red)">- for candidate in (
+-     project_dir,
+-     *project_dir.iterdir() if project_dir.is_dir() else [],
+- ):</span>
+<span style="color:var(--green)">+ subdirs = list(project_dir.iterdir()) if project_dir.is_dir() else []
++ for candidate in [project_dir, *subdirs]:</span>
+      </pre>
+      <p style="margin-top:8px"><strong>Impact before fix:</strong> 100% of requests fail. No API, no frontend, no pipeline. The entire product is non-functional.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     01 EXECUTIVE SUMMARY
+══════════════════════════════════════════════════════════════ -->
+<section id="exec">
+  <h2><span class="n">01</span> Executive Summary</h2>
+
+  <p>AI DevOS is a <strong>19-stage autonomous software engineering platform</strong> with a sophisticated architecture: 4-layer memory, per-stage retry intelligence, human collaboration gates, agile sprint model, and a full intelligence layer (FileIndexer, DependencyGraph, CodeSummarizer). The engineering foundation is strong and deeply considered.</p>
+
+  <p>However, the platform currently cannot start due to a Python SyntaxError (now fixed), and has <strong>six additional critical bugs</strong> that make key features completely inoperative — including the ChatRouter, BugAnalyst rollback, human gate feedback loop, and the entire ModelRouter/TemplateEngine/ContextManager stack which was built but never wired into the live pipeline.</p>
+
+  <p>Emergent (emergent.sh) is the closest public competitor: a consumer-grade vibe-coding platform that generates, tests, and deploys full-stack apps in under 15 minutes, with $100M funding and 3M users. Emergent wins on <strong>speed, deployment completeness, and user simplicity</strong>. AI DevOS wins on <strong>process depth, extensibility, enterprise memory, and self-hosted control</strong>.</p>
+
+  <p><strong>Strategic recommendation:</strong> The next 90 days must be spent making AI DevOS trustworthy before adding new capabilities. Fix what is broken, activate what is built but disconnected, make generated code verifiably runnable, and ship real Docker/CI output from the DevOps stage. These four moves transform AI DevOS from an impressive prototype into a production-grade platform.</p>
+
+  <div class="card-grid" style="margin-top:24px">
+    <div class="card"><div class="chip chip-green">Strengths</div><div class="card-title">Deep Engineering Foundation</div><p>4-layer memory, agile sprints, 3-tier retry, human gates, intelligence layer — all implemented with clean abstractions and non-fatal error contracts.</p></div>
+    <div class="card"><div class="chip chip-red">Critical Gap</div><div class="card-title">Code Never Actually Runs</div><p>CodeSandbox is disabled by default and had a SyntaxError. Generated code is reviewed as documents, never executed. "Complete" means the LLM said so, not that it runs.</p></div>
+    <div class="card"><div class="chip chip-yellow">Opportunity</div><div class="card-title">Dead Code Activation</div><p>ModelRouter (21 profiles), TemplateEngine, and ContextManager are fully implemented but have zero call sites. Wiring them in costs days, not weeks, and significantly improves output quality.</p></div>
+    <div class="card"><div class="chip chip-orange">Competitive Risk</div><div class="card-title">Emergent Ships in 15 Minutes</div><p>Emergent deploys a live URL with authentication, payments, and a database in under 15 minutes from a text prompt. AI DevOS takes N sprints and requires manual deployment.</p></div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     02 AI DEVOS ASSESSMENT
+══════════════════════════════════════════════════════════════ -->
+<section id="assess">
+  <h2><span class="n">02</span> Complete AI DevOS Assessment</h2>
+
+  <h3>What Works Well (verified from source)</h3>
+  <table>
+    <tr><th>Component</th><th>Status</th><th>Evidence</th></tr>
+    <tr><td>WorkflowEngine retry loop</td><td><span class="ok">✅ Strong</span></td><td>Reviewer feedback injected into next prompt; checkpoint-based crash recovery; 3-tier rejection classification</td></tr>
+    <tr><td>MemoryOrchestrator (4 layers)</td><td><span class="ok">✅ Strong</span></td><td>Layers 1,2,4 fully active; non-fatal error contract throughout; StageContext DTO is clean</td></tr>
+    <tr><td>Human Gates</td><td><span class="ok">✅ Strong</span></td><td>3 pause points wired with REST API approve/revise/adjust; background thread resume works</td></tr>
+    <tr><td>FileIndexer / Intelligence</td><td><span class="ok">✅ Strong</span></td><td>AST-based Python parsing, SQLite persistence, non-LLM, fast; feeds DependencyGraph + CodeSummarizer</td></tr>
+    <tr><td>Provider abstraction</td><td><span class="ok">✅ Strong</span></td><td>4 providers (Bedrock, Claude, Gemini, Ollama) via LLMFactory; runtime switching via /settings/llm</td></tr>
+    <tr><td>EventBroadcaster</td><td><span class="ok">✅ Strong</span></td><td>Correct asyncio scheduling from background threads via call_soon_threadsafe</td></tr>
+    <tr><td>Per-project write locking</td><td><span class="ok">✅ Strong</span></td><td>threading.Lock per project in WorkspaceManager; prevents project.json corruption</td></tr>
+    <tr><td>FileRegistry + operation field</td><td><span class="ok">✅ Strong</span></td><td>Sprint 2+ correctly receives existing file list; LLM instructed to use update/patch semantics</td></tr>
+    <tr><td>CostTracker</td><td><span class="ok">✅ Strong</span></td><td>Per-call token + latency; API endpoint /metrics; ready for dashboard</td></tr>
+    <tr><td>Agile sprint model</td><td><span class="ok">✅ Strong</span></td><td>Sprint-level retry (2 attempts); change management with impact analysis; sprint context continuity</td></tr>
+    <tr><td>ModelRouter (Phase 7)</td><td><span class="warn">⚠️ Built, never called</span></td><td>21 stage profiles registered, get_profile() never invoked anywhere in pipeline</td></tr>
+    <tr><td>TemplateEngine (Phase 7)</td><td><span class="warn">⚠️ Built, never called</span></td><td>extract/find_similar/inject all implemented; zero call sites in live pipeline</td></tr>
+    <tr><td>ContextManager (Layer 3)</td><td><span class="warn">⚠️ Built, disabled</span></td><td>Explicitly commented out in container.py; context_manager=None passed to MemoryOrchestrator</td></tr>
+    <tr><td>CodeSandbox (Phase 5)</td><td><span class="warn">⚠️ Disabled + had SyntaxError</span></td><td>SANDBOX_ENABLED=false; crash-causing SyntaxError now fixed; subprocess mode needs testing</td></tr>
+    <tr><td>DevOps stage</td><td><span class="bad">❌ Advisory only</span></td><td>Writes documentation text, never produces a Dockerfile, docker-compose.yml, or CI config</td></tr>
+    <tr><td>ChatRouter.reply</td><td><span class="bad">❌ Type error</span></td><td>Returns LLMResponse object where ChatResponse expects str; chat endpoint always broken</td></tr>
+    <tr><td>BugAnalyst rollback</td><td><span class="bad">❌ Dead logic</span></td><td>Checks result.artifact which doesn't exist on WorkflowResult; rollback never triggers</td></tr>
+    <tr><td>Gate feedback loop</td><td><span class="bad">❌ Stored, never read</span></td><td>gate:feedback:{gate} written to MemoryManager; no enrichment method reads it</td></tr>
+    <tr><td>WebSocket auth</td><td><span class="bad">❌ Missing</span></td><td>APIKeyMiddleware exempts nothing but WebSocket endpoints bypass it anyway</td></tr>
+    <tr><td>Test suite</td><td><span class="warn">⚠️ Partial</span></td><td>377 tests collected but 4 known failures; no frontend tests; CodeSandbox untested</td></tr>
+  </table>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     03 EMERGENT SUMMARY
+══════════════════════════════════════════════════════════════ -->
+<section id="emergent">
+  <h2><span class="n">03</span> Emergent (emergent.sh) Summary</h2>
+
+  <p>Emergent is a <strong>consumer-grade vibe-coding platform</strong> that generates, tests, and deploys full-stack web and mobile applications from natural language prompts. Founded by Mukund Jha (ex-CTO, Dunzo) and Madhav Jha (PhD CS, Amazon SageMaker founding team). YC S24. $100M raised (Lightspeed, Khosla, SoftBank, Google). $100M ARR in 8 months. 3M+ users.</p>
+
+  <h3>What Emergent Actually Does</h3>
+  <div class="card-grid">
+    <div class="card"><div class="chip chip-blue">Architecture</div><div class="card-title">5 Specialized Agents</div><p>Architect → Designer → Developer → Integration → Product Manager. Each owns a distinct lifecycle phase. Coordinator PM agent validates coherence.</p></div>
+    <div class="card"><div class="chip chip-blue">Stack</div><div class="card-title">Opinionated but Real</div><p>React + Next.js frontend. FastAPI (Python) backend. MongoDB database. Google Container Registry hosting. Real code, not scaffolding.</p></div>
+    <div class="card"><div class="chip chip-blue">Speed</div><div class="card-title">Under 15 Minutes</div><p>Simple apps: 5 minutes. Complex full-stack with auth + payments: under 15 minutes. Live URL immediately after generation.</p></div>
+    <div class="card"><div class="chip chip-blue">Deployment</div><div class="card-title">One Click to Live</div><p>Containerized cloud hosting provisioned automatically. SSL, custom domain, database — all managed. 50 credits/month to keep running.</p></div>
+    <div class="card"><div class="chip chip-blue">Code Ownership</div><div class="card-title">GitHub Export</div><p>Every project syncs to user's GitHub repo with meaningful commit history. Code uses standard open-source stack. No lock-in.</p></div>
+    <div class="card"><div class="chip chip-blue">Context Management</div><div class="card-title">Forking</div><p>When context window fills (~200K tokens Standard, ~1M tokens Pro), user can Fork the task — creates new context window preserving all code.</p></div>
+    <div class="card"><div class="chip chip-blue">Integrations</div><div class="card-title">10,000+ Services</div><p>Integration Agent + Playbooks (pre-tested configs for Stripe, Google Auth, Airtable, Slack). MCP protocol for any custom/proprietary service.</p></div>
+    <div class="card"><div class="chip chip-blue">Debugging</div><div class="card-title">Self-Healing</div><p>When generated code has errors, system detects, analyzes root cause, generates fix, applies — without any user input. 90-second turnaround.</p></div>
+  </div>
+
+  <h3>Emergent's Limitations</h3>
+  <p>MongoDB-only database (no relational option). Credit-based pricing ($20/month for 100 credits). Steep jump from Standard to Pro ($20 → $200). No local execution environment. Context limits still exist. Less suitable for complex enterprise architectures. #1 on SWE-Bench but may hallucinate code that looks correct but doesn't execute.</p>
+
+  <h3>Does Emergent Pursue the Same Vision?</h3>
+  <p><strong>Partially.</strong> Both platforms aim to automate software creation from natural language. But Emergent's target is <em>democratization for non-developers</em> — making software creation accessible to anyone. AI DevOS's implicit target is <em>enterprise process automation</em> — giving professional teams a systematic, documented, auditable pipeline with deep process depth (security review, retrospective, strategic brief, domain research, agile sprints). These are different markets with different success metrics.</p>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     04 COMPARISON
+══════════════════════════════════════════════════════════════ -->
+<section id="compare">
+  <h2><span class="n">04</span> AI DevOS vs Emergent — Full Comparison</h2>
+
+  <table>
+    <thead><tr><th>Dimension</th><th>AI DevOS</th><th>Emergent</th><th>Winner</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Agent Architecture</strong></td><td>19-stage pipeline, single WorkflowEngine orchestrator, stateless agents</td><td>5 specialized coordinated agents (Arch→Design→Dev→Integration→PM)</td><td><span class="warn">Tied</span></td></tr>
+      <tr><td><strong>Planning Depth</strong></td><td>Domain research + Strategic brief + Architecture + Design + Sprint Planning + ScrumMaster</td><td>Architect agent handles planning in prompt interpretation</td><td><span class="ok">AI DevOS</span></td></tr>
+      <tr><td><strong>Code Generation</strong></td><td>Sprint-based, one file at a time, FileValidator before write, FileRegistry for update semantics</td><td>Whole-stack in single generation pass, then iterative refinement</td><td><span class="warn">Tied</span></td></tr>
+      <tr><td><strong>Code Execution/Testing</strong></td><td>CodeSandbox (disabled, was broken) — ruff/pytest/eslint/jest</td><td>Automated test runs with self-healing on failure, always active</td><td><span class="ok">Emergent</span></td></tr>
+      <tr><td><strong>Deployment</strong></td><td>DevOps stage writes advice only. No Dockerfile, no CI/CD output</td><td>One-click deployment to managed cloud. SSL, custom domain, DB included</td><td><span class="ok">Emergent</span></td></tr>
+      <tr><td><strong>Speed</strong></td><td>N sprints × M stages × LLM calls — hours to days</td><td>Simple: 5 min. Complex: 15 min. Live URL immediately</td><td><span class="ok">Emergent</span></td></tr>
+      <tr><td><strong>Memory System</strong></td><td>4-layer (Working/Episodic/Semantic/Procedural), LearningLoop, LessonStore, KnowledgeMemory (HNSW)</td><td>Project-level context awareness; Forking for context window management</td><td><span class="ok">AI DevOS</span></td></tr>
+      <tr><td><strong>Multi-LLM Support</strong></td><td>Bedrock, Claude, Gemini, Ollama — runtime switching via /settings/llm</td><td>Claude Sonnet, GPT-5, "Ultra Thinking" — platform controlled</td><td><span class="ok">AI DevOS</span></td></tr>
+      <tr><td><strong>Human Review Gates</strong></td><td>3 structured gates (Architecture, Design, Sprint Plan) with approve/revise/adjust REST API</td><td>Clarifying questions during Architect phase; no structured gate concept</td><td><span class="ok">AI DevOS</span></td></tr>
+      <tr><td><strong>Error Recovery</strong></td><td>IntelligentRetryEngine (FLAG/ASK_HUMAN/AUTO_FIX); performance-adaptive max retries</td><td>Self-healing debugging loop; automatic fix without user input</td><td><span class="warn">Tied</span></td></tr>
+      <tr><td><strong>Integration Layer</strong></td><td>Not implemented — no concept of Integration Agent or service connectors</td><td>Integration Agent + Playbooks + MCP protocol. 10,000+ services</td><td><span class="ok">Emergent</span></td></tr>
+      <tr><td><strong>Security Review</strong></td><td>Dedicated Security stage with SecurityReportArtifact</td><td>No dedicated security stage</td><td><span class="ok">AI DevOS</span></td></tr>
+      <tr><td><strong>Documentation</strong></td><td>Dedicated Document stage + Retrospective stage</td><td>No dedicated documentation stage</td><td><span class="ok">AI DevOS</span></td></tr>
+      <tr><td><strong>Git Integration</strong></td><td>Files written to disk. No git init, no commits, no export to user's GitHub</td><td>Full GitHub sync with meaningful commit history from day one</td><td><span class="ok">Emergent</span></td></tr>
+      <tr><td><strong>Self-Hosted</strong></td><td>Fully self-hosted, no credit limits, works with local Ollama models</td><td>Cloud-only, credit-based, managed hosting</td><td><span class="ok">AI DevOS</span></td></tr>
+      <tr><td><strong>Cost Model</strong></td><td>Self-hosted — pay only for LLM API calls; local Ollama = free</td><td>$20-$200/month + credit top-ups. Hosting 50 credits/month per app</td><td><span class="ok">AI DevOS</span></td></tr>
+      <tr><td><strong>Change Management</strong></td><td>ImpactAnalyzer — stage rollback + file-level impact analysis on requirement changes</td><td>Not implemented — new requirements restart from prompt</td><td><span class="ok">AI DevOS</span></td></tr>
+      <tr><td><strong>QA Depth</strong></td><td>QA stage + BugAnalyst stage + QA report artifact + bug-type classification (spec/arch/code)</td><td>Automated unit+integration tests; self-healing on failure</td><td><span class="ok">AI DevOS</span></td></tr>
+      <tr><td><strong>Observability</strong></td><td>CostTracker, trajectory data, PerformanceScorer, JSON structured logging; no dashboard yet</td><td>Built-in monitoring, usage metrics, performance data in enterprise plan</td><td><span class="warn">Tied</span></td></tr>
+      <tr><td><strong>Scalability</strong></td><td>Celery/Redis wired (disabled), SQLite (single-instance), thread-based gate pause</td><td>Containerized cloud hosting, isolated infrastructure per enterprise app</td><td><span class="ok">Emergent</span></td></tr>
+      <tr><td><strong>Frontend Generation</strong></td><td>FrontendDeveloper agent generates React files; no live preview</td><td>Designer agent generates full UI; live preview pane during build</td><td><span class="ok">Emergent</span></td></tr>
+      <tr><td><strong>Developer Experience</strong></td><td>Technical, process-rich, requires pipeline understanding</td><td>Single text box, quick starts, voice mode, beginner-friendly</td><td><span class="ok">Emergent</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     05 CRITICAL BUGS
+══════════════════════════════════════════════════════════════ -->
+<section id="bugs">
+  <h2><span class="n">05</span> Critical Bugs — All Must Fix Before New Features</h2>
+
+  <div class="bug">
+    <div class="bug-title">BUG-1: SyntaxError crashes entire server on startup [FIXED]</div>
+    <div class="bug-loc">backend/app/execution/code_sandbox.py:142 — detect_stack()</div>
+    <div class="bug-detail">Starred expression with ternary operator inside tuple literal. Python SyntaxError at import time. Cascades up through entire import chain, crashes uvicorn before serving any request. <strong>Fixed in this session.</strong></div>
+  </div>
+
+  <div class="bug">
+    <div class="bug-title">BUG-2: ChatRouter always returns wrong type — chat is broken</div>
+    <div class="bug-loc">backend/app/agents/chat_router.py — _read_and_explain_artifact() + _general_answer()</div>
+    <div class="bug-detail"><code>reply = self.llm.generate_text(...)</code> assigns an <code>LLMResponse</code> object to <code>reply</code>, which is then passed to <code>ChatResponse(reply=reply, ...)</code> which expects a <code>str</code>. The chat endpoint always returns a serialized LLMResponse object or raises a Pydantic validation error. Fix: <code>reply = self.llm.generate_text(...).content</code></div>
+  </div>
+
+  <div class="bug">
+    <div class="bug-title">BUG-3: BugAnalyst rollback logic never triggers</div>
+    <div class="bug-loc">backend/app/workflow/pipeline_supervisor.py — _run_release() after bug_analyst stage</div>
+    <div class="bug-detail"><code>result.artifact</code> is checked but <code>WorkflowResult</code> has no <code>.artifact</code> field. The <code>spec_bug</code>/<code>architecture_bug</code> full-pipeline rollback and the <code>code_bug</code> targeted-fix path are both permanently dead. Fix: Return artifact from WorkflowEngine.run() and thread it through WorkflowResult.</div>
+  </div>
+
+  <div class="bug">
+    <div class="bug-title">BUG-4: Human gate feedback is stored but never read</div>
+    <div class="bug-loc">backend/app/api/gates.py — _store_gate_feedback() + WorkflowEngine enrichment</div>
+    <div class="bug-detail"><code>gate:feedback:{gate}</code> is written to MemoryManager when a human submits revision feedback at a gate, but no enrichment method (<code>_with_*</code> or MemoryOrchestrator) reads this key. Human revision feedback is permanently discarded. Fix: Add a <code>_with_gate_feedback()</code> call in WorkflowEngine for the stage that immediately follows each gate.</div>
+  </div>
+
+  <div class="bug">
+    <div class="bug-title">BUG-5: ModelRouter, TemplateEngine, and ContextManager are dead code</div>
+    <div class="bug-loc">kernel/container.py — context_manager=None; llm/model_router.py; learning/template_engine.py</div>
+    <div class="bug-detail">Three complete Phase 7 systems are built and registered in the DI container but have zero call sites in the live pipeline. ModelRouter.get_profile() is never called. TemplateEngine.extract_template() is never called. ContextManager is explicitly passed as None. Zero impact on any pipeline run despite significant implementation effort.</div>
+  </div>
+
+  <div class="bug">
+    <div class="bug-title">BUG-6: WebSocket events are unauthenticated</div>
+    <div class="bug-loc">backend/app/api/websocket.py + APIKeyMiddleware</div>
+    <div class="bug-detail">APIKeyMiddleware enforces X-API-Key for HTTP routes, but WebSocket upgrades bypass it. Any client who knows a project_id can subscribe to all pipeline events, log lines, gate notifications, and artifact content. Fix: Validate X-API-Key (or query param token) in the WebSocket handshake before accepting the connection.</div>
+  </div>
+
+  <div class="bug">
+    <div class="bug-title">BUG-7: Production credentials committed to repository</div>
+    <div class="bug-loc">backend/.env — BEDROCK_API_KEY</div>
+    <div class="bug-detail">The .env file contains a real base64-encoded AWS Bedrock API key. This key should be considered compromised if the repository is pushed anywhere. The key must be rotated immediately and the .env file must be added to .gitignore. Never commit .env files with credentials.</div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     06 MISSING FEATURES
+══════════════════════════════════════════════════════════════ -->
+<section id="missing">
+  <h2><span class="n">06</span> Missing Features (vs Emergent + best-in-class)</h2>
+
+  <table>
+    <thead><tr><th>Feature</th><th>Impact</th><th>Emergent Has It?</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Real code execution</strong> — sandbox enabled by default, test results feed QA</td><td><span class="bad">Critical</span></td><td><span class="ok">Yes — always on</span></td></tr>
+      <tr><td><strong>Real deployment output</strong> — DevOps stage writes Dockerfile, docker-compose.yml, CI config</td><td><span class="bad">Critical</span></td><td><span class="ok">Yes — one-click deploy</span></td></tr>
+      <tr><td><strong>Git integration</strong> — git init, meaningful commits per file, export to user's GitHub</td><td><span class="warn">High</span></td><td><span class="ok">Yes — full GitHub sync</span></td></tr>
+      <tr><td><strong>Live preview</strong> — run generated app in sandbox, show iframe during build</td><td><span class="warn">High</span></td><td><span class="ok">Yes — real-time preview pane</span></td></tr>
+      <tr><td><strong>Integration agent</strong> — wire generated app to Stripe, auth, email, storage</td><td><span class="warn">High</span></td><td><span class="ok">Yes — 10,000+ services</span></td></tr>
+      <tr><td><strong>Dependency version pinning</strong> — resolve real versions at generation time</td><td><span class="warn">High</span></td><td><span class="warn">Partial</span></td></tr>
+      <tr><td><strong>Context window management</strong> — strategy for large projects > 200K tokens</td><td><span class="warn">High</span></td><td><span class="ok">Yes — Forking mechanism</span></td></tr>
+      <tr><td><strong>JWT/RBAC authentication</strong> — per-user project isolation</td><td><span class="warn">High</span></td><td><span class="ok">Yes — SSO + RBAC on enterprise</span></td></tr>
+      <tr><td><strong>Cost/analytics dashboard in UI</strong> — surface CostTracker data visually</td><td><span class="ok">Medium</span></td><td><span class="ok">Yes — metrics panel</span></td></tr>
+      <tr><td><strong>Rate limiting</strong> — protect LLM budget from API abuse</td><td><span class="ok">Medium</span></td><td><span class="warn">Not explicit</span></td></tr>
+      <tr><td><strong>Fast/quick build mode</strong> — skip non-essential stages for prototype builds</td><td><span class="ok">Medium</span></td><td><span class="ok">Yes — whole platform is fast mode</span></td></tr>
+      <tr><td><strong>FileRegistry persistence</strong> — survive server restarts</td><td><span class="ok">Medium</span></td><td>N/A</td></tr>
+      <tr><td><strong>Redis-backed gate pause state</strong> — for horizontal scaling</td><td><span class="ok">Low (MVP)</span></td><td><span class="ok">Yes — cloud infrastructure</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     07 REJECT
+══════════════════════════════════════════════════════════════ -->
+<section id="reject">
+  <h2><span class="n">07</span> Features to Reject from Emergent</h2>
+
+  <div class="verdict">
+    <div class="v-box neg">
+      <h4>Reject — Conflicts with AI DevOS Identity</h4>
+      <div class="v-item"><strong>Credit-based pricing:</strong> Antithetical to self-hosted mission. AI DevOS's competitive advantage is running on any LLM including local Ollama at zero marginal cost.</div>
+      <div class="v-item"><strong>MongoDB-only stack:</strong> Emergent's opinionated single-database model is fast but constrains generated apps. AI DevOS should generate the right database for the project's data model.</div>
+      <div class="v-item"><strong>Cloud-managed hosting only:</strong> AI DevOS is self-hosted. The output should be portable to any infrastructure, not locked to a platform's servers.</div>
+      <div class="v-item"><strong>No process depth:</strong> Emergent's speed comes from skipping Security review, Domain research, Strategic brief, Retrospective, and Change management. AI DevOS should keep all of these — they are the competitive moat for enterprise use.</div>
+      <div class="v-item"><strong>Opinionated UX simplification:</strong> Emergent's "vibe coding" abstraction strips control from developers. AI DevOS should remain technically transparent with visible reasoning, stage artifacts, and full LLM output visibility.</div>
+    </div>
+    <div class="v-box pos">
+      <h4>Why We Reject These</h4>
+      <div class="v-item">AI DevOS is not trying to win the consumer vibe-coding market. Emergent has $100M and 3M users — competing head-on there is not viable.</div>
+      <div class="v-item">The AI DevOS advantage is depth, control, extensibility, and self-hosted economics. These are enterprise attributes that Emergent explicitly does not offer.</div>
+      <div class="v-item">MongoDB-first would require reworking all backend prompts and eliminate generated app quality for relational use cases.</div>
+      <div class="v-item">Credit-based pricing defeats the purpose of supporting local LLMs (Ollama). A developer running AI DevOS against a local model should have zero ongoing cost.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     08 ADOPT
+══════════════════════════════════════════════════════════════ -->
+<section id="adopt">
+  <h2><span class="n">08</span> Features to Adopt from Emergent</h2>
+
+  <table>
+    <thead><tr><th>Feature</th><th>How to Adopt in AI DevOS</th><th>Priority</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Code always runs before being called complete</strong></td><td>Enable CodeSandbox with subprocess fallback (no Docker required). Inject lint/test results into QA stage. "Complete" = code parses + dependencies resolve, not just LLM approval.</td><td><span class="bad">P0 — Now</span></td></tr>
+      <tr><td><strong>Real deployment artifacts from DevOps stage</strong></td><td>Extend DevOps stage to use WriteProjectFilesAction for Dockerfile, docker-compose.yml, .github/workflows/ci.yml. Feed detected stack from FileIndexer as input — no guessing.</td><td><span class="bad">P0 — Now</span></td></tr>
+      <tr><td><strong>GitHub integration</strong></td><td>After each sprint: run git init (if not exists), stage all files, commit with meaningful messages per file. Expose POST /projects/{id}/push-to-github. Users own portable code.</td><td><span class="warn">P1 — Next</span></td></tr>
+      <tr><td><strong>Dependency version pinning</strong></td><td>Post-process requirements.txt and package.json: resolve each package against PyPI/npm registry and replace * with latest stable version. Build a small curated table for top-20 packages to avoid network dependency.</td><td><span class="warn">P1 — Next</span></td></tr>
+      <tr><td><strong>Self-healing debugging loop</strong></td><td>Wire CodeSandbox result into BugAnalyst stage automatically (Phase 5 already builds this). Make CodeSandbox enabled by default (not opt-in). Fix BugAnalyst rollback (BUG-3).</td><td><span class="warn">P1 — Next</span></td></tr>
+      <tr><td><strong>Context window strategy</strong></td><td>Track cumulative token usage per project. When approaching provider limit, summarize completed stage artifacts into a compact "project memory" blob. Log a warning in UI at 75% context utilization.</td><td><span class="ok">P2 — Soon</span></td></tr>
+      <tr><td><strong>Live app preview</strong></td><td>After BackendDeveloper sprint: start generated FastAPI app in CodeSandbox, expose /preview/{project_id} proxy. Show iframe in WorkspacePage. This is a massive DX win.</td><td><span class="ok">P2 — Soon</span></td></tr>
+      <tr><td><strong>Integration agent</strong></td><td>New IntegrationAgent stage between FrontendDeveloper and QA. Reads architecture artifact for required external services (payment, auth, storage, email). Generates service client code and wires it in.</td><td><span class="ok">P2 — Soon</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     09 PRODUCT VISION
+══════════════════════════════════════════════════════════════ -->
+<section id="vision">
+  <h2><span class="n">09</span> Updated Product Vision</h2>
+
+  <p><strong>AI DevOS is the enterprise-grade, self-hosted autonomous software engineering platform for professional teams.</strong></p>
+
+  <p>Where Emergent democratizes software creation for everyone, AI DevOS delivers a systematic, auditable, deeply process-rich pipeline for teams that care about <em>how</em> software is built — not just how fast. Every sprint is reviewed. Every rejection is learned from. Every decision is traceable. The generated code actually runs before being called complete. The DevOps output actually deploys. The security review actually flags vulnerabilities. The retrospective actually feeds future quality.</p>
+
+  <div class="card-grid">
+    <div class="card"><div class="chip chip-blue">Target User</div><div class="card-title">Professional Teams &amp; Enterprises</div><p>Teams that need auditable process, security review, change management, and code quality guarantees — not just the fastest prototype.</p></div>
+    <div class="card"><div class="chip chip-green">Core Differentiator</div><div class="card-title">Self-Hosted + Process Depth</div><p>Run on any LLM including local Ollama at zero marginal cost. Keep all process stages: Security, Domain Research, Strategic Brief, Retrospective, Change Management.</p></div>
+    <div class="card"><div class="chip chip-purple">Trust Principle</div><div class="card-title">"Complete" Means Runs</div><p>Generated code must parse, install dependencies, pass lint, and complete at least one test run before any stage is marked complete. Reviewer approval is necessary but not sufficient.</p></div>
+    <div class="card"><div class="chip chip-orange">DX Principle</div><div class="card-title">Transparent &amp; Controllable</div><p>Full artifact visibility, gate controls, requirement change management, and per-stage rollback. Developers see exactly what the AI did and why, not just the result.</p></div>
+  </div>
+
+  <h3>The Three Non-Negotiables</h3>
+  <p><strong>1. Code that runs:</strong> The platform must never mark a project complete when the generated code cannot be installed and executed. This is non-negotiable and must be enforced by automated verification, not just LLM review.</p>
+  <p><strong>2. Deployment that deploys:</strong> The DevOps stage must produce real Dockerfiles and CI configs that a developer can use immediately, not advisory text about what they should do.</p>
+  <p><strong>3. Code the user owns:</strong> Every project must be exportable as a standard git repository with meaningful history, ready to push to any hosting provider.</p>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     10 NEW ROADMAP
+══════════════════════════════════════════════════════════════ -->
+<section id="roadmap">
+  <h2><span class="n">10</span> New Roadmap — 10 Phases, Each Ships a Complete Product</h2>
+  <p style="margin-bottom:24px">Every phase must leave the platform in a fully functional, shippable state. No phase introduces partially-completed systems.</p>
+
+  <!-- R1 -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num" style="background:rgba(248,81,73,.15);color:var(--red)">R1</div>
+      <div>
+        <div style="font-size:1.05rem;font-weight:700">Fix What's Broken</div>
+        <div style="font-size:0.85rem;color:var(--muted)">Make the platform trustworthy before adding anything new</div>
+      </div>
+      <div style="margin-left:auto"><span class="chip chip-red">Immediate — Week 1</span></div>
+    </div>
+    <div class="phase-body">
+      <p><strong>Objective:</strong> Fix all 7 critical bugs. Activate the 3 built-but-disconnected systems. Make the test suite fully green.</p>
+      <h3>Deliverables</h3>
+      <ul style="color:var(--muted);font-size:0.88rem;margin-left:20px">
+        <li>BUG-1: SyntaxError in code_sandbox.py — <strong>DONE</strong></li>
+        <li>BUG-2: ChatRouter.reply type error — fix <code>.content</code> extraction in _read_and_explain_artifact() + _general_answer()</li>
+        <li>BUG-3: BugAnalyst rollback — add <code>artifact</code> field to WorkflowResult; thread through PipelineSupervisor</li>
+        <li>BUG-4: Gate feedback loop — add _with_gate_feedback() to WorkflowEngine for post-gate stages</li>
+        <li>BUG-5: Wire ModelRouter into WorkflowEngine (before each LLM call, resolve stage profile; pass to generate_text)</li>
+        <li>BUG-5: Wire TemplateEngine extract() after each approval; inject() before each stage prompt build</li>
+        <li>BUG-5: Re-enable ContextManager in container.py (fix the attribute name collision noted in ROADMAP.md)</li>
+        <li>BUG-6: Add WebSocket auth (validate X-API-Key query param in handshake)</li>
+        <li>BUG-7: Rotate BEDROCK_API_KEY, add .env to .gitignore, create .env.example</li>
+        <li>Fix 4 failing tests (transformers missing, 2 stale Fix009 tests, stale stage order test)</li>
+        <li>Persist FileRegistry to SQLite (survives restarts)</li>
+      </ul>
+      <div class="phase-grid">
+        <div class="criteria"><h4 class="green">Exit Criteria</h4><ul><li>pytest: zero failures across all 377+ tests</li><li>Chat endpoint returns strings</li><li>Gate feedback appears in post-gate stage prompts</li><li>ModelRouter profile is logged per stage call</li><li>Server starts cleanly (already fixed)</li></ul></div>
+        <div class="criteria"><h4 class="red">Risk</h4><ul><li>ContextManager attribute conflict — must be renamed carefully to avoid breaking existing memory reads</li><li>BugAnalyst rollback requires WorkflowResult schema change — must verify no consumers break</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- R2 -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num" style="background:rgba(255,166,87,.15);color:var(--orange)">R2</div>
+      <div>
+        <div style="font-size:1.05rem;font-weight:700">Verifiable Code</div>
+        <div style="font-size:0.85rem;color:var(--muted)">"Complete" means the code actually runs, not that an LLM said it's fine</div>
+      </div>
+      <div style="margin-left:auto"><span class="chip chip-orange">Week 2–3</span></div>
+    </div>
+    <div class="phase-body">
+      <p><strong>Objective:</strong> Enable CodeSandbox with subprocess fallback (no Docker required). Inject real lint/test/build results into QA. Pin dependency versions. Surface verification status in UI.</p>
+      <h3>Deliverables</h3>
+      <ul style="color:var(--muted);font-size:0.88rem;margin-left:20px">
+        <li>Set <code>SANDBOX_ENABLED=true</code> as default (subprocess mode, no Docker required)</li>
+        <li>Dependency version pinning: post-process requirements.txt + package.json at generation time against PyPI/npm. Build curated top-50 version table as fallback.</li>
+        <li>Syntax check step after BackendDeveloper + FrontendDeveloper (before QA): py_compile every .py file, node --check every .js/.ts file. Fail immediately on syntax error.</li>
+        <li>SandboxResult injected into QA stage prompt as "VERIFICATION RESULTS" section</li>
+        <li>UI: WorkspacePage shows verification status badge (✅ 0 lint errors / ⚠️ 3 errors) per sprint</li>
+        <li>Download zip includes VERIFICATION_REPORT.md with last run results</li>
+      </ul>
+      <div class="phase-grid">
+        <div class="criteria"><h4 class="green">Exit Criteria</h4><ul><li>A project with a deliberate syntax error fails at verification, not at QA document review</li><li>QA prompt includes real lint error counts</li><li>UI shows sandbox results per sprint</li><li>Pinned versions in requirements.txt (no * or unpinned)</li></ul></div>
+        <div class="criteria"><h4 class="red">Risk</h4><ul><li>Subprocess sandbox has no isolation — generated code runs with server permissions. Mitigate: SafetyPolicy blocks network/fs ops; run in temp dir</li><li>Version pinning requires network call to PyPI/npm — cache results per session</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- R3 -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num" style="background:rgba(63,185,80,.15);color:var(--green)">R3</div>
+      <div>
+        <div style="font-size:1.05rem;font-weight:700">Real Deployment Output</div>
+        <div style="font-size:0.85rem;color:var(--muted)">The DevOps stage must produce a Dockerfile, not advice about Dockerfiles</div>
+      </div>
+      <div style="margin-left:auto"><span class="chip chip-green">Week 3–4</span></div>
+    </div>
+    <div class="phase-body">
+      <p><strong>Objective:</strong> Make the DevOps stage write real infrastructure files. Generate a downloadable project that works with docker compose up.</p>
+      <h3>Deliverables</h3>
+      <ul style="color:var(--muted);font-size:0.88rem;margin-left:20px">
+        <li>Extend FilePlanner to include infra files (Dockerfile, docker-compose.yml, .dockerignore, .github/workflows/ci.yml) tagged <code>responsible_stage: "devops"</code></li>
+        <li>DevOps agent uses WriteProjectFilesAction (same as BackendDeveloper) — one LLM call per infra file</li>
+        <li>FileIndexer-detected stack (python/node) and pinned dependencies (from R2) fed as input — no guessing base image or install command</li>
+        <li>R2 verification output (known-working install path) fed into Dockerfile generation</li>
+        <li>RUN_INSTRUCTIONS.md updated: "docker compose up" as primary run command</li>
+        <li>Download endpoint includes infra files alongside backend/frontend code</li>
+      </ul>
+      <div class="phase-grid">
+        <div class="criteria"><h4 class="green">Exit Criteria</h4><ul><li>Generated project directory contains Dockerfile, docker-compose.yml, and at least one CI config</li><li>docker build succeeds on the generated Dockerfile (test in subprocess sandbox)</li><li>RUN_INSTRUCTIONS.md references docker compose up</li></ul></div>
+        <div class="criteria"><h4 class="red">Risk</h4><ul><li>Multi-service projects (separate frontend/backend) need docker-compose with correct service topology — LLM must understand the project structure from FileIndexer output</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- R4 -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num" style="background:rgba(88,166,255,.15);color:var(--blue)">R4</div>
+      <div>
+        <div style="font-size:1.05rem;font-weight:700">Git Integration — Code the User Owns</div>
+        <div style="font-size:0.85rem;color:var(--muted)">Every project is a portable git repo the user can push anywhere</div>
+      </div>
+      <div style="margin-left:auto"><span class="chip chip-blue">Week 4–5</span></div>
+    </div>
+    <div class="phase-body">
+      <p><strong>Objective:</strong> Initialize a git repository in every project workspace. Commit after each sprint with meaningful messages. Expose export and GitHub push endpoints.</p>
+      <h3>Deliverables</h3>
+      <ul style="color:var(--muted);font-size:0.88rem;margin-left:20px">
+        <li>git init in project workspace at project creation (using gitpython or subprocess)</li>
+        <li>After each sprint: git add all new/modified files, git commit with message "Sprint {N}: {summary of files changed}"</li>
+        <li>After each stage approval: optional commit with stage name and artifact summary as commit message</li>
+        <li>GET /projects/{id}/git-log — return commit history</li>
+        <li>POST /projects/{id}/push-to-github — accepts GitHub token + repo URL, pushes all commits</li>
+        <li>GET /projects/{id}/download — returns .tar.gz with full git history included (.git directory)</li>
+        <li>UI: Git panel in WorkspacePage showing commit history timeline</li>
+      </ul>
+      <div class="phase-grid">
+        <div class="criteria"><h4 class="green">Exit Criteria</h4><ul><li>Every project workspace has a .git directory after first sprint</li><li>git log shows at least one commit per sprint</li><li>Downloaded project can be pushed to a new GitHub repo and built from git history</li></ul></div>
+        <div class="criteria"><h4 class="red">Risk</h4><ul><li>Large generated files may bloat .git history — add .gitignore for __pycache__, node_modules, .venv at project creation</li><li>GitHub token must never be stored in the database — accept per-request, use and discard</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- R5 -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num" style="background:rgba(188,140,255,.15);color:var(--purple)">R5</div>
+      <div>
+        <div style="font-size:1.05rem;font-weight:700">Live App Preview</div>
+        <div style="font-size:0.85rem;color:var(--muted)">See the running app while it's being built</div>
+      </div>
+      <div style="margin-left:auto"><span class="chip chip-purple">Week 5–7</span></div>
+    </div>
+    <div class="phase-body">
+      <p><strong>Objective:</strong> After each backend sprint, start the generated FastAPI app in a subprocess. After each frontend sprint, serve the React dev build. Show a live iframe in the UI.</p>
+      <h3>Deliverables</h3>
+      <ul style="color:var(--muted);font-size:0.88rem;margin-left:20px">
+        <li>PreviewManager: manages per-project subprocess for the running app</li>
+        <li>Assign a dynamic port per project (base 9000 + offset); proxy via FastAPI reverse proxy at /preview/{project_id}/</li>
+        <li>Start preview after BackendDeveloper sprint completes and verification passes (R2)</li>
+        <li>Restart preview automatically after each subsequent sprint</li>
+        <li>UI: Preview pane in WorkspacePage — iframe at /preview/{project_id}/ with reload-on-sprint-complete</li>
+        <li>Preview lifecycle: started → running → stopped (on project delete or timeout after 30 min idle)</li>
+        <li>Health check endpoint per preview process; surface status in UI</li>
+      </ul>
+      <div class="phase-grid">
+        <div class="criteria"><h4 class="green">Exit Criteria</h4><ul><li>Backend sprint completes → FastAPI server starts → /preview/{id}/ returns HTTP 200</li><li>UI iframe shows running app without manual action</li><li>Sprint update restarts preview automatically</li></ul></div>
+        <div class="criteria"><h4 class="red">Risk</h4><ul><li>Port collisions on multi-project server — use a port registry; reclaim on project delete</li><li>Generated app may crash on start — show error logs in preview pane instead of blank iframe</li><li>Security: preview processes must not have access to other projects' data</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- R6 -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num" style="background:rgba(57,211,83,.15);color:var(--teal)">R6</div>
+      <div>
+        <div style="font-size:1.05rem;font-weight:700">Integration Agent</div>
+        <div style="font-size:0.85rem;color:var(--muted)">Generated apps connect to the real world: payments, auth, storage, email</div>
+      </div>
+      <div style="margin-left:auto"><span class="chip chip-blue">Week 7–9</span></div>
+    </div>
+    <div class="phase-body">
+      <p><strong>Objective:</strong> Add an IntegrationAgent stage that reads the architecture artifact, identifies required external services, and generates client code and wiring for each service.</p>
+      <h3>Deliverables</h3>
+      <ul style="color:var(--muted);font-size:0.88rem;margin-left:20px">
+        <li>New Stage: <code>Integration</code> — runs after FrontendDeveloper, before QA</li>
+        <li>IntegrationAgent reads architecture artifact for service requirements (payment, auth, storage, notification, calendar, analytics)</li>
+        <li>Playbook library: pre-tested, prompt-driven integration templates for Stripe, JWT/OAuth, AWS S3, SendGrid, Google Calendar, PostHog</li>
+        <li>Generates: service client module, environment variable placeholders, setup instructions in RUN_INSTRUCTIONS.md</li>
+        <li>UI: Integration panel showing detected services + setup status per service</li>
+        <li>POST /projects/{id}/integrations/{service}/configure — accepts service credentials, writes to .env</li>
+      </ul>
+      <div class="phase-grid">
+        <div class="criteria"><h4 class="green">Exit Criteria</h4><ul><li>Project requiring Stripe payments contains a working stripe_client.py module</li><li>Generated app has working JWT auth when architecture specifies authentication</li><li>RUN_INSTRUCTIONS.md lists all required env vars per integration</li></ul></div>
+        <div class="criteria"><h4 class="red">Risk</h4><ul><li>Integration code quality depends heavily on prompt + context quality — use R2 verification to catch broken imports</li><li>Third-party SDK version drift — use pinned versions from Playbook manifest</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- R7 -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num" style="background:rgba(210,153,34,.15);color:var(--yellow)">R7</div>
+      <div>
+        <div style="font-size:1.05rem;font-weight:700">Analytics &amp; Observability Dashboard</div>
+        <div style="font-size:0.85rem;color:var(--muted)">All the learning data is collected — now surface it</div>
+      </div>
+      <div style="margin-left:auto"><span class="chip chip-yellow">Week 9–10</span></div>
+    </div>
+    <div class="phase-body">
+      <p><strong>Objective:</strong> Build the analytics dashboard the data already supports: cost by project/stage, success rates, prompt quality scores, and learning loop insights.</p>
+      <h3>Deliverables</h3>
+      <ul style="color:var(--muted);font-size:0.88rem;margin-left:20px">
+        <li>UI: Analytics page — cost per project chart, cost per stage breakdown, token usage over time</li>
+        <li>Stage success rate table (from LearningLoop trajectory data)</li>
+        <li>PromptQualityAnalyzer results surfaced per stage: what works, common failures, reviewer patterns</li>
+        <li>Context window utilization warning (alert when project exceeds 75% of provider limit)</li>
+        <li>API: GET /analytics/overview — system-wide stats; GET /analytics/stage/{name} — per-stage insights</li>
+        <li>Cross-project pattern summary (from KnowledgeMemory semantic search)</li>
+      </ul>
+      <div class="phase-grid">
+        <div class="criteria"><h4 class="green">Exit Criteria</h4><ul><li>Analytics page shows real cost data from CostTracker for at least 3 projects</li><li>Stage success rates computed from LearningLoop trajectories</li><li>Context window warning appears when approaching limit</li></ul></div>
+        <div class="criteria"><h4 class="red">Risk</h4><ul><li>PromptQualityAnalyzer results are only meaningful after 10+ runs — seed with synthetic data for demo</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- R8 -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num" style="background:rgba(247,120,186,.15);color:var(--pink)">R8</div>
+      <div>
+        <div style="font-size:1.05rem;font-weight:700">Multi-User Auth &amp; RBAC</div>
+        <div style="font-size:0.85rem;color:var(--muted)">Project ownership, per-user isolation, enterprise security</div>
+      </div>
+      <div style="margin-left:auto"><span class="chip chip-purple">Week 10–12</span></div>
+    </div>
+    <div class="phase-body">
+      <p><strong>Objective:</strong> Add JWT authentication with refresh tokens. Scope projects to their creator. Implement admin/developer/viewer RBAC. Add rate limiting.</p>
+      <h3>Deliverables</h3>
+      <ul style="color:var(--muted);font-size:0.88rem;margin-left:20px">
+        <li>POST /auth/register + /auth/login + /auth/refresh — JWT with HS256, 15-min access token, 7-day refresh</li>
+        <li>User table in SQLite (users.db): id, email, hashed_password, role (admin/developer/viewer), created_at</li>
+        <li>Project table: add owner_id FK to users; project list filtered by owner</li>
+        <li>RBAC middleware: admin sees all projects; developer owns projects; viewer reads only</li>
+        <li>Rate limiting: slowapi or custom middleware — 60 requests/min per user, 5 pipeline runs/hour</li>
+        <li>WebSocket auth: validate JWT token in query param on connect</li>
+        <li>Replace raw APIKeyMiddleware with JWT for standard user flows; keep APIKeyMiddleware for CI/CD service accounts</li>
+        <li>UI: Login/register pages; project dashboard filtered to user's projects</li>
+      </ul>
+      <div class="phase-grid">
+        <div class="criteria"><h4 class="green">Exit Criteria</h4><ul><li>Unauthenticated requests return 401 to all project endpoints</li><li>User A cannot read, modify, or delete User B's projects</li><li>WebSocket connection requires valid token</li><li>Rate limit returns 429 after 60 req/min</li></ul></div>
+        <div class="criteria"><h4 class="red">Risk</h4><ul><li>JWT secret rotation requires invalidating all existing tokens — implement rotation strategy from the start</li><li>Migrating existing projects (no owner_id) — assign to a default admin user</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- R9 -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num" style="background:rgba(88,166,255,.15);color:var(--blue)">R9</div>
+      <div>
+        <div style="font-size:1.05rem;font-weight:700">Context Intelligence + Fast Mode</div>
+        <div style="font-size:0.85rem;color:var(--muted)">Smarter agents + prototype speed when process depth isn't needed</div>
+      </div>
+      <div style="margin-left:auto"><span class="chip chip-blue">Week 12–14</span></div>
+    </div>
+    <div class="phase-body">
+      <p><strong>Objective:</strong> Fully activate the context intelligence stack. Add a "Quick Build" mode for prototypes that skips non-essential stages.</p>
+      <h3>Deliverables</h3>
+      <ul style="color:var(--muted);font-size:0.88rem;margin-left:20px">
+        <li>ContextManager fully wired (Layer 3 semantic): LessonStore lessons + LearningLoop patterns in every stage prompt</li>
+        <li>ModelRouter profile applied per stage call in WorkflowEngine (temperature, max_tokens, provider override)</li>
+        <li>TemplateEngine: extract after each approval, inject at next same-stage run (cross-project learning)</li>
+        <li>Quick Build mode: pipeline skips StrategicReview, Document, Retro, Security stages. Runs: Clarification → DomainResearch → Architecture → Design → SprintPlanning → Backend + Frontend sprints → QA. Single sprint, up to 3 files per stage.</li>
+        <li>POST /projects body: <code>{ mode: "quick" | "full" }</code>; UI: mode selector on project creation</li>
+        <li>Context window budget tracker: log warning when cumulative tokens exceed 75% of provider limit</li>
+      </ul>
+      <div class="phase-grid">
+        <div class="criteria"><h4 class="green">Exit Criteria</h4><ul><li>Quick Build completes in 1 sprint with all code running (R2 verification)</li><li>Stage logs show ModelProfile applied (temperature visible in debug log)</li><li>Template injection appears in stage prompt for second project with same architecture pattern</li></ul></div>
+        <div class="criteria"><h4 class="red">Risk</h4><ul><li>Quick Build may produce lower quality code without Security/Strategic stages — clearly label as "prototype mode" in UI</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- R10 -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num" style="background:rgba(63,185,80,.15);color:var(--green)">R10</div>
+      <div>
+        <div style="font-size:1.05rem;font-weight:700">Scale &amp; Production Hardening</div>
+        <div style="font-size:0.85rem;color:var(--muted)">PostgreSQL, Redis, horizontal scaling, OpenTelemetry</div>
+      </div>
+      <div style="margin-left:auto"><span class="chip chip-green">Week 14–18</span></div>
+    </div>
+    <div class="phase-body">
+      <p><strong>Objective:</strong> Replace SQLite with PostgreSQL. Enable Celery/Redis for task queue. Wire OpenTelemetry. Validate horizontal scaling.</p>
+      <h3>Deliverables</h3>
+      <ul style="color:var(--muted);font-size:0.88rem;margin-left:20px">
+        <li>PostgreSQL migration: memory.db, artifacts.db, costs.db, users.db, file_index.db → single Postgres schema with proper FK constraints</li>
+        <li>Enable Celery by default in docker-compose.yml (Redis already included from Phase 6)</li>
+        <li>Move gate pause state to Redis (replace in-memory ExecutionStateRegistry)</li>
+        <li>OpenTelemetry: trace every pipeline run, stage, LLM call. Export to Jaeger/OTEL Collector.</li>
+        <li>Load test: 5 concurrent pipeline runs, validate no SQLite contention, no memory leaks</li>
+        <li>Horizontal scaling: 2 API instances + 2 Celery workers, validate project isolation across instances</li>
+        <li>Health/ready endpoints with DB + Redis + LLM connectivity checks</li>
+      </ul>
+      <div class="phase-grid">
+        <div class="criteria"><h4 class="green">Exit Criteria</h4><ul><li>5 concurrent pipelines complete without errors or data corruption</li><li>Gate pause state survives API pod restart (Redis-backed)</li><li>OTEL traces visible in collector for every pipeline run</li></ul></div>
+        <div class="criteria"><h4 class="red">Risk</h4><ul><li>SQLite → PostgreSQL migration requires careful schema design — use Alembic from the start</li><li>KnowledgeMemory (HNSW vector index) is in-process and file-backed — needs strategy for multi-instance deployment (consider Qdrant or pgvector)</li></ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     11 TECHNICAL RISKS
+══════════════════════════════════════════════════════════════ -->
+<section id="risks">
+  <h2><span class="n">11</span> Technical Risks</h2>
+
+  <table>
+    <thead><tr><th>Risk</th><th>Severity</th><th>Mitigation</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Subprocess sandbox has no isolation</strong> — generated code runs with server permissions in R2</td><td><span class="bad">High</span></td><td>Enforce SafetyPolicy for all file/network ops in sandbox. Run in dedicated temp dir with restricted PATH. Docker when available. Never in production without Docker.</td></tr>
+      <tr><td><strong>HNSW vector index is in-process and file-backed</strong> — breaks horizontal scaling</td><td><span class="warn">Medium (deferred to R10)</span></td><td>Acceptable for single-instance. Plan pgvector or Qdrant migration in R10.</td></tr>
+      <tr><td><strong>SQLite at scale</strong> — multiple concurrent pipelines cause lock contention</td><td><span class="warn">Medium (deferred to R10)</span></td><td>WorkspaceManager write lock per project already in place. Celery limits concurrency. Full migration to PostgreSQL in R10.</td></tr>
+      <tr><td><strong>LLM context window exhaustion</strong> — projects with many files exceed provider limits</td><td><span class="warn">Medium</span></td><td>Add token counter per project. Summarize completed stage artifacts when approaching 75% of limit. Alert in UI. Addressed in R9.</td></tr>
+      <tr><td><strong>Preview subprocess resource leakage</strong> — orphaned app processes if server restarts</td><td><span class="warn">Medium (R5)</span></td><td>Register all preview PIDs in persistent store (Redis/SQLite). Cleanup handler on startup kills orphaned processes.</td></tr>
+      <tr><td><strong>Production credentials in repo</strong> — BEDROCK_API_KEY exposed</td><td><span class="bad">Critical — Now</span></td><td>Rotate key immediately. Add .env to .gitignore. Create .env.example. Use secrets manager in production.</td></tr>
+      <tr><td><strong>ChatRouter returns LLMResponse object</strong> — all chat calls broken</td><td><span class="bad">Critical — Now (R1)</span></td><td>Fix in R1: add .content extraction. Add type test for ChatResponse(reply=str).</td></tr>
+      <tr><td><strong>No integration tests for pipeline end-to-end</strong></td><td><span class="warn">Medium</span></td><td>Add at minimum one happy-path integration test (create project → run pipeline → check artifact) in R1/R2.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     12 IMPLEMENTATION ORDER
+══════════════════════════════════════════════════════════════ -->
+<section id="order">
+  <h2><span class="n">12</span> Recommended Implementation Order</h2>
+
+  <p>Phases must be executed in this order. Each phase makes the next one higher quality or unblocks it.</p>
+  <table>
+    <thead><tr><th>Order</th><th>Phase</th><th>Why Now</th><th>Why Not Later</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><strong>R1 — Fix Bugs</strong></td><td>6 features are broken or dead. No new feature is worth building on a broken foundation.</td><td>Every bug that ships gets hardened into assumptions; the longer you wait the harder the fix.</td></tr>
+      <tr><td>2</td><td><strong>R2 — Verifiable Code</strong></td><td>The most common user complaint will be "the code doesn't work." Sandbox verification converts complaints into auto-fixes.</td><td>R3 (real Docker output) depends on knowing the code actually runs. You can't containerize broken code.</td></tr>
+      <tr><td>3</td><td><strong>R3 — Real Deployment</strong></td><td>DevOps stage writes documentation today. This is the single most visible gap between "AI DevOS has a DevOps stage" and "AI DevOS produces deployment artifacts."</td><td>R5 (preview) benefits from the same verified Dockerfile. R4 (git) needs deployment files to be meaningful in commit history.</td></tr>
+      <tr><td>4</td><td><strong>R4 — Git Integration</strong></td><td>Users need to own their code in a portable, standard format. Currently no git init, no commits, no export path.</td><td>Post-R3: git history that includes a working Dockerfile is far more valuable than code-only history.</td></tr>
+      <tr><td>5</td><td><strong>R5 — Live Preview</strong></td><td>After R2 (runs) + R3 (Dockerfile) + R4 (git), we know the app works. The preview is just serving it.</td><td>Preview without R2 verification would show a broken app. Bad first impression is worse than no preview.</td></tr>
+      <tr><td>6</td><td><strong>R6 — Integration Agent</strong></td><td>Apps without auth, payments, and email are prototypes. With R2-R5 in place, the generated code actually runs — now make it connect to the real world.</td><td>Integration code quality depends on R2 verification to catch broken imports immediately.</td></tr>
+      <tr><td>7</td><td><strong>R7 — Analytics</strong></td><td>All the data is already collected. This is purely UI work that surfaces existing CostTracker + LearningLoop data.</td><td>Lower priority than making the pipeline produce better output. Data is meaningless until the pipeline is trustworthy.</td></tr>
+      <tr><td>8</td><td><strong>R8 — Auth/RBAC</strong></td><td>Required before any public deployment or team use. Currently any user can see any project.</td><td>Cannot block R1-R7 on auth. Build auth after the core pipeline is solid, not before.</td></tr>
+      <tr><td>9</td><td><strong>R9 — Context Intelligence</strong></td><td>ContextManager, ModelRouter, and TemplateEngine are already built. Wire them in once the pipeline is stable.</td><td>These improve quality; they don't fix broken features. Quality improvements belong after reliability.</td></tr>
+      <tr><td>10</td><td><strong>R10 — Scale</strong></td><td>PostgreSQL + Celery + OpenTelemetry when multiple teams use the platform. Premature optimization before R1-R9 is waste.</td><td>SQLite is fine for single-team use. Scale when the problem exists.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     13 IMMEDIATE NEXT STEP
+══════════════════════════════════════════════════════════════ -->
+<section id="next">
+  <h2><span class="n">13</span> Immediate Next Step</h2>
+
+  <div class="fix-banner">
+    <div class="icon">🎯</div>
+    <p><strong>The server now starts (SyntaxError fixed).</strong> The immediate next action is R1 — fix the remaining 6 bugs in this order, each taking under 2 hours:</p>
+  </div>
+
+  <table>
+    <thead><tr><th>#</th><th>Fix</th><th>File</th><th>Effort</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><span class="ok">✅ DONE</span> SyntaxError crash</td><td>execution/code_sandbox.py:142</td><td>5 min</td></tr>
+      <tr><td>2</td><td>ChatRouter reply type error</td><td>agents/chat_router.py — add .content to both methods</td><td>10 min</td></tr>
+      <tr><td>3</td><td>Rotate BEDROCK_API_KEY + add .env to .gitignore</td><td>backend/.env + .gitignore</td><td>15 min</td></tr>
+      <tr><td>4</td><td>Wire ModelRouter into WorkflowEngine</td><td>workflow/engine.py — call model_router.get_profile(stage) before generate_text</td><td>1 hour</td></tr>
+      <tr><td>5</td><td>Fix BugAnalyst rollback (add .artifact to WorkflowResult)</td><td>shared/dto/ + workflow/pipeline_supervisor.py</td><td>1 hour</td></tr>
+      <tr><td>6</td><td>Wire gate feedback into post-gate stage prompts</td><td>workflow/engine.py — _build_retry_content reads gate:feedback:{gate}</td><td>1 hour</td></tr>
+      <tr><td>7</td><td>Fix 4 failing pytest tests</td><td>requirements.txt + 3 test files</td><td>1 hour</td></tr>
+      <tr><td>8</td><td>Re-enable ContextManager (rename attribute collision, wire in container.py)</td><td>memory/orchestrator.py (low-level) + kernel/container.py</td><td>2 hours</td></tr>
+      <tr><td>9</td><td>Add WebSocket token validation</td><td>api/websocket.py — check query param token on connect</td><td>30 min</td></tr>
+      <tr><td>10</td><td>Persist FileRegistry to SQLite</td><td>workspace/file_registry.py — add SQLite backend</td><td>1 hour</td></tr>
+    </tbody>
+  </table>
+
+  <p style="margin-top:24px">After R1 is complete: verify with <code>pytest --tb=short</code> (zero failures), run a full pipeline against a simple project, confirm chat endpoint returns strings, confirm gate feedback appears in stage 2's prompt. Then proceed to R2.</p>
+</section>
+
+</div><!-- /wrap -->
+
+<footer>
+  AI DevOS CTO Strategy Report · Principal Architect · August 2026 ·
+  Based on full repository analysis + Emergent research ·
+  All conclusions evidence-based from source code and verified public information
+</footer>
+</body>
+</html>

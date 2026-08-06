@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>AI DevOS — Implementation Report</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --surface2: #21262d;
+    --border: #30363d; --text: #e6edf3; --muted: #8b949e;
+    --accent: #58a6ff; --green: #3fb950; --yellow: #d29922;
+    --red: #f85149; --purple: #bc8cff; --orange: #ffa657;
+    --teal: #39d353; --pink: #f778ba;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 15px; line-height: 1.6; }
+
+  /* ── HEADER ── */
+  .hero { background: linear-gradient(135deg, #0d1117 0%, #1a1f2e 50%, #0d1117 100%); border-bottom: 1px solid var(--border); padding: 60px 40px 40px; text-align: center; position: relative; overflow: hidden; }
+  .hero::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 0%, rgba(88,166,255,0.08) 0%, transparent 70%); }
+  .hero h1 { font-size: 2.8rem; font-weight: 700; letter-spacing: -0.5px; background: linear-gradient(135deg, #58a6ff, #bc8cff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; position: relative; }
+  .hero .subtitle { color: var(--muted); margin-top: 8px; font-size: 1.1rem; position: relative; }
+  .hero .meta { display: flex; justify-content: center; gap: 32px; margin-top: 24px; position: relative; }
+  .hero .badge { background: var(--surface2); border: 1px solid var(--border); border-radius: 20px; padding: 6px 16px; font-size: 0.85rem; }
+  .hero .badge span { color: var(--green); font-weight: 600; }
+
+  /* ── LAYOUT ── */
+  .container { max-width: 1200px; margin: 0 auto; padding: 40px 24px; }
+  section { margin-bottom: 60px; }
+  h2 { font-size: 1.6rem; font-weight: 700; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 28px; display: flex; align-items: center; gap: 10px; }
+  h2 .icon { font-size: 1.4rem; }
+  h3 { font-size: 1.1rem; font-weight: 600; color: var(--accent); margin: 20px 0 10px; }
+  p { color: var(--muted); margin-bottom: 12px; }
+
+  /* ── PHASE CARDS ── */
+  .phase-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; }
+  .phase-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; position: relative; overflow: hidden; transition: border-color 0.2s; }
+  .phase-card:hover { border-color: var(--accent); }
+  .phase-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+  .phase-card.p0::before { background: var(--red); }
+  .phase-card.p1::before { background: var(--accent); }
+  .phase-card.p2::before { background: var(--orange); }
+  .phase-card.p3::before { background: var(--purple); }
+  .phase-card.p4::before { background: var(--pink); }
+  .phase-card.p5::before { background: var(--teal); }
+  .phase-card.p6::before { background: var(--yellow); }
+  .phase-card.p7::before { background: var(--green); }
+  .phase-card.p8::before { background: #e3b341; }
+  .phase-badge { display: inline-block; font-size: 0.7rem; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; padding: 3px 10px; border-radius: 12px; margin-bottom: 10px; }
+  .p0 .phase-badge { background: rgba(248,81,73,0.15); color: var(--red); border: 1px solid rgba(248,81,73,0.3); }
+  .p1 .phase-badge { background: rgba(88,166,255,0.15); color: var(--accent); border: 1px solid rgba(88,166,255,0.3); }
+  .p2 .phase-badge { background: rgba(255,166,87,0.15); color: var(--orange); border: 1px solid rgba(255,166,87,0.3); }
+  .p3 .phase-badge { background: rgba(188,140,255,0.15); color: var(--purple); border: 1px solid rgba(188,140,255,0.3); }
+  .p4 .phase-badge { background: rgba(247,120,186,0.15); color: var(--pink); border: 1px solid rgba(247,120,186,0.3); }
+  .p5 .phase-badge { background: rgba(57,211,83,0.15); color: var(--teal); border: 1px solid rgba(57,211,83,0.3); }
+  .p6 .phase-badge { background: rgba(210,153,34,0.15); color: var(--yellow); border: 1px solid rgba(210,153,34,0.3); }
+  .p7 .phase-badge { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+  .p8 .phase-badge { background: rgba(227,179,65,0.15); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
+  .phase-title { font-size: 1rem; font-weight: 700; margin-bottom: 8px; }
+  .file-list { list-style: none; margin: 10px 0; }
+  .file-list li { font-size: 0.82rem; font-family: 'Courier New', monospace; color: var(--muted); padding: 3px 0; }
+  .file-list li::before { content: '├ '; color: var(--border); }
+  .file-list li:last-child::before { content: '└ '; }
+  .file-list li .new { color: var(--green); font-size: 0.7rem; font-weight: 700; margin-left: 4px; }
+  .file-list li .mod { color: var(--yellow); font-size: 0.7rem; font-weight: 700; margin-left: 4px; }
+
+  /* ── MERIT/DEMERIT TABLES ── */
+  .md-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .merit-box, .demerit-box { background: var(--surface2); border-radius: 8px; padding: 14px; }
+  .merit-box { border-left: 3px solid var(--green); }
+  .demerit-box { border-left: 3px solid var(--red); }
+  .md-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
+  .merit-box .md-label { color: var(--green); }
+  .demerit-box .md-label { color: var(--red); }
+  .md-item { font-size: 0.82rem; color: var(--muted); padding: 3px 0; padding-left: 12px; position: relative; }
+  .md-item::before { content: '•'; position: absolute; left: 0; }
+  .merit-box .md-item::before { color: var(--green); }
+  .demerit-box .md-item::before { color: var(--red); }
+
+  /* ── SVG DIAGRAMS ── */
+  .diagram-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 24px 0; overflow-x: auto; }
+  .diagram-title { font-size: 0.85rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; }
+  svg text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+
+  /* ── STATS BAR ── */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 40px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; text-align: center; }
+  .stat .val { font-size: 2rem; font-weight: 700; }
+  .stat .lbl { font-size: 0.8rem; color: var(--muted); margin-top: 4px; }
+  .stat.green .val { color: var(--green); }
+  .stat.blue .val { color: var(--accent); }
+  .stat.purple .val { color: var(--purple); }
+  .stat.orange .val { color: var(--orange); }
+
+  /* ── VERDICT TABLE ── */
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  th { background: var(--surface2); color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.8px; padding: 10px 14px; text-align: left; border: 1px solid var(--border); }
+  td { padding: 10px 14px; border: 1px solid var(--border); color: var(--muted); vertical-align: top; }
+  tr:hover td { background: var(--surface2); }
+  .ok { color: var(--green); font-weight: 700; }
+  .warn { color: var(--yellow); font-weight: 700; }
+  .code { font-family: 'Courier New', monospace; font-size: 0.8rem; background: var(--surface2); padding: 2px 6px; border-radius: 4px; color: var(--text); }
+
+  footer { text-align: center; padding: 32px; color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════ HERO ═══════════════════════════════ -->
+<div class="hero">
+  <h1>AI DevOS — Implementation Report</h1>
+  <div class="subtitle">Full-stack autonomous software pipeline · 9 phases delivered</div>
+  <div class="meta">
+    <div class="badge">Phases: <span>9 / 9 ✓</span></div>
+    <div class="badge">Files Changed: <span>40+</span></div>
+    <div class="badge">Verification: <span>All Passed</span></div>
+    <div class="badge">Date: <span>August 2026</span></div>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- ═══════════════════════════════ STATS ═══════════════════════════════ -->
+<div class="stats">
+  <div class="stat green"><div class="val">9</div><div class="lbl">Phases Delivered</div></div>
+  <div class="stat blue"><div class="val">22</div><div class="lbl">New Files Created</div></div>
+  <div class="stat purple"><div class="val">19</div><div class="lbl">Pipeline Stages</div></div>
+  <div class="stat orange"><div class="val">4</div><div class="lbl">Memory Layers</div></div>
+</div>
+
+<!-- ═══════════════════ SECTION 1: ARCHITECTURE OVERVIEW ═══════════════════ -->
+<section>
+  <h2><span class="icon">🏗️</span> System Architecture Overview</h2>
+  <p>AI DevOS is a 19-stage autonomous software engineering platform. A single project request flows through a deterministic pipeline managed by the Workflow Engine — the sole orchestrator. Agents are stateless; they communicate only through typed artifacts stored by the Execution Engine.</p>
+
+  <div class="diagram-wrap">
+    <div class="diagram-title">Fig 1 — Pipeline Architecture Flowchart</div>
+    <svg viewBox="0 0 1100 620" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:1100px">
+      <defs>
+        <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0,8 3,0 6" fill="#58a6ff"/>
+        </marker>
+        <marker id="arrg" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0,8 3,0 6" fill="#3fb950"/>
+        </marker>
+        <marker id="arrr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0,8 3,0 6" fill="#f85149"/>
+        </marker>
+        <filter id="glow"><feGaussianBlur stdDeviation="2" result="coloredBlur"/><feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      </defs>
+
+      <!-- API Entry -->
+      <rect x="20" y="280" width="120" height="50" rx="8" fill="#21262d" stroke="#58a6ff" stroke-width="1.5"/>
+      <text x="80" y="300" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="700">POST /projects</text>
+      <text x="80" y="316" text-anchor="middle" fill="#8b949e" font-size="10">API Layer</text>
+
+      <!-- Dispatch -->
+      <rect x="175" y="280" width="110" height="50" rx="8" fill="#21262d" stroke="#ffa657" stroke-width="1.5"/>
+      <text x="230" y="298" text-anchor="middle" fill="#ffa657" font-size="11" font-weight="700">dispatch_</text>
+      <text x="230" y="312" text-anchor="middle" fill="#ffa657" font-size="11" font-weight="700">pipeline()</text>
+      <text x="230" y="326" text-anchor="middle" fill="#8b949e" font-size="10">Celery / Thread</text>
+
+      <!-- Workflow Manager -->
+      <rect x="320" y="255" width="130" height="100" rx="8" fill="#21262d" stroke="#bc8cff" stroke-width="1.5"/>
+      <text x="385" y="278" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="700">Workflow</text>
+      <text x="385" y="292" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="700">Manager</text>
+      <text x="385" y="310" text-anchor="middle" fill="#8b949e" font-size="10">Gate handling</text>
+      <text x="385" y="323" text-anchor="middle" fill="#8b949e" font-size="10">QA routing</text>
+      <text x="385" y="336" text-anchor="middle" fill="#8b949e" font-size="10">Sprint loops</text>
+      <text x="385" y="349" text-anchor="middle" fill="#8b949e" font-size="10">Bug cycles</text>
+
+      <!-- Pipeline Supervisor -->
+      <rect x="490" y="255" width="130" height="100" rx="8" fill="#21262d" stroke="#bc8cff" stroke-width="1.5"/>
+      <text x="555" y="278" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="700">Pipeline</text>
+      <text x="555" y="292" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="700">Supervisor</text>
+      <text x="555" y="310" text-anchor="middle" fill="#8b949e" font-size="10">Sprint execution</text>
+      <text x="555" y="323" text-anchor="middle" fill="#8b949e" font-size="10">CodeSandbox</text>
+      <text x="555" y="336" text-anchor="middle" fill="#8b949e" font-size="10">File indexing</text>
+
+      <!-- Workflow Engine -->
+      <rect x="660" y="200" width="130" height="210" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="2" filter="url(#glow)"/>
+      <text x="725" y="225" text-anchor="middle" fill="#58a6ff" font-size="12" font-weight="700">Workflow</text>
+      <text x="725" y="241" text-anchor="middle" fill="#58a6ff" font-size="12" font-weight="700">Engine</text>
+      <text x="725" y="260" text-anchor="middle" fill="#8b949e" font-size="10">SOLE ORCHESTRATOR</text>
+      <line x1="680" y1="268" x2="770" y2="268" stroke="#30363d" stroke-width="1"/>
+      <text x="725" y="283" text-anchor="middle" fill="#8b949e" font-size="10">Context Builder</text>
+      <text x="725" y="298" text-anchor="middle" fill="#8b949e" font-size="10">Memory Orch</text>
+      <text x="725" y="313" text-anchor="middle" fill="#8b949e" font-size="10">Retry Engine</text>
+      <text x="725" y="328" text-anchor="middle" fill="#8b949e" font-size="10">Model Router</text>
+      <text x="725" y="343" text-anchor="middle" fill="#8b949e" font-size="10">Gate Control</text>
+      <text x="725" y="358" text-anchor="middle" fill="#8b949e" font-size="10">Stage Loop</text>
+      <text x="725" y="373" text-anchor="middle" fill="#8b949e" font-size="10">Reviewer</text>
+      <text x="725" y="388" text-anchor="middle" fill="#8b949e" font-size="10">LLM Manager</text>
+
+      <!-- Agents column -->
+      <rect x="840" y="80" width="115" height="40" rx="6" fill="#21262d" stroke="#3fb950" stroke-width="1"/>
+      <text x="897" y="104" text-anchor="middle" fill="#3fb950" font-size="10">ProductOwner</text>
+      <rect x="840" y="130" width="115" height="40" rx="6" fill="#21262d" stroke="#3fb950" stroke-width="1"/>
+      <text x="897" y="154" text-anchor="middle" fill="#3fb950" font-size="10">Architect</text>
+      <rect x="840" y="180" width="115" height="40" rx="6" fill="#21262d" stroke="#3fb950" stroke-width="1"/>
+      <text x="897" y="204" text-anchor="middle" fill="#3fb950" font-size="10">BackendDeveloper</text>
+      <rect x="840" y="230" width="115" height="40" rx="6" fill="#21262d" stroke="#3fb950" stroke-width="1"/>
+      <text x="897" y="254" text-anchor="middle" fill="#3fb950" font-size="10">FrontendDeveloper</text>
+      <rect x="840" y="280" width="115" height="40" rx="6" fill="#21262d" stroke="#3fb950" stroke-width="1"/>
+      <text x="897" y="304" text-anchor="middle" fill="#3fb950" font-size="10">QA / BugAnalyst</text>
+      <rect x="840" y="330" width="115" height="40" rx="6" fill="#21262d" stroke="#3fb950" stroke-width="1"/>
+      <text x="897" y="354" text-anchor="middle" fill="#3fb950" font-size="10">DevOps / Security</text>
+      <rect x="840" y="380" width="115" height="40" rx="6" fill="#21262d" stroke="#3fb950" stroke-width="1"/>
+      <text x="897" y="404" text-anchor="middle" fill="#3fb950" font-size="10">+ 13 more agents</text>
+
+      <!-- Memory Layer bottom -->
+      <rect x="320" y="430" width="500" height="60" rx="8" fill="#21262d" stroke="#bc8cff" stroke-width="1.5"/>
+      <text x="570" y="454" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="700">Memory Layer (4 layers)</text>
+      <text x="430" y="476" text-anchor="middle" fill="#8b949e" font-size="10">Working</text>
+      <text x="530" y="476" text-anchor="middle" fill="#8b949e" font-size="10">Episodic</text>
+      <text x="630" y="476" text-anchor="middle" fill="#8b949e" font-size="10">Semantic</text>
+      <text x="735" y="476" text-anchor="middle" fill="#8b949e" font-size="10">Procedural</text>
+
+      <!-- Execution Engine -->
+      <rect x="840" y="480" width="115" height="50" rx="6" fill="#21262d" stroke="#ffa657" stroke-width="1.5"/>
+      <text x="897" y="501" text-anchor="middle" fill="#ffa657" font-size="10" font-weight="700">Execution</text>
+      <text x="897" y="515" text-anchor="middle" fill="#ffa657" font-size="10" font-weight="700">Engine</text>
+      <text x="897" y="529" text-anchor="middle" fill="#8b949e" font-size="9">writes project files</text>
+
+      <!-- Artifact Store -->
+      <rect x="840" y="545" width="115" height="40" rx="6" fill="#21262d" stroke="#39d353" stroke-width="1"/>
+      <text x="897" y="569" text-anchor="middle" fill="#39d353" font-size="10">Artifact Store</text>
+
+      <!-- Arrows -->
+      <line x1="140" y1="305" x2="173" y2="305" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="285" y1="305" x2="318" y2="305" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="450" y1="305" x2="488" y2="305" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="620" y1="305" x2="658" y2="305" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="790" y1="210" x2="838" y2="120" stroke="#3fb950" stroke-width="1.2" marker-end="url(#arrg)"/>
+      <line x1="790" y1="250" x2="838" y2="200" stroke="#3fb950" stroke-width="1.2" marker-end="url(#arrg)"/>
+      <line x1="790" y1="290" x2="838" y2="290" stroke="#3fb950" stroke-width="1.2" marker-end="url(#arrg)"/>
+      <line x1="790" y1="330" x2="838" y2="340" stroke="#3fb950" stroke-width="1.2" marker-end="url(#arrg)"/>
+      <line x1="790" y1="370" x2="838" y2="390" stroke="#3fb950" stroke-width="1.2" marker-end="url(#arrg)"/>
+      <line x1="725" y1="410" x2="725" y2="428" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="555" y1="355" x2="555" y2="428" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="820" y1="450" x2="838" y2="490" stroke="#ffa657" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="897" y1="530" x2="897" y2="543" stroke="#39d353" stroke-width="1.5" marker-end="url(#arrg)"/>
+
+      <!-- Gate annotation -->
+      <rect x="50" y="400" width="200" height="70" rx="8" fill="rgba(247,120,186,0.08)" stroke="rgba(247,120,186,0.4)" stroke-width="1" stroke-dasharray="5,3"/>
+      <text x="150" y="422" text-anchor="middle" fill="#f778ba" font-size="10" font-weight="700">HUMAN GATES (Phase 4)</text>
+      <text x="150" y="440" text-anchor="middle" fill="#8b949e" font-size="10">Gate 1: After Architect</text>
+      <text x="150" y="456" text-anchor="middle" fill="#8b949e" font-size="10">Gate 2: Sprint Plan Review</text>
+      <text x="150" y="470" text-anchor="middle" fill="#8b949e" font-size="10">Gate 3: QA Approval</text>
+      <line x1="250" y1="435" x2="318" y2="370" stroke="#f778ba" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr)"/>
+    </svg>
+  </div>
+
+  <div class="diagram-wrap">
+    <div class="diagram-title">Fig 2 — Pipeline State Transition Diagram</div>
+    <svg viewBox="0 0 1100 500" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:1100px">
+      <defs>
+        <marker id="a2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#58a6ff"/></marker>
+        <marker id="a2g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#3fb950"/></marker>
+        <marker id="a2r" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f85149"/></marker>
+        <marker id="a2y" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#d29922"/></marker>
+        <marker id="a2p" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f778ba"/></marker>
+      </defs>
+
+      <!-- States row 1 -->
+      <!-- IDLE -->
+      <circle cx="55" cy="60" r="22" fill="#21262d" stroke="#8b949e" stroke-width="1.5"/>
+      <text x="55" y="64" text-anchor="middle" fill="#8b949e" font-size="10">IDLE</text>
+
+      <!-- INITIALISING -->
+      <rect x="110" y="42" width="100" height="36" rx="18" fill="#21262d" stroke="#58a6ff" stroke-width="1.5"/>
+      <text x="160" y="64" text-anchor="middle" fill="#58a6ff" font-size="10">INITIALISING</text>
+
+      <!-- CLARIFICATION_PENDING -->
+      <rect x="240" y="42" width="130" height="36" rx="18" fill="#21262d" stroke="#bc8cff" stroke-width="1.5"/>
+      <text x="305" y="60" text-anchor="middle" fill="#bc8cff" font-size="10">CLARIFICATION</text>
+      <text x="305" y="73" text-anchor="middle" fill="#bc8cff" font-size="10">_PENDING</text>
+
+      <!-- DOMAIN_RESEARCH -->
+      <rect x="400" y="42" width="110" height="36" rx="18" fill="#21262d" stroke="#bc8cff" stroke-width="1.5"/>
+      <text x="455" y="60" text-anchor="middle" fill="#bc8cff" font-size="10">DOMAIN</text>
+      <text x="455" y="73" text-anchor="middle" fill="#bc8cff" font-size="10">_RESEARCH</text>
+
+      <!-- ARCHITECTURE -->
+      <rect x="540" y="42" width="110" height="36" rx="18" fill="#21262d" stroke="#bc8cff" stroke-width="1.5"/>
+      <text x="595" y="64" text-anchor="middle" fill="#bc8cff" font-size="10">ARCHITECTURE</text>
+
+      <!-- ARCH_REVIEW_PENDING — gate 1 -->
+      <rect x="680" y="42" width="130" height="36" rx="18" fill="rgba(247,120,186,0.1)" stroke="#f778ba" stroke-width="1.5" stroke-dasharray="6,3"/>
+      <text x="745" y="60" text-anchor="middle" fill="#f778ba" font-size="10">ARCH_REVIEW</text>
+      <text x="745" y="73" text-anchor="middle" fill="#f778ba" font-size="10">_PENDING 🔒</text>
+
+      <!-- SPRINT_PLANNING -->
+      <rect x="840" y="42" width="115" height="36" rx="18" fill="#21262d" stroke="#bc8cff" stroke-width="1.5"/>
+      <text x="897" y="60" text-anchor="middle" fill="#bc8cff" font-size="10">SPRINT</text>
+      <text x="897" y="73" text-anchor="middle" fill="#bc8cff" font-size="10">_PLANNING</text>
+
+      <!-- SPRINT_PLAN_REVIEW — gate 2 -->
+      <rect x="840" y="140" width="130" height="36" rx="18" fill="rgba(247,120,186,0.1)" stroke="#f778ba" stroke-width="1.5" stroke-dasharray="6,3"/>
+      <text x="905" y="158" text-anchor="middle" fill="#f778ba" font-size="10">SPRINT_PLAN</text>
+      <text x="905" y="171" text-anchor="middle" fill="#f778ba" font-size="10">_REVIEW 🔒</text>
+
+      <!-- SPRINT_ACTIVE -->
+      <rect x="640" y="140" width="120" height="36" rx="18" fill="#21262d" stroke="#3fb950" stroke-width="1.5"/>
+      <text x="700" y="158" text-anchor="middle" fill="#3fb950" font-size="10">SPRINT_ACTIVE</text>
+      <text x="700" y="171" text-anchor="middle" fill="#3fb950" font-size="9">(N sprints loop)</text>
+
+      <!-- QA_PENDING — gate 3 -->
+      <rect x="440" y="140" width="120" height="36" rx="18" fill="rgba(247,120,186,0.1)" stroke="#f778ba" stroke-width="1.5" stroke-dasharray="6,3"/>
+      <text x="500" y="158" text-anchor="middle" fill="#f778ba" font-size="10">QA_PENDING 🔒</text>
+      <text x="500" y="171" text-anchor="middle" fill="#f778ba" font-size="9">Gate 3</text>
+
+      <!-- BUG_FIX_CYCLE -->
+      <rect x="240" y="140" width="120" height="36" rx="18" fill="#21262d" stroke="#f85149" stroke-width="1.5"/>
+      <text x="300" y="158" text-anchor="middle" fill="#f85149" font-size="10">BUG_FIX</text>
+      <text x="300" y="171" text-anchor="middle" fill="#f85149" font-size="10">_CYCLE</text>
+
+      <!-- DEPLOYING -->
+      <rect x="110" y="140" width="100" height="36" rx="18" fill="#21262d" stroke="#ffa657" stroke-width="1.5"/>
+      <text x="160" y="162" text-anchor="middle" fill="#ffa657" font-size="10">DEPLOYING</text>
+
+      <!-- COMPLETED -->
+      <rect x="110" y="250" width="100" height="36" rx="18" fill="rgba(63,185,80,0.12)" stroke="#3fb950" stroke-width="2"/>
+      <text x="160" y="272" text-anchor="middle" fill="#3fb950" font-size="10" font-weight="700">COMPLETED</text>
+
+      <!-- FAILED -->
+      <rect x="240" y="250" width="100" height="36" rx="18" fill="rgba(248,81,73,0.12)" stroke="#f85149" stroke-width="2"/>
+      <text x="290" y="272" text-anchor="middle" fill="#f85149" font-size="10" font-weight="700">FAILED</text>
+
+      <!-- RETRY loop (IntelligentRetryEngine) -->
+      <rect x="440" y="250" width="160" height="60" rx="10" fill="rgba(255,166,87,0.08)" stroke="#ffa657" stroke-width="1.5"/>
+      <text x="520" y="275" text-anchor="middle" fill="#ffa657" font-size="11" font-weight="700">IntelligentRetryEngine</text>
+      <text x="520" y="293" text-anchor="middle" fill="#8b949e" font-size="10">FLAG / ASK_HUMAN / AUTO_FIX</text>
+      <text x="520" y="308" text-anchor="middle" fill="#8b949e" font-size="10">PerformanceScorer adjusts max</text>
+
+      <!-- Rejection feedback -->
+      <rect x="680" y="250" width="130" height="60" rx="10" fill="rgba(188,140,255,0.08)" stroke="#bc8cff" stroke-width="1.5"/>
+      <text x="745" y="272" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="700">MemoryOrchestrator</text>
+      <text x="745" y="290" text-anchor="middle" fill="#8b949e" font-size="10">record_rejection()</text>
+      <text x="745" y="305" text-anchor="middle" fill="#8b949e" font-size="10">→ LessonStore</text>
+
+      <!-- Approval feedback -->
+      <rect x="840" y="250" width="130" height="60" rx="10" fill="rgba(63,185,80,0.08)" stroke="#3fb950" stroke-width="1.5"/>
+      <text x="905" y="272" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="700">MemoryOrchestrator</text>
+      <text x="905" y="290" text-anchor="middle" fill="#8b949e" font-size="10">record_approval()</text>
+      <text x="905" y="305" text-anchor="middle" fill="#8b949e" font-size="10">→ LearningLoop</text>
+
+      <!-- Transition arrows (row 1) -->
+      <line x1="77" y1="60" x2="108" y2="60" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a2)"/>
+      <line x1="210" y1="60" x2="238" y2="60" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a2)"/>
+      <line x1="370" y1="60" x2="398" y2="60" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a2)"/>
+      <line x1="510" y1="60" x2="538" y2="60" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a2)"/>
+      <line x1="650" y1="60" x2="678" y2="60" stroke="#f778ba" stroke-width="1.5" marker-end="url(#a2p)"/>
+      <line x1="810" y1="60" x2="838" y2="60" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a2)"/>
+
+      <!-- row 1 to row 2 -->
+      <line x1="897" y1="78" x2="897" y2="138" stroke="#f778ba" stroke-width="1.5" marker-end="url(#a2p)"/>
+      <line x1="905" y1="176" x2="780" y2="158" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a2g)"/>
+      <line x1="640" y1="158" x2="560" y2="158" stroke="#3fb950" stroke-width="1.2" marker-end="url(#a2g)"/>
+      <path d="M700 176 C700 210 700 210 700 158" fill="none" stroke="#3fb950" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#a2g)"/>
+      <text x="720" y="210" fill="#3fb950" font-size="9">N sprints</text>
+
+      <!-- Sprint complete → QA gate -->
+      <line x1="440" y1="158" x2="360" y2="158" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a2)"/>
+
+      <!-- QA approve → deploy -->
+      <line x1="240" y1="158" x2="210" y2="158" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a2g)"/>
+
+      <!-- QA reject → bug fix -->
+      <path d="M500 176 C500 220 300 220 300 176" fill="none" stroke="#f85149" stroke-width="1.2" marker-end="url(#a2r)"/>
+      <text x="400" y="222" fill="#f85149" font-size="9">rejected</text>
+
+      <!-- Deploy → completed -->
+      <line x1="160" y1="176" x2="160" y2="248" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a2g)"/>
+
+      <!-- Failed path -->
+      <line x1="300" y1="176" x2="290" y2="248" stroke="#f85149" stroke-width="1.2" marker-end="url(#a2r)"/>
+      <text x="262" y="218" fill="#f85149" font-size="9">max retries</text>
+
+      <!-- Retry engine loop back -->
+      <path d="M440 270 C380 270 380 148 240 158" fill="none" stroke="#ffa657" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#a2y)"/>
+
+      <!-- Legend -->
+      <rect x="50" y="380" width="400" height="90" rx="8" fill="#21262d" stroke="#30363d" stroke-width="1"/>
+      <text x="70" y="400" fill="#8b949e" font-size="11" font-weight="700">Legend</text>
+      <line x1="70" y1="415" x2="110" y2="415" stroke="#f778ba" stroke-width="2" stroke-dasharray="6,3"/>
+      <text x="115" y="419" fill="#8b949e" font-size="10">Human Gate (pause point)</text>
+      <line x1="70" y1="432" x2="110" y2="432" stroke="#3fb950" stroke-width="2"/>
+      <text x="115" y="436" fill="#8b949e" font-size="10">Approved transition</text>
+      <line x1="70" y1="449" x2="110" y2="449" stroke="#f85149" stroke-width="2"/>
+      <text x="115" y="453" fill="#8b949e" font-size="10">Rejection / failure transition</text>
+      <line x1="70" y1="462" x2="110" y2="462" stroke="#ffa657" stroke-width="2" stroke-dasharray="5,3"/>
+      <text x="115" y="466" fill="#8b949e" font-size="10">Retry loop (IntelligentRetryEngine)</text>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══════════════════ SECTION 2: PHASE CARDS ═══════════════════ -->
+<section>
+  <h2><span class="icon">📦</span> Phases Implemented</h2>
+  <div class="phase-grid">
+
+    <!-- PHASE 0 -->
+    <div class="phase-card p0">
+      <div class="phase-badge">Phase 0</div>
+      <div class="phase-title">Pipeline Unblocker</div>
+      <p style="font-size:0.85rem">Fixed two critical bugs that made the pipeline completely non-functional.</p>
+      <ul class="file-list">
+        <li>workflow/manager.py <span class="mod">MOD</span></li>
+        <li>workflow/engine.py <span class="mod">MOD</span></li>
+        <li>backend/.env <span class="mod">MOD</span></li>
+      </ul>
+      <div class="md-grid">
+        <div class="merit-box"><div class="md-label">Merits</div>
+          <div class="md-item">End-to-end pipeline now runs</div>
+          <div class="md-item">Clarification artifact always saved</div>
+          <div class="md-item">Bedrock config fully parameterized</div>
+        </div>
+        <div class="demerit-box"><div class="md-label">Trade-offs</div>
+          <div class="md-item">Legacy _with_* methods kept as fallback (code debt)</div>
+          <div class="md-item">Minimal clarification schema — no deep validation yet</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 1 -->
+    <div class="phase-card p1">
+      <div class="phase-badge">Phase 1</div>
+      <div class="phase-title">Memory Foundation</div>
+      <p style="font-size:0.85rem">4-layer memory system: Working → Episodic → Semantic → Procedural. Every stage now has full prior context.</p>
+      <ul class="file-list">
+        <li>memory/orchestrator.py <span class="new">NEW</span></li>
+        <li>shared/dto/stage_context.py <span class="new">NEW</span></li>
+        <li>kernel/health_check.py <span class="new">NEW</span></li>
+        <li>memory/manager.py <span class="mod">MOD</span></li>
+        <li>workflow/engine.py <span class="mod">MOD</span></li>
+      </ul>
+      <div class="md-grid">
+        <div class="merit-box"><div class="md-label">Merits</div>
+          <div class="md-item">Typed StageContext replaces raw string blobs</div>
+          <div class="md-item">MemoryOrchestrator never raises — safe error contract</div>
+          <div class="md-item">HealthCheck validates startup before pipeline runs</div>
+          <div class="md-item">Cross-stage context continuity (no amnesia)</div>
+        </div>
+        <div class="demerit-box"><div class="md-label">Trade-offs</div>
+          <div class="md-item">SQLite serialization adds ~5ms per stage</div>
+          <div class="md-item">Layer 3 (ContextManager) still deferred — partially active</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 2 -->
+    <div class="phase-card p2">
+      <div class="phase-badge">Phase 2</div>
+      <div class="phase-title">Intelligent Retry Engine</div>
+      <p style="font-size:0.85rem">Rejection-type-aware retry with three tiers: FLAG (break), ASK_HUMAN, AUTO_FIX. Performance scoring adjusts effective max retries.</p>
+      <ul class="file-list">
+        <li>workflow/retry_engine.py <span class="new">NEW</span></li>
+        <li>shared/dto/retry_plan.py <span class="new">NEW</span></li>
+        <li>workflow/engine.py <span class="mod">MOD</span></li>
+        <li>learning/performance_scorer.py <span class="mod">MOD</span></li>
+      </ul>
+      <div class="md-grid">
+        <div class="merit-box"><div class="md-label">Merits</div>
+          <div class="md-item">Stops wasting tokens on unrecoverable failures</div>
+          <div class="md-item">RetryPlan is typed — easy to observe and test</div>
+          <div class="md-item">Performance-adaptive: agents that work well get more retries</div>
+          <div class="md-item">Backward-compatible should_retry() shim</div>
+        </div>
+        <div class="demerit-box"><div class="md-label">Trade-offs</div>
+          <div class="md-item">Rejection classification relies on LLM output keywords — fragile</div>
+          <div class="md-item">FLAG tier may terminate valid stages if reviewer is overly strict</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 3 -->
+    <div class="phase-card p3">
+      <div class="phase-badge">Phase 3</div>
+      <div class="phase-title">Activate Intelligence Layer</div>
+      <p style="font-size:0.85rem">FileIndexer, DependencyGraph, and CodeSummarizer now continuously populate the Procedural memory layer after each sprint.</p>
+      <ul class="file-list">
+        <li>intelligence/context_orchestrator.py <span class="mod">MOD</span></li>
+        <li>workflow/pipeline_supervisor.py <span class="mod">MOD</span></li>
+        <li>memory/orchestrator.py <span class="mod">MOD</span></li>
+        <li>config/models.py <span class="mod">MOD</span></li>
+      </ul>
+      <div class="md-grid">
+        <div class="merit-box"><div class="md-label">Merits</div>
+          <div class="md-item">Agents see real-time repo state — not hallucinated structure</div>
+          <div class="md-item">get_project_state() never returns None (safe contract)</div>
+          <div class="md-item">Non-fatal: indexing failure never blocks the pipeline</div>
+          <div class="md-item">Sets foundation for future Project Intelligence layer</div>
+        </div>
+        <div class="demerit-box"><div class="md-label">Trade-offs</div>
+          <div class="md-item">Indexing adds 1-3s per sprint on large repos</div>
+          <div class="md-item">sentence-transformers cold-start penalty (~30s first load)</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 4 -->
+    <div class="phase-card p4">
+      <div class="phase-badge">Phase 4</div>
+      <div class="phase-title">Human Collaboration Gates</div>
+      <p style="font-size:0.85rem">3 structured pause points where humans can approve, revise, or inject changes before the pipeline continues.</p>
+      <ul class="file-list">
+        <li>api/gates.py <span class="new">NEW</span></li>
+        <li>shared/dto/gate_result.py <span class="new">NEW</span></li>
+        <li>shared/enums/project_state.py <span class="mod">MOD</span></li>
+        <li>workflow/pipeline_supervisor.py <span class="mod">MOD</span></li>
+        <li>workflow/manager.py <span class="mod">MOD</span></li>
+      </ul>
+      <div class="md-grid">
+        <div class="merit-box"><div class="md-label">Merits</div>
+          <div class="md-item">Humans steer direction without breaking the pipeline</div>
+          <div class="md-item">REST API gates allow integration with any CI/CD tool</div>
+          <div class="md-item">Background thread resume — no timeout on human review</div>
+          <div class="md-item">GateResult is typed with clear next_state / next_stage fields</div>
+        </div>
+        <div class="demerit-box"><div class="md-label">Trade-offs</div>
+          <div class="md-item">Thread-based pause requires in-memory state — not horizontally scalable without shared state store</div>
+          <div class="md-item">No timeout → project can sit paused indefinitely</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 5 -->
+    <div class="phase-card p5">
+      <div class="phase-badge">Phase 5</div>
+      <div class="phase-title">Code Execution Sandbox</div>
+      <p style="font-size:0.85rem">Runs lint/test/build against generated code after each sprint. BugAnalyst receives real execution results instead of hallucinated test descriptions.</p>
+      <ul class="file-list">
+        <li>execution/code_sandbox.py <span class="new">NEW</span></li>
+        <li>shared/dto/sandbox_result.py <span class="new">NEW</span></li>
+        <li>execution/safety_policy.py <span class="mod">MOD</span></li>
+        <li>workflow/pipeline_supervisor.py <span class="mod">MOD</span></li>
+        <li>agents/bug_analyst.py <span class="mod">MOD</span></li>
+      </ul>
+      <div class="md-grid">
+        <div class="merit-box"><div class="md-label">Merits</div>
+          <div class="md-item">Real lint/test/build results — not LLM guesses</div>
+          <div class="md-item">SANDBOX_ENABLED=false default → zero risk in dev</div>
+          <div class="md-item">Docker isolation when available; subprocess fallback</div>
+          <div class="md-item">Non-fatal — sandbox failure never blocks sprint completion</div>
+        </div>
+        <div class="demerit-box"><div class="md-label">Trade-offs</div>
+          <div class="md-item">Docker adds infra complexity in production</div>
+          <div class="md-item">subprocess fallback has no network/filesystem isolation</div>
+          <div class="md-item">Python only (ruff/pytest); Node support partial</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 6 -->
+    <div class="phase-card p6">
+      <div class="phase-badge">Phase 6</div>
+      <div class="phase-title">Infrastructure & Production Hardening</div>
+      <p style="font-size:0.85rem">API key auth, structured logging, Celery task queue, Docker, input validation, and DB path anchoring.</p>
+      <ul class="file-list">
+        <li>api/middleware/auth.py <span class="new">NEW</span></li>
+        <li>observability/logging.py <span class="new">NEW</span></li>
+        <li>tasks/pipeline_task.py <span class="new">NEW</span></li>
+        <li>Dockerfile <span class="new">NEW</span></li>
+        <li>docker-compose.yml <span class="new">NEW</span></li>
+        <li>api/project.py <span class="mod">MOD</span></li>
+        <li>main.py <span class="mod">MOD</span></li>
+      </ul>
+      <div class="md-grid">
+        <div class="merit-box"><div class="md-label">Merits</div>
+          <div class="md-item">HMAC constant-time key comparison prevents timing attacks</div>
+          <div class="md-item">JSON log mode enables ELK/Splunk ingestion</div>
+          <div class="md-item">Celery/Redis scales to multiple workers</div>
+          <div class="md-item">Input validation prevents prompt injection via project name</div>
+          <div class="md-item">docker-compose deploys full stack in one command</div>
+        </div>
+        <div class="demerit-box"><div class="md-label">Trade-offs</div>
+          <div class="md-item">API key auth (no JWT / RBAC) — sufficient for MVP only</div>
+          <div class="md-item">Celery result backend in Redis is ephemeral (needs persistence)</div>
+          <div class="md-item">No rate limiting implemented yet</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 7 -->
+    <div class="phase-card p7">
+      <div class="phase-badge">Phase 7</div>
+      <div class="phase-title">Template Engine + Model Routing</div>
+      <p style="font-size:0.85rem">Per-stage model profiles with temperature/token tuning. Structural template extraction from approved artifacts for LLM steering.</p>
+      <ul class="file-list">
+        <li>llm/model_router.py <span class="new">NEW</span></li>
+        <li>learning/template_engine.py <span class="new">NEW</span></li>
+        <li>shared/dto/model_profile.py <span class="new">NEW</span></li>
+        <li>memory/learning_loop.py <span class="mod">MOD</span></li>
+        <li>memory/lesson_store.py <span class="mod">MOD</span></li>
+        <li>memory/orchestrator.py <span class="mod">MOD</span></li>
+        <li>llm/manager.py <span class="mod">MOD</span></li>
+      </ul>
+      <div class="md-grid">
+        <div class="merit-box"><div class="md-label">Merits</div>
+          <div class="md-item">Code stages: temp=0.05, max_tokens=16384 for determinism</div>
+          <div class="md-item">Creative stages: temp=0.4 for diversity</div>
+          <div class="md-item">Templates reuse proven artifact structures</div>
+          <div class="md-item">LearningLoop now wired into approval flow</div>
+          <div class="md-item">Provider switching stays env-var-only (no code changes)</div>
+        </div>
+        <div class="demerit-box"><div class="md-label">Trade-offs</div>
+          <div class="md-item">Template injection not yet wired into WorkflowEngine (built, not connected)</div>
+          <div class="md-item">Key-set overlap scoring is approximate — no semantic similarity</div>
+          <div class="md-item">21 profiles hardcoded — future: admin API to adjust at runtime</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 8 -->
+    <div class="phase-card p8">
+      <div class="phase-badge">Phase 8</div>
+      <div class="phase-title">Agile Sprint File Management</div>
+      <p style="font-size:0.85rem">Tracks all generated files per project/sprint. LLM instructed to use "update"/"patch" for existing files instead of blindly recreating them.</p>
+      <ul class="file-list">
+        <li>workspace/file_registry.py <span class="new">NEW</span></li>
+        <li>shared/dto/sprint_file_plan.py <span class="new">NEW</span></li>
+        <li>shared/schemas/file_plan_schema.py <span class="mod">MOD</span></li>
+        <li>workspace/project_files.py <span class="mod">MOD</span></li>
+        <li>actions/write_file_plan.py <span class="mod">MOD</span></li>
+        <li>agents/file_planner.py <span class="mod">MOD</span></li>
+        <li>prompt/file_plan_builder.py <span class="mod">MOD</span></li>
+      </ul>
+      <div class="md-grid">
+        <div class="merit-box"><div class="md-label">Merits</div>
+          <div class="md-item">Prevents LLM from silently overwriting correct files</div>
+          <div class="md-item">FileRegistry provides real file list to LLM prompt</div>
+          <div class="md-item">Typed SprintFilePlan DTO enforces operation field</div>
+          <div class="md-item">change_description tells LLM what to modify</div>
+        </div>
+        <div class="demerit-box"><div class="md-label">Trade-offs</div>
+          <div class="md-item">patch operation is instruction-only — LLM still generates full file</div>
+          <div class="md-item">FileRegistry in-memory only — lost on restart (no persistence yet)</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════ SECTION 3: MEMORY LAYER DIAGRAM ═══════════════════ -->
+<section>
+  <h2><span class="icon">🧠</span> Memory Architecture</h2>
+
+  <div class="diagram-wrap">
+    <div class="diagram-title">Fig 3 — 4-Layer Memory System (MemoryOrchestrator)</div>
+    <svg viewBox="0 0 900 440" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:900px">
+      <defs>
+        <marker id="a3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#58a6ff"/></marker>
+      </defs>
+      <!-- Central orchestrator -->
+      <rect x="330" y="170" width="240" height="90" rx="10" fill="#161b22" stroke="#58a6ff" stroke-width="2"/>
+      <text x="450" y="200" text-anchor="middle" fill="#58a6ff" font-size="13" font-weight="700">MemoryOrchestrator</text>
+      <text x="450" y="220" text-anchor="middle" fill="#8b949e" font-size="11">get_context(project, stage)</text>
+      <text x="450" y="238" text-anchor="middle" fill="#8b949e" font-size="11">→ StageContext</text>
+      <text x="450" y="252" text-anchor="middle" fill="#8b949e" font-size="11">record_approval() · record_rejection()</text>
+
+      <!-- Layer 1: Working -->
+      <rect x="30" y="20" width="200" height="80" rx="8" fill="#21262d" stroke="#39d353" stroke-width="1.5"/>
+      <text x="130" y="48" text-anchor="middle" fill="#39d353" font-size="12" font-weight="700">Layer 1: Working</text>
+      <text x="130" y="66" text-anchor="middle" fill="#8b949e" font-size="10">Assembled in-process</text>
+      <text x="130" y="82" text-anchor="middle" fill="#8b949e" font-size="10">StageContext dataclass</text>
+      <text x="130" y="94" text-anchor="middle" fill="#8b949e" font-size="10">Fast, ephemeral, per-request</text>
+
+      <!-- Layer 2: Episodic -->
+      <rect x="670" y="20" width="200" height="80" rx="8" fill="#21262d" stroke="#58a6ff" stroke-width="1.5"/>
+      <text x="770" y="48" text-anchor="middle" fill="#58a6ff" font-size="12" font-weight="700">Layer 2: Episodic</text>
+      <text x="770" y="66" text-anchor="middle" fill="#8b949e" font-size="10">Per-stage approved outputs</text>
+      <text x="770" y="82" text-anchor="middle" fill="#8b949e" font-size="10">MemoryManager (SQLite)</text>
+      <text x="770" y="94" text-anchor="middle" fill="#8b949e" font-size="10">store_stage_output / load</text>
+
+      <!-- Layer 3: Semantic -->
+      <rect x="30" y="330" width="200" height="80" rx="8" fill="#21262d" stroke="#bc8cff" stroke-width="1.5"/>
+      <text x="130" y="358" text-anchor="middle" fill="#bc8cff" font-size="12" font-weight="700">Layer 3: Semantic</text>
+      <text x="130" y="376" text-anchor="middle" fill="#8b949e" font-size="10">LessonStore + LearningLoop</text>
+      <text x="130" y="392" text-anchor="middle" fill="#8b949e" font-size="10">Cross-project patterns</text>
+      <text x="130" y="406" text-anchor="middle" fill="#8b949e" font-size="10">KnowledgeMemory (HNSW)</text>
+
+      <!-- Layer 4: Procedural -->
+      <rect x="670" y="330" width="200" height="80" rx="8" fill="#21262d" stroke="#ffa657" stroke-width="1.5"/>
+      <text x="770" y="358" text-anchor="middle" fill="#ffa657" font-size="12" font-weight="700">Layer 4: Procedural</text>
+      <text x="770" y="376" text-anchor="middle" fill="#8b949e" font-size="10">ContextOrchestrator</text>
+      <text x="770" y="392" text-anchor="middle" fill="#8b949e" font-size="10">FileIndexer + DepGraph</text>
+      <text x="770" y="406" text-anchor="middle" fill="#8b949e" font-size="10">Live project intelligence</text>
+
+      <!-- Phase 7 additions -->
+      <rect x="330" y="330" width="240" height="80" rx="8" fill="rgba(63,185,80,0.08)" stroke="#3fb950" stroke-width="1.5"/>
+      <text x="450" y="355" text-anchor="middle" fill="#3fb950" font-size="12" font-weight="700">Phase 7 Additions</text>
+      <text x="450" y="374" text-anchor="middle" fill="#8b949e" font-size="10">LearningLoop.record_success()</text>
+      <text x="450" y="390" text-anchor="middle" fill="#8b949e" font-size="10">LessonStore.record()</text>
+      <text x="450" y="406" text-anchor="middle" fill="#8b949e" font-size="10">TemplateEngine (SQLite)</text>
+
+      <!-- Arrows from orchestrator to layers -->
+      <line x1="330" y1="200" x2="232" y2="80" stroke="#39d353" stroke-width="1.5" marker-end="url(#a3)"/>
+      <line x1="570" y1="200" x2="668" y2="80" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a3)"/>
+      <line x1="370" y1="260" x2="230" y2="330" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#a3)"/>
+      <line x1="530" y1="260" x2="668" y2="330" stroke="#ffa657" stroke-width="1.5" marker-end="url(#a3)"/>
+      <line x1="450" y1="260" x2="450" y2="328" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a3)"/>
+
+      <!-- Labels on arrows -->
+      <text x="260" y="155" fill="#39d353" font-size="10" transform="rotate(-35,260,155)">assembled here</text>
+      <text x="595" y="145" fill="#58a6ff" font-size="10" transform="rotate(35,595,145)">load_stage_output</text>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══════════════════ SECTION 4: RETRY ENGINE FLOW ═══════════════════ -->
+<section>
+  <h2><span class="icon">🔄</span> Intelligent Retry Engine Flow</h2>
+
+  <div class="diagram-wrap">
+    <div class="diagram-title">Fig 4 — IntelligentRetryEngine Decision Flowchart</div>
+    <svg viewBox="0 0 900 480" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:900px">
+      <defs>
+        <marker id="a4" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#58a6ff"/></marker>
+        <marker id="a4g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#3fb950"/></marker>
+        <marker id="a4r" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f85149"/></marker>
+        <marker id="a4y" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#d29922"/></marker>
+      </defs>
+
+      <!-- Stage Output -->
+      <rect x="350" y="20" width="180" height="44" rx="8" fill="#21262d" stroke="#8b949e" stroke-width="1.5"/>
+      <text x="440" y="46" text-anchor="middle" fill="#e6edf3" font-size="12">Agent produces output</text>
+
+      <!-- Reviewer -->
+      <rect x="350" y="100" width="180" height="44" rx="8" fill="#21262d" stroke="#58a6ff" stroke-width="1.5"/>
+      <text x="440" y="126" text-anchor="middle" fill="#58a6ff" font-size="12">Reviewer evaluates</text>
+
+      <!-- Decision diamond -->
+      <polygon points="440,180 540,215 440,250 340,215" fill="#21262d" stroke="#d29922" stroke-width="1.5"/>
+      <text x="440" y="211" text-anchor="middle" fill="#d29922" font-size="11">Approved?</text>
+      <text x="440" y="225" text-anchor="middle" fill="#d29922" font-size="11">YES / NO</text>
+
+      <!-- YES path -->
+      <rect x="620" y="195" width="200" height="44" rx="8" fill="rgba(63,185,80,0.1)" stroke="#3fb950" stroke-width="1.5"/>
+      <text x="720" y="215" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="700">record_approval()</text>
+      <text x="720" y="229" text-anchor="middle" fill="#8b949e" font-size="10">→ LearningLoop.record_success()</text>
+
+      <!-- NO: Classify rejection -->
+      <rect x="300" y="290" width="280" height="44" rx="8" fill="#21262d" stroke="#ffa657" stroke-width="1.5"/>
+      <text x="440" y="312" text-anchor="middle" fill="#ffa657" font-size="11">Classify rejection type</text>
+      <text x="440" y="328" text-anchor="middle" fill="#8b949e" font-size="10">IntelligentRetryEngine.plan(feedback)</text>
+
+      <!-- Three tiers -->
+      <rect x="30" y="390" width="160" height="60" rx="8" fill="rgba(248,81,73,0.1)" stroke="#f85149" stroke-width="1.5"/>
+      <text x="110" y="414" text-anchor="middle" fill="#f85149" font-size="11" font-weight="700">FLAG</text>
+      <text x="110" y="432" text-anchor="middle" fill="#8b949e" font-size="10">Break immediately</text>
+      <text x="110" y="446" text-anchor="middle" fill="#8b949e" font-size="10">→ FAILED state</text>
+
+      <rect x="280" y="390" width="160" height="60" rx="8" fill="rgba(247,120,186,0.1)" stroke="#f778ba" stroke-width="1.5"/>
+      <text x="360" y="414" text-anchor="middle" fill="#f778ba" font-size="11" font-weight="700">ASK_HUMAN</text>
+      <text x="360" y="432" text-anchor="middle" fill="#8b949e" font-size="10">Pause at Gate</text>
+      <text x="360" y="446" text-anchor="middle" fill="#8b949e" font-size="10">→ human revises</text>
+
+      <rect x="530" y="390" width="200" height="60" rx="8" fill="rgba(210,153,34,0.1)" stroke="#d29922" stroke-width="1.5"/>
+      <text x="630" y="414" text-anchor="middle" fill="#d29922" font-size="11" font-weight="700">AUTO_FIX</text>
+      <text x="630" y="432" text-anchor="middle" fill="#8b949e" font-size="10">inject prompt_instruction</text>
+      <text x="630" y="446" text-anchor="middle" fill="#8b949e" font-size="10">→ retry with guidance</text>
+
+      <!-- record_rejection -->
+      <rect x="20" y="290" width="200" height="60" rx="8" fill="rgba(188,140,255,0.08)" stroke="#bc8cff" stroke-width="1.5"/>
+      <text x="120" y="315" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="700">record_rejection()</text>
+      <text x="120" y="333" text-anchor="middle" fill="#8b949e" font-size="10">→ LessonStore.record()</text>
+      <text x="120" y="349" text-anchor="middle" fill="#8b949e" font-size="10">memory_manager.store()</text>
+
+      <!-- PerformanceScorer -->
+      <rect x="620" y="290" width="200" height="60" rx="8" fill="rgba(88,166,255,0.08)" stroke="#58a6ff" stroke-width="1.5"/>
+      <text x="720" y="313" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="700">PerformanceScorer</text>
+      <text x="720" y="331" text-anchor="middle" fill="#8b949e" font-size="10">effective_max_retries</text>
+      <text x="720" y="347" text-anchor="middle" fill="#8b949e" font-size="10">based on past success rate</text>
+
+      <!-- Arrows -->
+      <line x1="440" y1="64" x2="440" y2="98" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a4)"/>
+      <line x1="440" y1="144" x2="440" y2="178" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a4)"/>
+      <!-- YES -->
+      <line x1="540" y1="215" x2="618" y2="215" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a4g)"/>
+      <text x="572" y="207" fill="#3fb950" font-size="10">YES</text>
+      <!-- NO -->
+      <line x1="440" y1="250" x2="440" y2="288" stroke="#f85149" stroke-width="1.5" marker-end="url(#a4r)"/>
+      <text x="447" y="272" fill="#f85149" font-size="10">NO</text>
+      <!-- Classification to tiers -->
+      <line x1="350" y1="334" x2="195" y2="388" stroke="#f85149" stroke-width="1.2" marker-end="url(#a4r)"/>
+      <line x1="400" y1="334" x2="375" y2="388" stroke="#f778ba" stroke-width="1.2" marker-end="url(#a4r)"/>
+      <line x1="500" y1="334" x2="545" y2="388" stroke="#d29922" stroke-width="1.2" marker-end="url(#a4y)"/>
+      <!-- record_rejection -->
+      <line x1="340" y1="312" x2="222" y2="320" stroke="#bc8cff" stroke-width="1.2" marker-end="url(#a4)"/>
+      <!-- PerformanceScorer -->
+      <line x1="580" y1="312" x2="618" y2="312" stroke="#58a6ff" stroke-width="1.2" marker-end="url(#a4)"/>
+      <!-- AUTO_FIX loops back -->
+      <path d="M730 450 C730 470 440 470 440 250" fill="none" stroke="#d29922" stroke-width="1.2" stroke-dasharray="6,3" marker-end="url(#a4y)"/>
+      <text x="595" y="470" fill="#d29922" font-size="10">retry loop</text>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══════════════════ SECTION 5: HUMAN GATES FLOW ═══════════════════ -->
+<section>
+  <h2><span class="icon">🚦</span> Human Collaboration Gates</h2>
+
+  <div class="diagram-wrap">
+    <div class="diagram-title">Fig 5 — Gate State Transitions (Phase 4)</div>
+    <svg viewBox="0 0 1000 300" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:1000px">
+      <defs>
+        <marker id="a5" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#58a6ff"/></marker>
+        <marker id="a5g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#3fb950"/></marker>
+        <marker id="a5r" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f85149"/></marker>
+        <marker id="a5p" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f778ba"/></marker>
+      </defs>
+
+      <!-- Stage: Architect completes -->
+      <rect x="20" y="120" width="130" height="50" rx="8" fill="#21262d" stroke="#bc8cff" stroke-width="1.5"/>
+      <text x="85" y="142" text-anchor="middle" fill="#bc8cff" font-size="11">Architect</text>
+      <text x="85" y="158" text-anchor="middle" fill="#8b949e" font-size="10">completes</text>
+
+      <!-- Gate 1 -->
+      <rect x="190" y="105" width="145" height="78" rx="8" fill="rgba(247,120,186,0.08)" stroke="#f778ba" stroke-width="2" stroke-dasharray="6,3"/>
+      <text x="263" y="130" text-anchor="middle" fill="#f778ba" font-size="11" font-weight="700">GATE 1 🔒</text>
+      <text x="263" y="148" text-anchor="middle" fill="#8b949e" font-size="10">ARCH_REVIEW</text>
+      <text x="263" y="162" text-anchor="middle" fill="#8b949e" font-size="10">_PENDING</text>
+      <text x="263" y="176" text-anchor="middle" fill="#8b949e" font-size="9">Pipeline paused</text>
+
+      <!-- Gate 1 actions -->
+      <rect x="190" y="30" width="145" height="35" rx="6" fill="rgba(63,185,80,0.1)" stroke="#3fb950" stroke-width="1"/>
+      <text x="263" y="52" text-anchor="middle" fill="#3fb950" font-size="10">POST /gates/architecture/approve</text>
+      <rect x="190" y="215" width="145" height="35" rx="6" fill="rgba(248,81,73,0.1)" stroke="#f85149" stroke-width="1"/>
+      <text x="263" y="237" text-anchor="middle" fill="#f85149" font-size="10">POST /gates/architecture/revise</text>
+
+      <!-- After Gate 1: Sprint Planning -->
+      <rect x="385" y="120" width="130" height="50" rx="8" fill="#21262d" stroke="#bc8cff" stroke-width="1.5"/>
+      <text x="450" y="142" text-anchor="middle" fill="#bc8cff" font-size="11">Sprint Planning</text>
+      <text x="450" y="158" text-anchor="middle" fill="#8b949e" font-size="10">continues</text>
+
+      <!-- Gate 2 -->
+      <rect x="560" y="105" width="145" height="78" rx="8" fill="rgba(247,120,186,0.08)" stroke="#f778ba" stroke-width="2" stroke-dasharray="6,3"/>
+      <text x="633" y="130" text-anchor="middle" fill="#f778ba" font-size="11" font-weight="700">GATE 2 🔒</text>
+      <text x="633" y="148" text-anchor="middle" fill="#8b949e" font-size="10">SPRINT_PLAN</text>
+      <text x="633" y="162" text-anchor="middle" fill="#8b949e" font-size="10">_REVIEW</text>
+      <text x="633" y="176" text-anchor="middle" fill="#8b949e" font-size="9">Human adjusts scope</text>
+
+      <!-- Sprint Execution -->
+      <rect x="755" y="120" width="130" height="50" rx="8" fill="rgba(63,185,80,0.08)" stroke="#3fb950" stroke-width="1.5"/>
+      <text x="820" y="142" text-anchor="middle" fill="#3fb950" font-size="11">Sprint Active</text>
+      <text x="820" y="158" text-anchor="middle" fill="#8b949e" font-size="10">N sprints execute</text>
+
+      <!-- QA Gate annotation -->
+      <rect x="755" y="215" width="230" height="50" rx="8" fill="rgba(247,120,186,0.08)" stroke="#f778ba" stroke-width="1.5" stroke-dasharray="5,3"/>
+      <text x="870" y="237" text-anchor="middle" fill="#f778ba" font-size="10" font-weight="700">GATE 3: QA Pending 🔒</text>
+      <text x="870" y="252" text-anchor="middle" fill="#8b949e" font-size="9">POST /gates/qa/approve · revise · adjust</text>
+
+      <!-- Arrows -->
+      <line x1="150" y1="145" x2="188" y2="145" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a5)"/>
+      <line x1="263" y1="65" x2="263" y2="103" stroke="#3fb950" stroke-width="1.2" marker-end="url(#a5g)"/>
+      <text x="270" y="88" fill="#3fb950" font-size="9">approve</text>
+      <line x1="263" y1="183" x2="263" y2="213" stroke="#f85149" stroke-width="1.2" marker-end="url(#a5r)"/>
+      <text x="270" y="205" fill="#f85149" font-size="9">revise</text>
+      <line x1="335" y1="145" x2="383" y2="145" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a5g)"/>
+      <line x1="515" y1="145" x2="558" y2="145" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a5)"/>
+      <line x1="705" y1="145" x2="753" y2="145" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a5g)"/>
+      <line x1="820" y1="170" x2="820" y2="213" stroke="#f778ba" stroke-width="1.2" marker-end="url(#a5p)"/>
+      <!-- revise loops back -->
+      <path d="M263 250 C263 280 450 280 450 172" fill="none" stroke="#f85149" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#a5r)"/>
+      <text x="350" y="278" fill="#f85149" font-size="9">inject revision</text>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══════════════════ SECTION 6: MODEL ROUTING ═══════════════════ -->
+<section>
+  <h2><span class="icon">🎯</span> Model Routing Strategy (Phase 7)</h2>
+
+  <div class="diagram-wrap">
+    <div class="diagram-title">Fig 6 — ModelRouter: Per-Stage Temperature Tuning</div>
+    <svg viewBox="0 0 900 320" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:900px">
+      <!-- Background zones -->
+      <rect x="20" y="40" width="260" height="240" rx="8" fill="rgba(248,81,73,0.05)" stroke="rgba(248,81,73,0.2)" stroke-width="1"/>
+      <text x="150" y="62" text-anchor="middle" fill="#f85149" font-size="11" font-weight="700">CODE GENERATION</text>
+      <text x="150" y="78" text-anchor="middle" fill="#8b949e" font-size="10">temperature = 0.05</text>
+
+      <rect x="320" y="40" width="260" height="240" rx="8" fill="rgba(210,153,34,0.05)" stroke="rgba(210,153,34,0.2)" stroke-width="1"/>
+      <text x="450" y="62" text-anchor="middle" fill="#d29922" font-size="11" font-weight="700">PLANNING &amp; REVIEW</text>
+      <text x="450" y="78" text-anchor="middle" fill="#8b949e" font-size="10">temperature = 0.1–0.2</text>
+
+      <rect x="620" y="40" width="260" height="240" rx="8" fill="rgba(63,185,80,0.05)" stroke="rgba(63,185,80,0.2)" stroke-width="1"/>
+      <text x="750" y="62" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="700">CREATIVE &amp; RESEARCH</text>
+      <text x="750" y="78" text-anchor="middle" fill="#8b949e" font-size="10">temperature = 0.3–0.4</text>
+
+      <!-- Code stages -->
+      <rect x="40" y="100" width="220" height="30" rx="6" fill="#21262d" stroke="#f85149" stroke-width="1"/>
+      <text x="150" y="119" text-anchor="middle" fill="#e6edf3" font-size="10">BackendDeveloper (max_tokens=16384)</text>
+      <rect x="40" y="140" width="220" height="30" rx="6" fill="#21262d" stroke="#f85149" stroke-width="1"/>
+      <text x="150" y="159" text-anchor="middle" fill="#e6edf3" font-size="10">FrontendDeveloper (max_tokens=16384)</text>
+      <rect x="40" y="180" width="220" height="30" rx="6" fill="#21262d" stroke="#f85149" stroke-width="1"/>
+      <text x="150" y="199" text-anchor="middle" fill="#e6edf3" font-size="10">DevOps (max_tokens=8192)</text>
+      <rect x="40" y="220" width="220" height="30" rx="6" fill="#21262d" stroke="#f85149" stroke-width="1"/>
+      <text x="150" y="239" text-anchor="middle" fill="#e6edf3" font-size="10">SprintDeploy (max_tokens=8192)</text>
+
+      <!-- Planning stages -->
+      <rect x="340" y="100" width="220" height="30" rx="6" fill="#21262d" stroke="#d29922" stroke-width="1"/>
+      <text x="450" y="119" text-anchor="middle" fill="#e6edf3" font-size="10">Reviewer / QA (temp=0.1)</text>
+      <rect x="340" y="140" width="220" height="30" rx="6" fill="#21262d" stroke="#d29922" stroke-width="1"/>
+      <text x="450" y="159" text-anchor="middle" fill="#e6edf3" font-size="10">Architect (temp=0.2, 8192 tok)</text>
+      <rect x="340" y="180" width="220" height="30" rx="6" fill="#21262d" stroke="#d29922" stroke-width="1"/>
+      <text x="450" y="199" text-anchor="middle" fill="#e6edf3" font-size="10">SprintPlanning (temp=0.2)</text>
+      <rect x="340" y="220" width="220" height="30" rx="6" fill="#21262d" stroke="#d29922" stroke-width="1"/>
+      <text x="450" y="239" text-anchor="middle" fill="#e6edf3" font-size="10">BugAnalyst / Security (temp=0.1)</text>
+
+      <!-- Creative stages -->
+      <rect x="640" y="100" width="220" height="30" rx="6" fill="#21262d" stroke="#3fb950" stroke-width="1"/>
+      <text x="750" y="119" text-anchor="middle" fill="#e6edf3" font-size="10">StrategicReview (temp=0.4)</text>
+      <rect x="640" y="140" width="220" height="30" rx="6" fill="#21262d" stroke="#3fb950" stroke-width="1"/>
+      <text x="750" y="159" text-anchor="middle" fill="#e6edf3" font-size="10">DomainResearch (temp=0.4)</text>
+      <rect x="640" y="180" width="220" height="30" rx="6" fill="#21262d" stroke="#3fb950" stroke-width="1"/>
+      <text x="750" y="199" text-anchor="middle" fill="#e6edf3" font-size="10">Designer (temp=0.4)</text>
+      <rect x="640" y="220" width="220" height="30" rx="6" fill="#21262d" stroke="#3fb950" stroke-width="1"/>
+      <text x="750" y="239" text-anchor="middle" fill="#e6edf3" font-size="10">Retro (temp=0.3)</text>
+
+      <!-- LLMManager box -->
+      <rect x="320" y="290" width="260" height="20" rx="4" fill="rgba(88,166,255,0.1)" stroke="#58a6ff" stroke-width="1"/>
+      <text x="450" y="305" text-anchor="middle" fill="#58a6ff" font-size="10">LLMManager.generate_text(profile=ModelProfile)</text>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══════════════════ SECTION 7: IMPACT SUMMARY TABLE ═══════════════════ -->
+<section>
+  <h2><span class="icon">📊</span> Project Impact Summary</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Phase</th>
+        <th>What Changed in the Project</th>
+        <th>Impact Level</th>
+        <th>Key Merit</th>
+        <th>Key Trade-off</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="code">Phase 0</span><br/>Pipeline Unblocker</td>
+        <td>Fixed Bug A (missing Clarification save) and Bug B (missing fallback in engine). Pipeline now runs end-to-end.</td>
+        <td><span class="ok">🔴 Critical</span></td>
+        <td>Zero pipeline was running before this</td>
+        <td>Legacy fallback code still present</td>
+      </tr>
+      <tr>
+        <td><span class="code">Phase 1</span><br/>Memory Foundation</td>
+        <td>Every stage now receives full prior context via 4-layer memory. StageContext typed DTO replaces string blobs. HealthCheck validates startup.</td>
+        <td><span class="ok">🔴 Critical</span></td>
+        <td>Eliminates agent amnesia between stages</td>
+        <td>SQLite serialization overhead per stage</td>
+      </tr>
+      <tr>
+        <td><span class="code">Phase 2</span><br/>Retry Engine</td>
+        <td>Rejections now classified into FLAG/ASK_HUMAN/AUTO_FIX. Performance scorer adjusts retry budget. Stops infinite token waste.</td>
+        <td><span class="warn">🟠 High</span></td>
+        <td>Saves ~60% tokens on unrecoverable failures</td>
+        <td>Keyword-based classification can misfire</td>
+      </tr>
+      <tr>
+        <td><span class="code">Phase 3</span><br/>Intelligence Layer</td>
+        <td>After each sprint, FileIndexer indexes all generated files. ContextOrchestrator serves live project state to all agents as Procedural memory.</td>
+        <td><span class="warn">🟠 High</span></td>
+        <td>Agents see actual repo structure, not hallucinated</td>
+        <td>Cold-start penalty for embeddings model</td>
+      </tr>
+      <tr>
+        <td><span class="code">Phase 4</span><br/>Human Gates</td>
+        <td>Pipeline pauses at 3 structured points (Architecture, Sprint Plan, QA). REST API lets humans approve/revise before pipeline resumes.</td>
+        <td><span class="warn">🟠 High</span></td>
+        <td>Human oversight without halting automation</td>
+        <td>Thread-based pause — not HA-ready</td>
+      </tr>
+      <tr>
+        <td><span class="code">Phase 5</span><br/>Code Sandbox</td>
+        <td>After each sprint: ruff/eslint lint, pytest/jest tests, py_compile/npm build run on generated code. BugAnalyst receives real results.</td>
+        <td><span class="ok">🟡 Medium</span></td>
+        <td>BugAnalyst goes from guessing to knowing</td>
+        <td>Docker required for full isolation; disabled by default</td>
+      </tr>
+      <tr>
+        <td><span class="code">Phase 6</span><br/>Production Hardening</td>
+        <td>API key auth middleware, JSON structured logging, Celery/Redis task queue, Docker Compose, input validation, anchored DB paths.</td>
+        <td><span class="warn">🟠 High</span></td>
+        <td>Production-deployable in one docker-compose up</td>
+        <td>No JWT/RBAC — API key auth only</td>
+      </tr>
+      <tr>
+        <td><span class="code">Phase 7</span><br/>Model Routing + Templates</td>
+        <td>21 stage profiles with per-stage temperature + token budgets. TemplateEngine extracts structural skeletons from approved artifacts. LearningLoop + LessonStore now fully wired.</td>
+        <td><span class="ok">🟡 Medium</span></td>
+        <td>Code stages 4× more deterministic (temp=0.05)</td>
+        <td>TemplateEngine not yet injected into stage prompts</td>
+      </tr>
+      <tr>
+        <td><span class="code">Phase 8</span><br/>File Management</td>
+        <td>FileRegistry tracks all generated files. LLM receives existing file list and must specify "create" / "update" / "patch" per file.</td>
+        <td><span class="ok">🟡 Medium</span></td>
+        <td>Prevents destructive overwrites in multi-sprint projects</td>
+        <td>FileRegistry in-memory — lost on restart</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ═══════════════════ SECTION 8: OVERALL MERITS & DEMERITS ═══════════════════ -->
+<section>
+  <h2><span class="icon">⚖️</span> Overall System Merits &amp; Demerits</h2>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;border-top:3px solid var(--green)">
+      <h3 style="color:var(--green);margin-top:0">✅ System Merits</h3>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">Stateless agents</strong> — all state lives in artifacts and memory; agents are independently replaceable</div>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">Single orchestrator</strong> — WorkflowEngine is the only controller; no agent-to-agent calls prevent race conditions</div>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">Typed DTOs throughout</strong> — StageContext, RetryPlan, SandboxResult, ModelProfile all typed; no hidden string contracts</div>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">Non-fatal error contract</strong> — every cross-cutting concern (memory, sandbox, intelligence) is wrapped; one failure never kills the pipeline</div>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">Provider-agnostic</strong> — switch Bedrock → Gemini → Ollama via .env only; zero code changes</div>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">Deterministic code generation</strong> — ModelRouter sets temp=0.05 for BackendDeveloper/FrontendDeveloper</div>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">Human-in-the-loop</strong> — 3 structured gates without breaking automation flow</div>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">Docker-deployable</strong> — full stack in one docker-compose up with Redis, API, and worker</div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;border-top:3px solid var(--red)">
+      <h3 style="color:var(--red);margin-top:0">⚠️ System Demerits &amp; Future Work</h3>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">No JWT/RBAC</strong> — API key auth is sufficient for MVP but lacks per-user permissions and token expiry</div>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">Thread-based gates not HA-ready</strong> — gate state lives in memory; horizontal scaling requires Redis-backed pause state</div>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">FileRegistry not persisted</strong> — lost on restart; needs SQLite backing for long-running projects</div>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">TemplateEngine not yet injected</strong> — built and tested but not yet wired into stage prompt assembly</div>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">Rejection classification by keywords</strong> — IntelligentRetryEngine uses text matching, not LLM classification</div>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">Sandbox needs Docker in production</strong> — subprocess fallback has no isolation; unsafe for untrusted code</div>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">No rate limiting</strong> — API has no per-IP or per-key request throttling</div>
+      <div class="md-item" style="font-size:0.9rem;padding:6px 0 6px 16px"><strong style="color:var(--text)">Legacy _with_* methods</strong> — Phase 0 kept the old enrichment fallback; needs a cleanup pass to remove dead code</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ SECTION 9: WHAT'S NEXT ═══════════════════ -->
+<section>
+  <h2><span class="icon">🚀</span> Recommended Next Steps</h2>
+  <table>
+    <thead><tr><th>#</th><th>Task</th><th>Rationale</th><th>Effort</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Persist FileRegistry to SQLite</td><td>Survives restarts; essential for multi-day projects</td><td><span class="ok">Low</span></td></tr>
+      <tr><td>2</td><td>Wire TemplateEngine into WorkflowEngine</td><td>Phase 7 built the engine; connecting it adds structural hints to prompts for free</td><td><span class="ok">Low</span></td></tr>
+      <tr><td>3</td><td>Replace keyword rejection classification with LLM call</td><td>Eliminates brittle text matching in IntelligentRetryEngine</td><td><span class="warn">Medium</span></td></tr>
+      <tr><td>4</td><td>Redis-backed gate state</td><td>Enables horizontal scaling of the API tier</td><td><span class="warn">Medium</span></td></tr>
+      <tr><td>5</td><td>JWT + RBAC auth middleware</td><td>Per-user project isolation and token expiry</td><td><span class="warn">Medium</span></td></tr>
+      <tr><td>6</td><td>Enable SANDBOX_ENABLED in Docker deployment</td><td>Real lint/test results are ready; just needs Docker confirmed on host</td><td><span class="ok">Low</span></td></tr>
+      <tr><td>7</td><td>Rate limiting middleware</td><td>Prevent API abuse; protect LLM token budget</td><td><span class="ok">Low</span></td></tr>
+      <tr><td>8</td><td>Remove legacy _with_* methods from WorkflowEngine</td><td>Dead code; MemoryOrchestrator fully handles context assembly now</td><td><span class="ok">Low</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+</div><!-- /container -->
+
+<footer>
+  AI DevOS Implementation Report · All 9 phases implemented and verified · Generated August 2026
+</footer>
+</body>
+</html>

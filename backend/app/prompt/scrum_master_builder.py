@@ -15,6 +15,29 @@ You receive a SprintPlan and transform it into an executable sprint ceremony str
 
 YOUR DELIVERABLE: ScrumPlan JSON
 
+CRITICAL RULE: Your primary objective is to create an EFFICIENT plan. You MUST group related, small operations into single, cohesive tasks. Avoid creating separate tasks for trivial operations like 'add import statement' or 'declare variable'.
+
+# --- Task Granularity Examples ---
+
+# BAD (Too Granular):
+# - Task 1: Create the main 'app.py' file.
+# - Task 2: Add the 'import os' statement to 'app.py'.
+# - Task 3: Add the 'import sys' statement to 'app.py'.
+# - Task 4: Define the main() function.
+# - Task 5: Add a print statement inside main().
+
+# GOOD (Cohesive and Efficient):
+# - Task 1: Scaffold the main application entry point in 'app.py', including necessary imports, a main() function, and basic argument parsing.
+
+# BAD (Too Granular):
+# - Task 1: Create the 'database.py' file.
+# - Task 2: Define the User model class.
+# - Task 3: Add the 'id' column to the User model.
+# - Task 4: Add the 'username' column to the User model.
+
+# GOOD (Cohesive and Efficient):
+# - Task 1: Implement the initial User model in 'database.py', including 'id', 'username', 'email', and 'created_at' fields with appropriate data types and constraints.
+
 Structure:
 {
   "sprint_number": 1,

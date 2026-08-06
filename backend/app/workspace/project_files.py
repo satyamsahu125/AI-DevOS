@@ -89,9 +89,49 @@ class ProjectFileManager:
             raise SafetyException(f"empty file path is not permitted: {relative_path!r}")
         return "/".join(parts)
 
+    def file_exists(self, project_id: str, area: str, relative_path: str) -> bool:
+        """Return True if the file has already been written for project_id/area/relative_path.
+
+        Used by WriteProjectFilesAction to detect whether an operation should be
+        "create" (file absent) vs "update" (file present) — decouples that decision
+        from the LLM-authored PlannedFile.operation field so even badly-labelled
+        plans work correctly.
+        """
+        try:
+            safe_relative_path = self._sanitize_relative_path(relative_path)
+            target = self.area_dir(project_id, area) / safe_relative_path
+            return target.is_file()
+        except Exception:
+            return False
+
+    def read_file(self, project_id: str, area: str, relative_path: str) -> str | None:
+        """Read and return an existing project file's content, or None if absent.
+
+        Used by WriteProjectFilesAction when building the "update" prompt so the
+        LLM receives the existing file content and knows exactly what to modify
+        rather than rewriting from scratch. Returns None rather than raising if
+        the file does not exist.
+        """
+        try:
+            safe_relative_path = self._sanitize_relative_path(relative_path)
+            target = self.area_dir(project_id, area) / safe_relative_path
+            if not target.is_file():
+                return None
+            return target.read_text(encoding="utf-8")
+        except Exception:
+            return None
+
     def list_written(self, project_id: str, area: str) -> list[str]:
-        """Return every file path (relative to area_dir, forward-slashed) written so far for project_id/area."""
+        """Return every file path (relative to area_dir, forward-slashed) written so far for project_id/area.
+
+        Excludes SafetyPolicy backup files (prefixed with _attempt_N_) — those are
+        internal recovery snapshots, not deliverable source files.
+        """
         root = self.area_dir(project_id, area)
         if not root.exists():
             return []
-        return sorted(str(path.relative_to(root)).replace("\\", "/") for path in root.rglob("*") if path.is_file())
+        return sorted(
+            str(path.relative_to(root)).replace("\\", "/")
+            for path in root.rglob("*")
+            if path.is_file() and not path.name.startswith("_attempt_")
+        )

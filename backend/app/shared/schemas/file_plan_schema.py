@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
@@ -10,6 +10,12 @@ class PlannedFile(BaseModel):
     module: str = ""
     purpose: str = ""
     responsible_stage: str = ""
+    # Phase 8 — Agile Sprint File Management:
+    # "create"  — file does not yet exist; generate from scratch.
+    # "update"  — file exists; rewrite with new/modified features added.
+    # "patch"   — file exists; apply a targeted change described in change_description.
+    operation: Literal["create", "update", "patch"] = "create"
+    change_description: str = ""  # used only for "update"/"patch" — what specifically to change
 
     def __init__(self, **data: Any) -> None:
         if "path" in data and isinstance(data["path"], str):

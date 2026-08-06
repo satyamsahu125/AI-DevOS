@@ -8,11 +8,13 @@ from uuid import uuid4
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, before_sleep_log
 
 from ..config.manager import ConfigurationManager
+from ..shared.dto.model_profile import ModelProfile
 from .cost_tracker import CostTracker, get_shared_cost_tracker
 from .factory import LLMFactory
 from .llm_request import LLMRequest
 from .llm_response import LLMResponse
 from .providers.provider_health import ProviderHealth
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,7 @@ class LLMManager:
         config_manager: ConfigurationManager | None = None,
         factory: LLMFactory | None = None,
         cost_tracker: CostTracker | None = None,
+        broadcaster: Any | None = None,
     ) -> None:
         """Load configuration and build the provider matching settings.llm.provider."""
         self._config_manager = config_manager or ConfigurationManager()
@@ -41,6 +44,7 @@ class LLMManager:
         self._settings = self._config_manager.load()
         self._provider = self._build_provider()
         self.cost_tracker = cost_tracker or get_shared_cost_tracker()
+        self._broadcaster = broadcaster
         self._current_project_id: str = ""
         self._current_stage: str = ""
         logger.debug("llm manager ready: provider=%s model=%s", self._settings.llm.provider, self._settings.llm.model)
@@ -49,6 +53,16 @@ class LLMManager:
         """Called by WorkflowEngine before each stage."""
         self._current_project_id = project_id
         self._current_stage = stage
+
+    def set_stage_profile(self, profile) -> None:
+        """BUG-5 fix: store a ModelRouter profile for the next generate_text call.
+
+        WorkflowEngine calls this before each stage execution so the correct
+        temperature/max_tokens are applied without changing the agent call chain.
+        The profile is applied in generate_text() if no explicit profile kwarg is
+        passed. Cleared to None after each generate_text call.
+        """
+        self._stage_profile = profile
 
     def _build_provider(self):
         llm = self._settings.llm
@@ -134,6 +148,7 @@ class LLMManager:
         project_id: str = "",
         max_tokens: int | None = None,
         json_mode: bool = False,
+        profile: ModelProfile | None = None,
     ) -> LLMResponse:
         """Generate a completion for prompt (optionally under system_prompt) via the configured provider.
 
@@ -142,14 +157,34 @@ class LLMManager:
         max_tokens overrides the global config value when set; callers such as
         WriteQAReportAction/WriteDeploymentAction that generate large outputs
         use this to avoid Ollama truncating mid-response.
+        profile (Phase 7) is a ModelProfile from ModelRouter that overrides
+        model and generation parameters for a specific stage.  Explicit
+        model/max_tokens kwargs still take precedence over profile values.
         """
         settings = self._settings
-        resolved_model = model or settings.llm.model
-        resolved_max_tokens = max_tokens if max_tokens is not None else settings.llm.max_tokens
+        # BUG-5: use pending stage profile if no explicit profile provided.
+        if profile is None:
+            profile = getattr(self, "_stage_profile", None)
+        # Clear after use so it doesn't leak into subsequent calls.
+        self._stage_profile = None
+        # Phase 7: apply ModelProfile overrides (profile < explicit kwargs)
+        _profile_model = profile.model if profile and profile.model else None
+        _profile_max_tokens = profile.max_tokens if profile else None
+        resolved_model = model or _profile_model or settings.llm.model
+        resolved_max_tokens = (
+            max_tokens if max_tokens is not None
+            else _profile_max_tokens if _profile_max_tokens is not None
+            else settings.llm.max_tokens
+        )
+        _profile_temperature = profile.temperature if profile and profile.temperature is not None else None
+        resolved_temperature = _profile_temperature if _profile_temperature is not None else settings.llm.temperature
         resolved_num_ctx = getattr(settings.llm, "num_ctx", 8192)
         logger.debug(
-            "generate_text: model=%s prompt_len=%s stage=%s agent=%s max_tokens=%s num_ctx=%s json_mode=%s",
-            resolved_model, len(prompt), stage, agent, resolved_max_tokens, resolved_num_ctx, json_mode,
+            "generate_text: model=%s prompt_len=%s stage=%s agent=%s max_tokens=%s "
+            "temperature=%s num_ctx=%s json_mode=%s profile=%s",
+            resolved_model, len(prompt), stage, agent, resolved_max_tokens,
+            resolved_temperature, resolved_num_ctx, json_mode,
+            repr(profile) if profile else "none",
         )
         messages = []
         if system_prompt:
@@ -160,12 +195,29 @@ class LLMManager:
             provider=settings.llm.provider,
             model=resolved_model,
             messages=messages,
-            temperature=settings.llm.temperature,
+            temperature=resolved_temperature,
             max_tokens=resolved_max_tokens,
             num_ctx=resolved_num_ctx,
             json_mode=json_mode,
         )
+
+        eff_project_id = project_id or self._current_project_id
+        if eff_project_id and self._broadcaster:
+            self._broadcaster.log_line(
+                eff_project_id,
+                agent or "System",
+                f"Agent {agent or 'System'} is thinking... (Using model: {resolved_model})"
+            )
+
         response = self._provider.execute(request)
+
+        if eff_project_id and self._broadcaster:
+            self._broadcaster.log_line(
+                eff_project_id,
+                agent or "System",
+                f"Agent {agent or 'System'} has received a response."
+            )
+
         self._record_cost(resolved_model, response, stage, agent, project_id)
         return response
 

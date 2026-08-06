@@ -15,7 +15,9 @@ class ProjectState(str, Enum):
     REQUIREMENTS_READY      = "requirements_ready"
     ARCHITECTURE_READY      = "architecture_ready"
     DESIGN_READY            = "design_ready"
-    DESIGN_REVIEW_PENDING   = "design_review_pending"  # waiting for user
+    ARCHITECTURE_REVIEW_PENDING = "architecture_review_pending"  # waiting for human gate
+    DESIGN_REVIEW_PENDING   = "design_review_pending"            # waiting for human gate
+    SPRINT_PLAN_REVIEW_PENDING = "sprint_plan_review_pending"    # waiting for human gate
     DESIGN_APPROVED         = "design_approved"
     SPRINT_PLAN_READY       = "sprint_plan_ready"
     SPRINT_IN_PROGRESS      = "sprint_in_progress"  # has sub-state

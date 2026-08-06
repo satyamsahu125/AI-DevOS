@@ -27,7 +27,7 @@ class ProjectManager:
         self.initializer = initializer or ProjectInitializer()
         self.workspace_manager = WorkspaceManager()
 
-    def create_project(self, request: ProjectRequest) -> ProjectResponse:
+    def create_project(self, request: ProjectRequest, user_id: str = "anonymous") -> ProjectResponse:
         """Create and persist a new project from request.
 
         Deliberately does NOT run any pipeline stage: project creation must
@@ -39,18 +39,28 @@ class ProjectManager:
         If persisting the record fails after the workspace directory was
         already created, the workspace is rolled back so a failed create
         can't leave an orphaned directory behind.
+
+        Parameters
+        ----------
+        request : ProjectRequest
+            Name, description, and mode for the new project.
+        user_id : str
+            The authenticated user's ID from the JWT. Stamped on the project
+            as owner_id so all subsequent requests can filter by ownership.
         """
         if not request.name.strip():
             raise ApplicationException("project name is required")
         project_id = str(uuid.uuid4())
-        logger.info("creating project: project_id=%s name=%s", project_id, request.name)
+        logger.info("creating project: project_id=%s name=%s owner=%s", project_id, request.name, user_id)
         try:
-            workspace_root = self.workspace_manager.create_workspace(project_id, request.name, request.description)
+            mode = getattr(request, "mode", "full") or "full"
+            workspace_root = self.workspace_manager.create_workspace(project_id, request.name, request.description, mode=mode)
             project = Project(
                 project_id=project_id,
                 name=request.name,
                 description=request.description,
                 workspace_path=str(workspace_root),
+                owner_id=user_id,
             )
             self.repository.save(project)
         except Exception as exc:

@@ -139,8 +139,17 @@ class WriteQAReportAction(BaseAction):
     def _run_tests(self, project_id: str) -> dict:
         """Run pytest against the generated test files.
 
+        Copies test files to a system temp directory before running so that
+        pytest output (bytecode, .pytest_cache) is never written inside the
+        uvicorn watch root.  Using sys.executable ensures the correct venv
+        python is used regardless of how the server was started.
+
         Returns results dict with pass/fail counts.
         """
+        import shutil
+        import sys
+        import tempfile
+
         project_dir = self.project_reader.get_project_dir(project_id)
         tests_dir = project_dir / "tests"
 
@@ -148,13 +157,33 @@ class WriteQAReportAction(BaseAction):
             logger.warning("No test files to run for %s", project_id)
             return {"total": 0, "passed": 0, "failed": 0, "errors": []}
 
+        # Copy tests to a temp dir outside uvicorn's watch root so that
+        # file-system changes during the run don't trigger a server reload.
+        tmp_dir: str | None = None
         try:
+            tmp_dir = tempfile.mkdtemp(prefix="devos_qa_")
+            tmp_tests = str(tmp_dir)
+            shutil.copytree(str(tests_dir), tmp_tests, dirs_exist_ok=True)
+
+            env = {
+                **__import__("os").environ,
+                "PYTHONDONTWRITEBYTECODE": "1",  # no .pyc files
+                "PYTHONPATH": str(project_dir),
+            }
+
             result = subprocess.run(
-                ["python", "-m", "pytest", str(tests_dir), "-v", "--tb=short", "--no-header", "-q"],
+                [
+                    sys.executable, "-m", "pytest",
+                    tmp_tests,
+                    "--tb=short", "--no-header", "-q",
+                    # Disable cache so no .pytest_cache is written
+                    "-p", "no:cacheprovider",
+                ],
                 capture_output=True,
                 text=True,
-                timeout=30,
-                cwd=str(project_dir),
+                timeout=60,
+                cwd=tmp_tests,
+                env=env,
             )
 
             output = result.stdout + result.stderr
@@ -162,10 +191,16 @@ class WriteQAReportAction(BaseAction):
 
         except subprocess.TimeoutExpired:
             logger.error("pytest timed out for project %s", project_id)
-            return {"total": 0, "passed": 0, "failed": 0, "errors": ["Tests timed out after 30s"]}
+            return {"total": 0, "passed": 0, "failed": 0, "errors": ["Tests timed out after 60s"]}
         except Exception as e:
             logger.error("Failed to run tests: %s", str(e))
             return {"total": 0, "passed": 0, "failed": 0, "errors": [str(e)]}
+        finally:
+            if tmp_dir:
+                try:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                except Exception:
+                    pass
 
     def _parse_pytest_output(self, output: str, returncode: int) -> dict:
         """Parse pytest -q output to extract pass/fail counts."""

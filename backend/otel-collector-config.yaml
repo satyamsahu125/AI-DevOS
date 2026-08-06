@@ -1,0 +1,42 @@
+# R10 — OpenTelemetry Collector configuration for AI DevOS
+# Enable with: docker compose --profile otel up
+#
+# Receives OTLP traces from the API and worker, exports to Jaeger.
+# Access Jaeger UI at: http://localhost:16686
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+
+  # Add service name and deployment environment to all spans
+  attributes:
+    actions:
+      - key: deployment.environment
+        value: production
+        action: insert
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  # Log spans to stdout for debugging — remove in production
+  logging:
+    verbosity: normal
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, attributes]
+      exporters: [otlp/jaeger, logging]

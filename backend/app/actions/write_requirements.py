@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
-from ..execution.exceptions import SchemaValidationError
 from ..prompt.product_owner_builder import ProductOwnerPromptBuilder
 from ..shared.schemas.requirements_schema import RequirementsArtifact
 from .base_action import LLMAction
@@ -35,25 +35,61 @@ class WriteRequirementsAction(LLMAction):
     )
 
     def __init__(self, prompt_builder: ProductOwnerPromptBuilder | None = None) -> None:
-        """Wire the ProductOwner prompt builder this action uses."""
         super().__init__(prompt_builder or ProductOwnerPromptBuilder())
 
     def _parse_structured(self, text: str) -> dict[str, Any]:
         parsed = super()._parse_structured(text)
+
         if not parsed:
-            logger.error(
-                "ProductOwnerAgent: LLM output did not parse as "
-                "valid JSON matching RequirementsArtifact schema. "
-                "First 300 chars of response: %s",
+            # Schema parse failed (common with small/local models).
+            # Build a minimal valid artifact from the raw text so the pipeline
+            # can continue rather than hard-failing this stage.
+            logger.warning(
+                "WriteRequirements: LLM output did not match RequirementsArtifact schema. "
+                "Using minimal fallback artifact. First 300 chars: %s",
                 (text or "")[:300],
             )
-            raise SchemaValidationError(
-                "Requirements output could not be parsed as valid JSON. "
-                "The LLM response did not match the RequirementsArtifact schema. "
-                "This stage will retry with feedback. "
-                f"Response preview: {(text or '')[:200]}"
-            )
-        # Post-parse consistency fix: remove out_of_scope items that contradict scale_profile flags.
+            parsed = self._build_fallback_artifact(text)
+
+        return self._fix_scale_profile_consistency(parsed)
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _build_fallback_artifact(raw_text: str) -> dict[str, Any]:
+        """Construct a minimal RequirementsArtifact from unstructured LLM text.
+
+        Extracts whatever facts are readable and fills the rest with empty defaults.
+        All fields have Pydantic defaults so an empty dict is also valid, but
+        populating project_name and problem_statement helps downstream agents.
+        """
+        text = raw_text or ""
+
+        # Try to pull a project name from "project_name": "..." in the raw text
+        project_name = ""
+        m = re.search(r'"project_name"\s*:\s*"([^"]{1,120})"', text)
+        if m:
+            project_name = m.group(1)
+
+        # Use first 500 chars of raw text as problem_statement fallback
+        problem_statement = text[:500].strip() if text else ""
+
+        # Attempt to collect goals and requirements as plain strings if visible
+        goals: list[str] = []
+        for m in re.finditer(r'"(?:goal|description)"\s*:\s*"([^"]{5,200})"', text):
+            goals.append(m.group(1))
+
+        artifact = RequirementsArtifact(
+            project_name=project_name,
+            problem_statement=problem_statement,
+            goals=goals[:10],
+            anything_unclear="Requirements could not be fully structured — raw LLM output was stored as problem_statement.",
+        )
+        return artifact.model_dump(mode="json")
+
+    @staticmethod
+    def _fix_scale_profile_consistency(parsed: dict[str, Any]) -> dict[str, Any]:
+        """Remove out_of_scope / constraints entries that contradict scale_profile flags."""
         scale = parsed.get("scale_profile", {})
         if scale.get("auth_needed") is True:
             parsed["out_of_scope"] = [

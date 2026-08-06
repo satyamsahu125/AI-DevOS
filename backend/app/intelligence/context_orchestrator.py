@@ -162,6 +162,22 @@ class ContextOrchestrator:
         )
         return package
 
+    def get_project_state(self, project_id: str) -> dict:
+        """Return a lightweight dict summary of project intelligence state.
+
+        Never returns None — always returns a dict (may be empty `{}`).
+        Called by MemoryOrchestrator._load_intelligence() for Layer 4 assembly.
+        """
+        try:
+            overview = self.summarizer.build_project_overview(project_id, max_files=10)
+            return {
+                "project_overview": overview or "",
+                "file_count": len(getattr(self.indexer, "_index", {}).get(project_id, {})),
+            }
+        except Exception as exc:
+            logger.debug("get_project_state failed for %s: %s", project_id, exc)
+            return {}
+
     # ------------------------------------------------------------------
     # Prompt formatting
     # ------------------------------------------------------------------

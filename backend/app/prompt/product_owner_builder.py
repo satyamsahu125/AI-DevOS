@@ -84,8 +84,15 @@ STRUCTURE OF YOUR OUTPUT
      If auth_needed=false: "No authentication required"
      If auth_needed=true:  "Authentication required (see scale_profile)"
    Performance: (specific numbers from scale profile)
-   Platform: (from Q&A — web/mobile/both)
-   Browser support: (from Q&A)
+   Platform: (from Q&A — web/mobile/ML/CLI/etc.)
+   Browser support: (from Q&A — N/A for mobile, ML, CLI projects)
+
+   CRITICAL: Copy project_type verbatim from clarification into
+   non_functional_requirements.project_type. This is read by the Architect
+   and every downstream stage. Never omit or rename it.
+
+   Also copy tech_preferences from clarification into
+   non_functional_requirements.tech_preferences if present.
 
 5. USER STORIES (INVEST format)
    Each story must:

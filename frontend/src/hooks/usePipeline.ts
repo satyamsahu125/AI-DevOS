@@ -16,6 +16,7 @@ export interface PipelineState {
   sprint_progress: string
   estimated_completion: string
   total_stages: number
+  clarification_questions?: string[]
 }
 
 const EMPTY: PipelineState = {
@@ -31,7 +32,7 @@ const EMPTY: PipelineState = {
   sprint_name: "",
   sprint_progress: "",
   estimated_completion: "",
-  total_stages: 11,
+  total_stages: 17,
 }
 
 const TERMINAL = new Set(["done", "deployable", "failed", "empty"])
@@ -50,11 +51,21 @@ function fromStatus(s: WorkflowStatus): PipelineState {
     sprint_name: s.sprint_name ?? "",
     sprint_progress: s.sprint_progress ?? "",
     estimated_completion: s.estimated_completion ?? "",
-    total_stages: s.total_stages ?? 11,
+    total_stages: s.total_stages ?? 17,
+    clarification_questions: s.clarification_questions,
   }
 }
 
-export function usePipeline(projectId: string | null) {
+export interface ContextWarning {
+  pct: number
+  used: number
+  limit: number
+}
+
+export function usePipeline(
+  projectId: string | null,
+  onContextWarning?: (w: ContextWarning) => void,
+) {
   const [pipeline, setPipeline] = useState<PipelineState>(EMPTY)
   const [liveLogs, setLiveLogs] = useState<string[]>([])
 
@@ -151,6 +162,17 @@ export function usePipeline(projectId: string | null) {
       case "approval_needed":
         log(`⏸  Waiting for approval: ${msg.stage}`)
         setPipeline(p => ({ ...p, requires_user_action: true }))
+        break
+
+      case "context_warning":
+        if (onContextWarning) {
+          onContextWarning({
+            pct:   (msg.pct   as number) ?? 75,
+            used:  (msg.used  as number) ?? 0,
+            limit: (msg.limit as number) ?? 0,
+          })
+        }
+        log(`⚠️  Context window ${msg.pct ?? 75}% full`)
         break
 
       case "pipeline_done":

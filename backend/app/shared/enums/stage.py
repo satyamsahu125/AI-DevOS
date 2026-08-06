@@ -24,3 +24,4 @@ class Stage(str, Enum):
     BugAnalyst = "BugAnalyst"
     SprintDeploy = "SprintDeploy"
     SprintReview = "SprintReview"
+    Integration = "Integration"  # R6: generates client code for external service integrations

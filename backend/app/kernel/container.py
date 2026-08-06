@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from ..agents.backend import BackendDeveloperAgent
+from ..execution.code_sandbox import CodeSandbox
 from ..agents.chat_router import ChatRouter
 from ..agents.clarification import ClarificationAgent
 from ..agents.domain_researcher import DomainResearcherAgent
@@ -26,11 +27,15 @@ from ..intelligence.context_orchestrator import ContextOrchestrator
 from ..intelligence.dependency_graph import ProjectDependencyGraph
 from ..intelligence.file_indexer import FileIndexer
 from ..intelligence.sprint_monitor import SprintMonitor
+from ..learning.template_engine import TemplateEngine
 from ..llm.manager import LLMManager
+from ..llm.model_router import ModelRouter
 from ..memory.knowledge_memory import KnowledgeMemory
 from ..memory.learning_loop import LearningLoop
+from ..memory.lesson_store import LessonStore
 from ..memory.manager import MemoryManager
-from ..memory.memory_manager import MemoryOrchestrator
+from ..memory.memory_manager import MemoryOrchestrator  # low-level storage coordinator
+from ..memory.orchestrator import MemoryOrchestrator as MemoryContextOrchestrator  # high-level context assembler
 from ..memory.project_event_log import ProjectEventLog
 from ..project.initializer import ProjectInitializer
 from ..project.manager import ProjectManager
@@ -40,9 +45,14 @@ from ..shared.interfaces.agent_interface import AgentInterface
 from ..workflow.engine import WorkflowEngine
 from ..workflow.execution_state import ExecutionStateRegistry
 from ..workflow.manager import WorkflowManager
+from ..workflow.retry_engine import IntelligentRetryEngine
 from ..workflow.retry_policy import RetryPolicy
+from ..execution.preview_manager import PreviewManager
+from ..workspace.dependency_pinner import DependencyPinner
+from ..workspace.file_registry import FileRegistry
 from ..workspace.manager import WorkspaceManager
 from ..workspace.project_files import ProjectFileManager
+from ..db.gate_state import build_gate_state_registry  # R10: distributed gate state
 
 logger = logging.getLogger(__name__)
 
@@ -85,19 +95,56 @@ class Container:
         self._dependencies.register_singleton("configuration_manager", lambda: self._configuration)
         self._dependencies.register_singleton("workspace_manager", WorkspaceManager)
         self._dependencies.register_singleton("memory_manager", MemoryManager)
-        # MemoryOrchestrator is not called anywhere in the live pipeline and has an
-        # internal name collision (self.store is both an attribute and a method).
-        # Disabled until it is redesigned and actually wired into the pipeline.
-        self._dependencies.register_singleton("memory_orchestrator", MemoryOrchestrator)
         self._dependencies.register_singleton(
             "artifact_manager",
             lambda: ArtifactManager(workspace_manager=self._dependencies.resolve("workspace_manager")),
+        )
+        # Low-level storage coordinator — kept for any future use, not wired into pipeline.
+        self._dependencies.register_singleton("memory_storage_orchestrator", MemoryOrchestrator)
+        # High-level context assembler — assembles all four memory layers for WorkflowEngine.
+        # Wired into workflow_engine below via memory_orchestrator parameter.
+        # Registered AFTER memory_manager, artifact_manager, and workspace_manager.
+        self._dependencies.register_singleton(
+            "memory_orchestrator",
+            lambda: MemoryContextOrchestrator(
+                memory_manager=self._dependencies.resolve("memory_manager"),
+                artifact_manager=self._dependencies.resolve("artifact_manager"),
+                workspace_manager=self._dependencies.resolve("workspace_manager"),
+                context_manager=self._dependencies.resolve("context_manager"),  # BUG-5: Layer 3 semantic memory now active
+                # Phase 3: wire ContextOrchestrator for Layer 4 (procedural intelligence).
+                # context_orchestrator is already wired — it handles its own errors gracefully.
+                context_orchestrator=self._dependencies.resolve("context_orchestrator"),
+                # Phase 7: wire LearningLoop + LessonStore for approval/rejection recording.
+                learning_loop=self._dependencies.resolve("learning_loop"),
+                lesson_store=self._dependencies.resolve("lesson_store"),
+            ),
         )
         self._dependencies.register_singleton("review_manager", ReviewManager)
         self._dependencies.register_singleton("session_manager", SessionManager)
         self._dependencies.register_singleton(
             "project_file_manager",
             lambda: ProjectFileManager(self._dependencies.resolve("workspace_manager")),
+        )
+        self._dependencies.register_singleton(
+            "file_registry",
+            lambda: FileRegistry(workspace_manager=self._dependencies.resolve("workspace_manager")),
+        )
+        # Phase 5: CodeSandbox — enabled by default (SANDBOX_ENABLED=true since R2).
+        # Runs lint/test/build on generated code after each sprint.
+        self._dependencies.register_singleton(
+            "code_sandbox",
+            lambda: CodeSandbox(workspace_manager=self._dependencies.resolve("workspace_manager")),
+        )
+        # R2: DependencyPinner — pins requirements.txt and package.json to exact stable versions.
+        self._dependencies.register_singleton(
+            "dependency_pinner",
+            lambda: DependencyPinner(),
+        )
+        # R5: PreviewManager — manages subprocess preview of generated apps.
+        # Enabled only when PREVIEW_ENABLED=true (default false for production).
+        self._dependencies.register_singleton(
+            "preview_manager",
+            lambda: PreviewManager(),
         )
         self._dependencies.register_singleton(
             "project_writer",
@@ -114,6 +161,20 @@ class Container:
         from ..events.broadcaster import broadcaster
         self._dependencies.register_singleton("broadcaster", lambda: broadcaster)
         self._dependencies.register_singleton("event_log", ProjectEventLog)
+        # R10: gate state registry — Redis-backed when REDIS_URL is set, in-memory otherwise.
+        # Non-fatal: any error here must not block container build.
+        try:
+            self._dependencies.register_singleton(
+                "gate_state_registry",
+                lambda: build_gate_state_registry(),
+            )
+        except Exception as _gsr_exc:
+            logger.warning("container: gate_state_registry registration failed (non-fatal): %s", _gsr_exc)
+            from ..db.gate_state import InMemoryGateStateRegistry
+            self._dependencies.register_singleton(
+                "gate_state_registry",
+                lambda: InMemoryGateStateRegistry(),
+            )
         self._dependencies.register_singleton(
             "knowledge_memory",
             lambda: KnowledgeMemory(db_path=Path(settings.knowledge_db)),
@@ -125,23 +186,41 @@ class Container:
                 db_path=Path(settings.learning_db),
             ),
         )
-        # ContextManager is not called anywhere in the live pipeline (WorkflowEngine
-        # builds context directly via _with_predecessor_message / _with_relevant_patterns
-        # / _with_design_context). Disabled until the pipeline integrates it.
-        # self._dependencies.register_singleton(
-        #     "context_manager",
-        #     lambda: ContextManager(
-        #         memory_manager=self._dependencies.resolve("memory_manager"),
-        #         learning_loop=self._dependencies.resolve("learning_loop"),
-        #     ),
-        # )
+        self._dependencies.register_singleton(
+            "lesson_store",
+            lambda: LessonStore(db_path=Path(settings.lessons_db)),
+        )
+        # BUG-5 fix: re-enable ContextManager (Layer 3 semantic memory).
+        # ContextManager provides cross-project patterns + lessons to MemoryOrchestrator.
+        # Wrapped in try/except so a failure here never blocks server startup.
+        try:
+            self._dependencies.register_singleton(
+                "context_manager",
+                lambda: ContextManager(
+                    memory_manager=self._dependencies.resolve("memory_manager"),
+                    learning_loop=self._dependencies.resolve("learning_loop"),
+                    lesson_store=self._dependencies.resolve("lesson_store"),
+                    workspace_manager=self._dependencies.resolve("workspace_manager"),
+                    prompt_analyzer=self._dependencies.resolve("prompt_analyzer"),
+                ),
+            )
+        except Exception as _ctx_exc:
+            logger.warning("container: ContextManager registration failed (non-fatal): %s", _ctx_exc)
+            self._dependencies.register_singleton("context_manager", lambda: None)
         from ..llm.cost_tracker import CostTracker
-        self._dependencies.register_singleton("cost_tracker", lambda: CostTracker("backend/app/memory/costs.db"))
+        # Phase 6: anchored path — safe when uvicorn is started from any directory.
+        _data_dir = Path(__file__).resolve().parents[3] / "data"
+        _data_dir.mkdir(parents=True, exist_ok=True)
+        self._dependencies.register_singleton(
+            "cost_tracker",
+            lambda: CostTracker(str(_data_dir / "costs.db")),
+        )
 
         # ── Intelligence Layer ────────────────────────────────────────────────
+        # Phase 6: anchored path — safe when uvicorn is started from any directory.
         self._dependencies.register_singleton(
             "file_indexer",
-            lambda: FileIndexer(db_path="backend/app/memory/file_index.db"),
+            lambda: FileIndexer(db_path=str(_data_dir / "file_index.db")),
         )
         self._dependencies.register_singleton(
             "dependency_graph",
@@ -162,7 +241,7 @@ class Container:
                 dependency_graph=self._dependencies.resolve("dependency_graph"),
                 code_summarizer=self._dependencies.resolve("code_summarizer"),
                 knowledge_memory=self._dependencies.resolve("knowledge_memory"),
-                lesson_store=self._dependencies.resolve("lesson_store") if self._dependencies.registry.has("lesson_store") else None,
+                lesson_store=self._dependencies.resolve("lesson_store"),  # Phase 3: now properly registered
                 artifact_manager=self._dependencies.resolve("artifact_manager"),
                 workspace_manager=self._dependencies.resolve("workspace_manager"),
             ),
@@ -187,19 +266,23 @@ class Container:
             lambda: AgentPerformanceScorer(
                 learning_loop=self._dependencies.resolve("learning_loop"),
                 cost_tracker=self._dependencies.resolve("cost_tracker"),
+                memory_manager=self._dependencies.resolve("memory_manager"),
             ),
+        )
+        # Phase 7: ModelRouter — per-stage LLM routing profiles.
+        self._dependencies.register_singleton("model_router", ModelRouter)
+        # Phase 7: TemplateEngine — structural template extraction and injection.
+        self._dependencies.register_singleton(
+            "template_engine",
+            lambda: TemplateEngine(db_path=Path(settings.learning_db)),
         )
         from ..learning.prompt_analyzer import PromptQualityAnalyzer
 
         def _build_prompt_analyzer():
-            try:
-                ls = self._dependencies.resolve("lesson_store")
-            except Exception:
-                ls = None
-            try:
-                km = self._dependencies.resolve("knowledge_memory")
-            except Exception:
-                km = None
+            # Phase 3 fix: lesson_store and knowledge_memory are now properly registered.
+            # No silent try/except — if they fail to resolve, the error surfaces clearly.
+            ls = self._dependencies.resolve("lesson_store")
+            km = self._dependencies.resolve("knowledge_memory")
             return PromptQualityAnalyzer(lesson_store=ls, knowledge_memory=km)
 
         self._dependencies.register_singleton("prompt_analyzer", _build_prompt_analyzer)
@@ -208,6 +291,7 @@ class Container:
             lambda: LLMManager(
                 config_manager=self._dependencies.resolve("configuration_manager"),
                 cost_tracker=self._dependencies.resolve("cost_tracker"),
+                broadcaster=self._dependencies.resolve("broadcaster"),
             ),
         )
 
@@ -222,7 +306,10 @@ class Container:
         )
         self._dependencies.register_singleton(
             "file_planner_agent",
-            lambda: FilePlannerAgent(llm_manager=self._dependencies.resolve("llm_manager")),
+            lambda: FilePlannerAgent(
+                llm_manager=self._dependencies.resolve("llm_manager"),
+                file_registry=self._dependencies.resolve("file_registry"),
+            ),
         )
         self._dependencies.register_singleton(
             "backend_developer_agent",
@@ -251,8 +338,14 @@ class Container:
         )
         self._dependencies.register_singleton("execution_state", ExecutionStateRegistry)
         self._dependencies.register_singleton(
-            "workflow_engine",
-            lambda: WorkflowEngine(
+            "retry_engine",
+            lambda: IntelligentRetryEngine(
+                max_retries=settings.runtime.retry_limit,
+                performance_scorer=self._dependencies.resolve("performance_scorer"),
+            ),
+        )
+        def _build_workflow_engine():
+            engine = WorkflowEngine(
                 execution_manager=self._dependencies.resolve("execution_manager"),
                 learning_loop=self._dependencies.resolve("learning_loop"),
                 artifact_manager=self._dependencies.resolve("artifact_manager"),
@@ -262,9 +355,22 @@ class Container:
                 execution_state=self._dependencies.resolve("execution_state"),
                 broadcaster=self._dependencies.resolve("broadcaster"),
                 context_orchestrator=self._dependencies.resolve("context_orchestrator"),
-            ),
+                config_manager=self._dependencies.resolve("configuration_manager"),
+                memory_orchestrator=self._dependencies.resolve("memory_orchestrator"),
+                retry_engine=self._dependencies.resolve("retry_engine"),
+            )
+            # BUG-5 fix: wire ModelRouter and TemplateEngine (built but never called before).
+            # Set directly since WorkflowEngine.__init__ doesn't accept them as params (avoids
+            # breaking the constructor signature for existing tests).
+            engine.model_router = self._dependencies.resolve("model_router")
+            engine.template_engine = self._dependencies.resolve("template_engine")
+            return engine
+
+        self._dependencies.register_singleton("workflow_engine", _build_workflow_engine)
+        self._dependencies.register_singleton(
+            "agent_factory", 
+            lambda: AgentFactory(llm_manager=self._dependencies.resolve("llm_manager"))
         )
-        self._dependencies.register_singleton("agent_factory", AgentFactory)
         self._dependencies.register_singleton(
             "project_validator",
             lambda: ProjectValidator(workspace_manager=self._dependencies.resolve("workspace_manager")),
@@ -292,6 +398,11 @@ class Container:
                 container=self,  # gives _run_sprint() access to DI-wired developer agents
                 sprint_monitor=self._dependencies.resolve("sprint_monitor"),
                 domain_researcher=self._dependencies.resolve("domain_researcher_agent"),
+                config_manager=self._dependencies.resolve("configuration_manager"),
+                file_indexer=self._dependencies.resolve("file_indexer"),        # Phase 3: intelligence trigger
+                code_sandbox=self._dependencies.resolve("code_sandbox"),        # Phase 5: code execution sandbox
+                dependency_pinner=self._dependencies.resolve("dependency_pinner"),  # R2: pin dependency versions
+                preview_manager=self._dependencies.resolve("preview_manager"),      # R5: live app preview
             ),
         )
         self._dependencies.register_singleton(
@@ -323,8 +434,11 @@ class Container:
         self._project_writer = self._dependencies.resolve("project_writer")
         self._file_validator = self._dependencies.resolve("file_validator")
         self._event_log = self._dependencies.resolve("event_log")
-        # context_manager is disabled — not integrated in live pipeline yet
-        self._context = None
+        # BUG-5 fix: resolve ContextManager (now active; was None before).
+        try:
+            self._context = self._dependencies.resolve("context_manager")
+        except Exception:
+            self._context = None
         self._llm = self._dependencies.resolve("llm_manager")
         self._execution = self._dependencies.resolve("execution_manager")
         self._workflow = self._dependencies.resolve("workflow_manager")

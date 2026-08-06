@@ -34,6 +34,8 @@ class ProjectRepository:
         data.setdefault("status", "active")
         # Records written before `state` existed default to EMPTY.
         data["state"] = ProjectState(data.get("state") or ProjectState.EMPTY.value)
+        # Records written before `owner_id` existed default to "anonymous".
+        data.setdefault("owner_id", "anonymous")
         return Project(**data)
 
     def exists(self, project_id: str) -> bool:
@@ -58,3 +60,7 @@ class ProjectRepository:
             if project is not None:
                 projects.append(project)
         return projects
+
+    def list_by_owner(self, owner_id: str) -> list[Project]:
+        """Return projects owned by owner_id, skipping unparseable records."""
+        return [p for p in self.list_projects() if p.owner_id == owner_id]

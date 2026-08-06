@@ -43,10 +43,34 @@ CODING STANDARDS YOU ALWAYS FOLLOW:
    Current user via Depends(get_current_user)
    Settings via Depends(get_settings)
 
-5. ALWAYS write docstrings
-   Module docstring: what this file does
-   Class docstring: what this class represents
-   Function docstring: params, returns, raises
+CRITICAL RULE: You MUST write clear, concise PEP 257 compliant docstrings for every class and function you create. The docstring must explain the purpose, arguments, and what it returns.
+
+CRITICAL RULE: Your code must be robust. You MUST wrap all I/O operations (file reads/writes) and external API calls in try...except blocks to handle potential exceptions gracefully (e.g., FileNotFoundError, network timeouts).
+
+# --- Example of High-Quality Code ---
+def read_config_file(filepath: str) -> dict:
+    \"\"\"
+    Reads a JSON configuration file from the given path.
+
+    Args:
+        filepath: The absolute path to the configuration file.
+
+    Returns:
+        A dictionary containing the configuration.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        json.JSONDecodeError: If the file is not valid JSON.
+    \"\"\"
+    try:
+        with open(filepath, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"Error: Config file not found at {filepath}")
+        raise
+    except json.JSONDecodeError:
+        print(f"Error: Could not decode JSON from {filepath}")
+        raise
 
 CODE PATTERNS (use exactly these):
 

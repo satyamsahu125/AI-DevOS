@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ..shared.enums.project_state import ProjectState
 from ..shared.models.sprint import SprintPlan, SprintStatus
+from .git_manager import GitManager
 from .layout import WorkspaceLayout
 from .repository import WorkspaceRepository
 
@@ -44,8 +45,11 @@ class WorkspaceManager:
         self.layout = WorkspaceLayout(self.root)
         self.repository = WorkspaceRepository(self.root)
 
-    def create_workspace(self, project_id: str, name: str = "", description: str = "") -> Path:
-        """Create (idempotently) the workspace directory tree for project_id and seed project.json."""
+    def create_workspace(self, project_id: str, name: str = "", description: str = "", mode: str = "full") -> Path:
+        """Create (idempotently) the workspace directory tree for project_id and seed project.json.
+
+        R9: mode="quick" skips Security/Doc/Retro/HumanGates for fast prototyping.
+        """
         workspace_root = self.repository.create() / project_id
         workspace_root.mkdir(parents=True, exist_ok=True)
         for directory in self.layout.directories():
@@ -58,6 +62,7 @@ class WorkspaceManager:
                 "project_id": project_id,
                 "name": name,
                 "description": description,
+                "mode": mode,  # R9: "full" | "quick"
                 "original_request": "",
                 "state": ProjectState.EMPTY.value,
                 "created_at": now,
@@ -84,6 +89,18 @@ class WorkspaceManager:
                 "status": "active",
             }
             project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        # R4: initialize git repository for the project workspace.
+        # Non-fatal — git errors are logged and don't break workspace creation.
+        try:
+            git = GitManager(workspace_root)
+            git.init()
+        except Exception as _git_exc:
+            logger.warning(
+                "[WorkspaceManager] git init failed for %s (non-fatal): %s",
+                project_id, _git_exc,
+            )
+
         return workspace_root
 
     def delete_workspace(self, project_id: str) -> bool:

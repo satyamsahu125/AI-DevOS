@@ -29,6 +29,10 @@ _REGISTRY_KEY_TO_STAGE: dict[str, Stage] = {
     "bug_analyst": Stage.BugAnalyst,
     "sprint_deploy": Stage.SprintDeploy,
     "sprint_review": Stage.SprintReview,
+    # R6: Integration Developer
+    "integration": Stage.Integration,
+    "integration_developer": Stage.Integration,
+    "integrationdeveloper": Stage.Integration,
 }
 
 

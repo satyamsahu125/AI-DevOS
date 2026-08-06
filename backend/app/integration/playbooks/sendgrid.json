@@ -1,0 +1,20 @@
+{
+  "service": "sendgrid",
+  "display_name": "SendGrid Transactional Email",
+  "description": "SendGrid email delivery — transactional emails, templates, bulk sends",
+  "keywords": ["email", "sendgrid", "transactional email", "smtp", "mailer", "notification email", "mail"],
+  "env_vars": [
+    {"name": "SENDGRID_API_KEY", "description": "SendGrid API key (SG.xxx...)", "required": true},
+    {"name": "SENDGRID_FROM_EMAIL", "description": "Verified sender email address", "required": true},
+    {"name": "SENDGRID_FROM_NAME", "description": "Sender display name", "required": false}
+  ],
+  "python": {
+    "packages": ["sendgrid>=6.10.0"],
+    "snippet": "from sendgrid import SendGridAPIClient\nfrom sendgrid.helpers.mail import Mail\n\n_sg = SendGridAPIClient(os.getenv('SENDGRID_API_KEY'))\nFROM_EMAIL = os.getenv('SENDGRID_FROM_EMAIL')\nFROM_NAME = os.getenv('SENDGRID_FROM_NAME', 'App')\n\ndef send_email(to_email: str, subject: str, html_content: str, plain_content: str = '') -> bool:\n    message = Mail(\n        from_email=(FROM_EMAIL, FROM_NAME),\n        to_emails=to_email,\n        subject=subject,\n        html_content=html_content,\n        plain_text_content=plain_content or html_content,\n    )\n    try:\n        response = _sg.send(message)\n        return response.status_code in (200, 202)\n    except Exception as e:\n        return False\n\ndef send_template_email(to_email: str, template_id: str, dynamic_data: dict) -> bool:\n    message = Mail(from_email=(FROM_EMAIL, FROM_NAME), to_emails=to_email)\n    message.template_id = template_id\n    message.dynamic_template_data = dynamic_data\n    try:\n        response = _sg.send(message)\n        return response.status_code in (200, 202)\n    except Exception:\n        return False"
+  },
+  "node": {
+    "packages": ["@sendgrid/mail@^8.0.0"],
+    "snippet": "const sgMail = require('@sendgrid/mail');\nsgMail.setApiKey(process.env.SENDGRID_API_KEY);\n\nconst FROM = { email: process.env.SENDGRID_FROM_EMAIL, name: process.env.SENDGRID_FROM_NAME || 'App' };\n\nconst sendEmail = async (to, subject, htmlContent, textContent) => {\n  try {\n    await sgMail.send({ to, from: FROM, subject, html: htmlContent, text: textContent || htmlContent });\n    return true;\n  } catch (e) { return false; }\n};\n\nconst sendTemplateEmail = async (to, templateId, dynamicData) => {\n  try {\n    await sgMail.send({ to, from: FROM, templateId, dynamicTemplateData: dynamicData });\n    return true;\n  } catch (e) { return false; }\n};"
+  },
+  "docs_url": "https://docs.sendgrid.com/api-reference/mail-send"
+}

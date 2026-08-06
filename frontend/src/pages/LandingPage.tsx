@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react"
 import { useNavigate } from "react-router-dom"
+import { useAuth } from "../lib/auth"
 
 // ── Agent data ──────────────────────────────────────────────────────────────
 const AGENTS = [
@@ -46,6 +47,14 @@ export function LandingPage() {
   const navRef         = useRef<HTMLElement>(null)
   const typedRef       = useRef<HTMLSpanElement>(null)
   const statusLabelRef = useRef<HTMLSpanElement>(null)
+  const { user, loading } = useAuth()
+
+  // Redirect already-authenticated users straight to their projects
+  useEffect(() => {
+    if (!loading && user) {
+      navigate("/projects", { replace: true })
+    }
+  }, [user, loading, navigate])
 
   // Nav scroll
   useEffect(() => {
@@ -130,8 +139,8 @@ export function LandingPage() {
             </div>
             AI DevOS
           </a>
-          <button className="land-btn" onClick={() => navigate("/projects")}>
-            Start Building <i className="arr">→</i>
+          <button className="land-btn" onClick={() => navigate(user ? "/projects" : "/login")}>
+            {user ? "Go to Projects" : "Start Building"} <i className="arr">→</i>
           </button>
         </div>
       </nav>

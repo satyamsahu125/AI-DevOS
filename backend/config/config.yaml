@@ -1,10 +1,14 @@
-llm:
-  provider: ollama
-  model: qwen2.5-coder:7b
-  base_url: http://localhost:11434
-  temperature: 0.1
-  max_tokens: 4096
-runtime:
-  workspace: backend/temp-workspace
-  retry_limit: 3
-  log_level: INFO
+# AI DevOS — config.yaml
+#
+# This file is intentionally minimal.
+# All configuration is driven by backend/.env (copy from .env.example).
+#
+# config.yaml is read as a lower-priority baseline; .env always wins.
+# You do NOT need to edit this file to change providers, models, or regions.
+#
+# To switch LLM provider, set LLM_PROVIDER in your .env file:
+#
+#   LLM_PROVIDER=ollama     → local Ollama  (set OLLAMA_BASE_URL, OLLAMA_MODEL)
+#   LLM_PROVIDER=gemini     → Google Gemini (set GEMINI_API_KEY, LLM_MODEL)
+#   LLM_PROVIDER=bedrock    → AWS Bedrock   (set BEDROCK_API_KEY or AWS_* creds, LLM_MODEL, BEDROCK_REGION)
+#   LLM_PROVIDER=claude     → Anthropic API (set CLAUDE_API_KEY, LLM_MODEL)

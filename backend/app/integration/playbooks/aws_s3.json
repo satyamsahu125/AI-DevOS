@@ -1,0 +1,21 @@
+{
+  "service": "aws_s3",
+  "display_name": "AWS S3 File Storage",
+  "description": "AWS S3 object storage — upload, download, delete, presigned URLs",
+  "keywords": ["s3", "aws", "storage", "file upload", "bucket", "object storage", "cloud storage", "blob"],
+  "env_vars": [
+    {"name": "AWS_ACCESS_KEY_ID", "description": "AWS access key ID", "required": true},
+    {"name": "AWS_SECRET_ACCESS_KEY", "description": "AWS secret access key", "required": true},
+    {"name": "AWS_REGION", "description": "AWS region (e.g. us-east-1)", "required": true},
+    {"name": "S3_BUCKET_NAME", "description": "Target S3 bucket name", "required": true}
+  ],
+  "python": {
+    "packages": ["boto3>=1.28.0"],
+    "snippet": "import boto3\nfrom botocore.exceptions import ClientError\nfrom pathlib import Path\n\n_s3 = boto3.client(\n    's3',\n    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),\n    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),\n    region_name=os.getenv('AWS_REGION'),\n)\nBUCKET = os.getenv('S3_BUCKET_NAME')\n\ndef upload_file(local_path: str | Path, s3_key: str, content_type: str = 'application/octet-stream') -> bool:\n    try:\n        _s3.upload_file(str(local_path), BUCKET, s3_key, ExtraArgs={'ContentType': content_type})\n        return True\n    except ClientError as e:\n        return False\n\ndef upload_bytes(data: bytes, s3_key: str, content_type: str = 'application/octet-stream') -> bool:\n    try:\n        _s3.put_object(Bucket=BUCKET, Key=s3_key, Body=data, ContentType=content_type)\n        return True\n    except ClientError:\n        return False\n\ndef download_file(s3_key: str, local_path: str | Path) -> bool:\n    try:\n        _s3.download_file(BUCKET, s3_key, str(local_path))\n        return True\n    except ClientError:\n        return False\n\ndef delete_file(s3_key: str) -> bool:\n    try:\n        _s3.delete_object(Bucket=BUCKET, Key=s3_key)\n        return True\n    except ClientError:\n        return False\n\ndef get_presigned_url(s3_key: str, expires_in: int = 3600) -> str:\n    return _s3.generate_presigned_url('get_object', Params={'Bucket': BUCKET, 'Key': s3_key}, ExpiresIn=expires_in)"
+  },
+  "node": {
+    "packages": ["@aws-sdk/client-s3@^3.0.0", "@aws-sdk/s3-request-presigner@^3.0.0"],
+    "snippet": "const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');\nconst { getSignedUrl } = require('@aws-sdk/s3-request-presigner');\n\nconst s3 = new S3Client({\n  credentials: { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY },\n  region: process.env.AWS_REGION,\n});\nconst BUCKET = process.env.S3_BUCKET_NAME;\n\nconst uploadFile = async (buffer, key, contentType = 'application/octet-stream') =>\n  s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: buffer, ContentType: contentType }));\n\nconst deleteFile = async (key) =>\n  s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));\n\nconst getPresignedUrl = (key, expiresIn = 3600) =>\n  getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn });"
+  },
+  "docs_url": "https://docs.aws.amazon.com/s3/"
+}

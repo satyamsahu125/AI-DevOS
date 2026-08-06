@@ -26,6 +26,11 @@ class OperationType(str, Enum):
     DB_DROP = "db_drop"
     GIT_FORCE_PUSH = "git_force_push"
     GIT_RESET_HARD = "git_reset_hard"
+    # Phase 5: sandbox execution is a read-only operation on project files.
+    # Included here so sandbox runs are audit-logged like any other guarded operation.
+    # SafetyPolicy always ALLOWs SANDBOX_EXECUTION — it is listed to ensure
+    # every sandbox invocation passes through the policy and appears in safety_checks.
+    SANDBOX_EXECUTION = "sandbox_execution"
 
 
 class SafetyDecision(str, Enum):
@@ -188,6 +193,11 @@ class SafetyPolicy:
             else:
                 decision = SafetyDecision.BLOCK
                 reason = "overwriting an existing file outside the workspace is not permitted"
+        elif operation == OperationType.SANDBOX_EXECUTION:
+            # Phase 5: sandbox runs are always allowed — they are read-only on project files.
+            # Logged for audit; never blocked or warned.
+            decision = SafetyDecision.ALLOW
+            reason = "sandbox execution is a read-only operation — always permitted"
         else:
             decision = SafetyDecision.ALLOW
             reason = "normal operation"

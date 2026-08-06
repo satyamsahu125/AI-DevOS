@@ -61,6 +61,32 @@ class LessonStore:
         self._conn.commit()
         logger.debug("lesson store schema ready: db=%s", self._db_path)
 
+    def record(
+        self,
+        stage: str,
+        project_id: str,
+        what_worked: str = "",
+        what_failed: str = "",
+        reviewer_said: str = "",
+        retry_count: int = 0,
+    ) -> None:
+        """Convenience wrapper around add_lesson with auto-generated lesson_id.
+
+        Called by MemoryOrchestrator.record_rejection() so callers don't need
+        to construct a Lesson object directly.
+        """
+        lesson = Lesson(
+            lesson_id=str(uuid.uuid4()),
+            stage=stage,
+            project_id=project_id,
+            what_worked=what_worked,
+            what_failed=what_failed,
+            reviewer_said=reviewer_said,
+            retry_count_when_learned=retry_count,
+            created_at=datetime.now(timezone.utc),
+        )
+        self.add_lesson(lesson)
+
     def add_lesson(self, lesson: Lesson) -> None:
         """Persist lesson."""
         logger.info("adding lesson: stage=%s project_id=%s lesson_id=%s", lesson.stage, lesson.project_id, lesson.lesson_id)

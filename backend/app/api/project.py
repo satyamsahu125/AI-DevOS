@@ -1,11 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, Response
+import json
 
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
+from pydantic import BaseModel
 from ..artifact.manager import ArtifactManager
 from ..execution.project_validator import ProjectValidator
 from ..memory.manager import MemoryManager
 from ..project.manager import ProjectManager
 from ..shared.dto.project_request import ProjectRequest
 from ..shared.dto.project_response import ProjectResponse
+from ..shared.enums.project_state import ProjectState
+from ..shared.models.project import Project
+from ..workflow.manager import WorkflowManager
 from ..workspace.manager import WorkspaceManager
 from ..workspace.project_files import ProjectFileManager
 from ..llm.cost_tracker import CostTracker
@@ -16,20 +21,100 @@ from .dependencies import (
     get_project_file_manager,
     get_project_manager,
     get_project_validator,
+    get_workflow_manager,
     get_workspace_manager,
 )
+from .middleware.jwt_auth import get_current_user
 
 router = APIRouter()
 
+_MAX_NAME_LENGTH = 100
+
+
+def _assert_project_access(project: Project, user) -> None:
+    """Raise 403 if the caller does not own the project and is not an admin.
+
+    Admins can access any project; regular users can only access their own.
+    """
+    if user.role == "admin":
+        return
+    if project.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Access to this project is not permitted")
+_MAX_DESCRIPTION_LENGTH = 2000
+_VALID_NAME_PATTERN = __import__("re").compile(r"^[A-Za-z0-9 _\-]+$")
+
+
+def _validate_project_request(request: ProjectRequest) -> None:
+    """Validate project name and description fields.
+
+    Phase 6: unbounded descriptions get embedded in every LLM prompt, causing
+    unexpected token cost. Name validation prevents injection via project names.
+
+    Raises HTTPException 422 on invalid input.
+    """
+    name = (request.name or "").strip()
+    description = (request.description or "").strip()
+
+    if not name:
+        raise HTTPException(status_code=422, detail="name is required and cannot be empty")
+    if len(name) > _MAX_NAME_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail=f"name must be at most {_MAX_NAME_LENGTH} characters (got {len(name)})",
+        )
+    if not _VALID_NAME_PATTERN.match(name):
+        raise HTTPException(
+            status_code=422,
+            detail="name must contain only letters, numbers, spaces, hyphens, or underscores",
+        )
+    if len(description) > _MAX_DESCRIPTION_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail=f"description must be at most {_MAX_DESCRIPTION_LENGTH} characters (got {len(description)})",
+        )
+
 
 @router.post("/projects", response_model=ProjectResponse, status_code=201)
-def create_project(request: ProjectRequest, manager: ProjectManager = Depends(get_project_manager)) -> ProjectResponse:
-    return manager.create_project(request)
+def create_project(
+    request: ProjectRequest,
+    manager: ProjectManager = Depends(get_project_manager),
+    user=Depends(get_current_user),
+) -> ProjectResponse:
+    _validate_project_request(request)
+    return manager.create_project(request, user_id=user.id)
+
+
+@router.post("/projects/create-and-run", status_code=201)
+def create_and_run_project(
+    request: ProjectRequest,
+    background_tasks: BackgroundTasks,
+    manager: ProjectManager = Depends(get_project_manager),
+    workflow_manager: WorkflowManager = Depends(get_workflow_manager),
+    user=Depends(get_current_user),
+) -> dict:
+    _validate_project_request(request)
+    project_resp = manager.create_project(request, user_id=user.id)
+    content = request.description or f"Initialize project {project_resp.project_id}"
+    background_tasks.add_task(workflow_manager.run, project_resp.project_id, content)
+    return {
+        "id": project_resp.project_id,
+        "name": project_resp.name,
+        "description": project_resp.description,
+        "status": "running",
+        "state": "initializing"
+    }
 
 
 @router.get("/projects")
-def list_projects(manager: ProjectManager = Depends(get_project_manager)) -> list[dict]:
-    """Return a summary of every known project."""
+def list_projects(
+    manager: ProjectManager = Depends(get_project_manager),
+    user=Depends(get_current_user),
+) -> list[dict]:
+    """Return projects owned by the current user (admins see all)."""
+    if user.role == "admin":
+        projects = manager.repository.list_projects()
+    else:
+        projects = manager.repository.list_by_owner(user.id)
     return [
         {
             "project_id": project.project_id,
@@ -38,7 +123,7 @@ def list_projects(manager: ProjectManager = Depends(get_project_manager)) -> lis
             "current_stage": project.current_stage.value,
             "created_at": project.created_at.isoformat(),
         }
-        for project in manager.repository.list_projects()
+        for project in projects
     ]
 
 
@@ -48,11 +133,13 @@ def get_project(
     manager: ProjectManager = Depends(get_project_manager),
     workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
     artifact_manager: ArtifactManager = Depends(get_artifact_manager),
+    user=Depends(get_current_user),
 ) -> dict:
     """Return the project's static record merged with its live workspace progress and approved artifacts."""
     project = manager.repository.load(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    _assert_project_access(project, user)
 
     workspace_state = workspace_manager.load_project_json(project_id) or {}
     artifacts = [
@@ -66,7 +153,7 @@ def get_project(
         for artifact in artifact_manager.list_artifacts(project_id)
     ]
 
-    return {
+    data = {
         "project_id": project.project_id,
         "name": project.name,
         "description": project.description,
@@ -77,13 +164,62 @@ def get_project(
         "workspace_path": project.workspace_path,
     }
 
+    if data["current_stage"] == "clarifying" or data["status"] == "paused":
+        qa = workspace_manager.get_qa_session(project_id)
+        if qa and "questions" in qa:
+            data["clarification_questions"] = [
+                q.get("question") for q in qa["questions"] if "question" in q
+            ]
+
+    return data
+
+class ClarificationSubmitRequest(BaseModel):
+    answers: dict[str, str]
+
+
+@router.post("/projects/{project_id}/submit-clarifications")
+def submit_clarifications(
+    project_id: str,
+    request: ClarificationSubmitRequest,
+    background_tasks: BackgroundTasks,
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+    workflow_manager: WorkflowManager = Depends(get_workflow_manager),
+    manager: ProjectManager = Depends(get_project_manager),
+    user=Depends(get_current_user),
+):
+    project = manager.repository.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    _assert_project_access(project, user)
+
+    qa = workspace_manager.get_qa_session(project_id)
+    questions = qa.get("questions", [])
+
+    for q_idx, q_dict in enumerate(questions):
+        q_text = q_dict.get("question", "")
+        if q_text in request.answers:
+            workspace_manager.save_qa_answer(project_id, q_idx, request.answers[q_text])
+
+    workspace_manager.mark_qa_complete(project_id)
+    workspace_manager.update_state(project_id, ProjectState.QA_IN_PROGRESS)
+    
+    background_tasks.add_task(workflow_manager.run, project_id, "")
+    
+    return {"status": "success"}
+
 
 @router.get("/projects/{project_id}/files")
 def list_project_files(
     project_id: str,
     project_file_manager: ProjectFileManager = Depends(get_project_file_manager),
+    manager: ProjectManager = Depends(get_project_manager),
+    user=Depends(get_current_user),
 ) -> dict:
     """Lists all real generated files in project/ directory."""
+    project = manager.repository.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    _assert_project_access(project, user)
     project_dir = project_file_manager.project_root(project_id)
     backend_files = project_file_manager.list_written(project_id, "backend")
     frontend_files = project_file_manager.list_written(project_id, "frontend")
@@ -129,8 +265,15 @@ def get_project_file_content(
     project_id: str,
     file_path: str,
     project_file_manager: ProjectFileManager = Depends(get_project_file_manager),
+    manager: ProjectManager = Depends(get_project_manager),
+    user=Depends(get_current_user),
 ) -> dict:
     """Returns actual content of a generated file."""
+    project = manager.repository.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    _assert_project_access(project, user)
+
     if ".." in file_path:
         raise HTTPException(status_code=400, detail="Path traversal rejected")
 
@@ -168,11 +311,9 @@ def delete_project(
     workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
     artifact_manager: ArtifactManager = Depends(get_artifact_manager),
     memory_manager: MemoryManager = Depends(get_memory_manager),
+    user=Depends(get_current_user),
 ) -> Response:
     """Delete project_id's workspace, project record, artifact rows, and namespaced memory records."""
-    if not manager.repository.exists(project_id):
-        raise HTTPException(status_code=404, detail="Project not found")
-
     workspace_manager.delete_workspace(project_id)
     manager.repository.delete(project_id)
     artifact_manager.delete_project_artifacts(project_id)
@@ -184,8 +325,14 @@ def delete_project(
 def validate_project(
     project_id: str,
     validator: ProjectValidator = Depends(get_project_validator),
+    manager: ProjectManager = Depends(get_project_manager),
+    user=Depends(get_current_user),
 ) -> dict:
     """Run full validation suite on generated project."""
+    project = manager.repository.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    _assert_project_access(project, user)
     result = validator.validate(project_id)
     return {
         "project_id": result.project_id,
@@ -211,8 +358,14 @@ def validate_project(
 def get_project_metrics(
     project_id: str,
     tracker: CostTracker = Depends(get_cost_tracker),
+    manager: ProjectManager = Depends(get_project_manager),
+    user=Depends(get_current_user),
 ):
     """Return ProjectCostSummary metrics for project_id."""
+    project = manager.repository.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    _assert_project_access(project, user)
     return tracker.get_project_summary(project_id)
 
 
@@ -222,6 +375,46 @@ def get_stage_metrics(
     project_id: str,
     stage: str,
     tracker: CostTracker = Depends(get_cost_tracker),
+    manager: ProjectManager = Depends(get_project_manager),
+    user=Depends(get_current_user),
 ):
     """Return individual LLM call details for stage under project_id."""
+    project = manager.repository.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    _assert_project_access(project, user)
     return tracker.get_stage_calls(project_id, stage)
+
+
+@router.get("/projects/{project_id}/sandbox-results")
+@router.get("/api/projects/{project_id}/sandbox-results")
+def get_sandbox_results(
+    project_id: str,
+    sprint: int = Query(default=-1, description="Sprint number, -1 for latest"),
+    memory: MemoryManager = Depends(get_memory_manager),
+    manager: ProjectManager = Depends(get_project_manager),
+    user=Depends(get_current_user),
+):
+    """R2: Return the latest sandbox lint/test/build results for a project.
+
+    Results are stored by PipelineSupervisor._run_sandbox() at 'sandbox:latest'
+    after each sprint. The optional `sprint` query param is accepted but
+    currently only the latest result is stored (all sprints key to 'sandbox:latest').
+    """
+    project = manager.repository.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    _assert_project_access(project, user)
+    raw = memory.load(project_id, "sandbox:latest")
+    if raw is None:
+        raise HTTPException(status_code=404, detail="No sandbox results found for this project")
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except (json.JSONDecodeError, TypeError):
+        data = {"raw": str(raw)}
+    return data
+
+
+# NOTE: The download endpoint lives in api/files.py which already handles project zips
+# with RUN_INSTRUCTIONS.md and VALIDATION_REPORT.md. R3 enhanced that endpoint to also
+# include VERIFICATION_REPORT.md (see api/files.py download_project).

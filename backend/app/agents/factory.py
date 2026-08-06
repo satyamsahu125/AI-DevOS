@@ -8,6 +8,7 @@ from .backend import BackendDeveloperAgent
 from .base_agent import BaseAgent
 from .bug_analyst import BugAnalystAgent
 from .clarification import ClarificationAgent
+from .integration_developer import IntegrationDeveloperAgent
 from .designer import DesignerAgent
 from .devops import DevOpsAgent, ProductionDeployAgent
 from .document import DocumentAgent
@@ -37,11 +38,12 @@ class AgentFactory:
     implementation and constructs exactly one instance of it per call.
     """
 
-    def __init__(self, registry: AgentRegistry | None = None, resolver: AgentResolver | None = None, validator: AgentValidation | None = None) -> None:
+    def __init__(self, registry: AgentRegistry | None = None, resolver: AgentResolver | None = None, validator: AgentValidation | None = None, llm_manager=None) -> None:
         """Wire the registry, resolver, and validator used to construct agents, then register the default agent set."""
         self.registry = registry or AgentRegistry()
         self.resolver = resolver or AgentResolver()
         self.validator = validator or AgentValidation()
+        self._llm_manager = llm_manager
         self._register_defaults()
 
     def _register_defaults(self) -> None:
@@ -77,6 +79,8 @@ class AgentFactory:
         # dependency is explicit and discoverable.
         self.registry.register("sprint_deploy", SprintDeployAgent)
         self.registry.register("sprint_review", SprintReviewAgent)
+        # R6: Integration Developer — runs in release phase before QA
+        self.registry.register("integration", IntegrationDeveloperAgent)
 
     def create(self, stage_name: str) -> BaseAgent:
         """Resolve stage_name to a registered agent and construct a new instance of it."""
@@ -87,5 +91,7 @@ class AgentFactory:
         implementation = self.registry.resolve(agent_name)
         logger.info("agent factory creating agent: stage=%s agent=%s", stage_name, agent_name)
         if isinstance(implementation, type):
+            if self._llm_manager is not None:
+                return implementation(llm_manager=self._llm_manager)
             return implementation()
         return implementation

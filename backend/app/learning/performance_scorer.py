@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -16,6 +17,7 @@ class AgentPerformanceScorer:
         self,
         learning_loop: LearningLoop | None = None,
         cost_tracker: CostTracker | None = None,
+        memory_manager: Any | None = None,
     ) -> None:
         if learning_loop is not None:
             self.learning_loop = learning_loop
@@ -29,6 +31,8 @@ class AgentPerformanceScorer:
             from ..llm.cost_tracker import get_shared_cost_tracker
 
             self.cost_tracker = get_shared_cost_tracker()
+        # memory_manager is optional — used to persist scores for IntelligentRetryEngine
+        self.memory_manager = memory_manager
 
     def score_agent(self, stage: str, project_id: str | None = None) -> dict[str, Any]:
         """Score an agent's performance on a stage. Returns scores from 0.0 to 1.0."""
@@ -68,7 +72,7 @@ class AgentPerformanceScorer:
             else "needs_improvement"
         )
 
-        return {
+        result = {
             "stage": stage,
             "score": round(composite, 3),
             "quality": quality,
@@ -78,6 +82,19 @@ class AgentPerformanceScorer:
             "total_runs": total,
             "recommendation": self._recommendation(quality, avg_retries),
         }
+        # Persist score to memory so IntelligentRetryEngine can read it without
+        # querying the LearningLoop on every decision (avoids repeated DB round-trips).
+        if self.memory_manager is not None:
+            try:
+                _project_key = project_id or "__global__"
+                self.memory_manager.store(
+                    _project_key,
+                    f"perf:score:{stage}",
+                    json.dumps(result),
+                )
+            except Exception as exc:
+                logger.debug("score_agent: memory write skipped for %s/%s: %s", project_id, stage, exc)
+        return result
 
     def score_all_agents(self) -> list[dict[str, Any]]:
         """Score all known stages."""

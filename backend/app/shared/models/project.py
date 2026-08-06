@@ -20,3 +20,6 @@ class Project:
     # starts EMPTY -- current_stage above is only the stage the pipeline would
     # run next, not evidence that anything has executed.
     state: ProjectState = ProjectState.EMPTY
+    # Owner — the user_id from the JWT that created this project.
+    # Defaults to "anonymous" for backward compat with pre-auth records on disk.
+    owner_id: str = "anonymous"

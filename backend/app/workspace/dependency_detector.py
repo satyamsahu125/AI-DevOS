@@ -172,6 +172,32 @@ NPM_VERSION_MAP = {
     "@supabase/supabase-js":   "^2.45.0",
     "graphql":                 "^16.9.0",
     "@apollo/client":          "^3.11.0",
+    # React Native / Expo — SDK 51 (current Expo Go compatible)
+    "expo":                                         "~51.0.0",
+    "expo-status-bar":                              "~1.12.1",
+    "expo-router":                                  "~3.5.0",
+    "expo-splash-screen":                           "~0.27.0",
+    "expo-font":                                    "~12.0.0",
+    "expo-linking":                                 "~6.3.0",
+    "expo-constants":                               "~16.0.0",
+    "expo-system-ui":                               "~3.0.0",
+    "react-native":                                 "0.74.2",
+    "react-native-safe-area-context":               "4.10.1",
+    "react-native-screens":                         "3.31.1",
+    "react-native-gesture-handler":                 "~2.16.1",
+    "react-native-reanimated":                      "~3.10.1",
+    "@react-navigation/native":                     "^6.1.17",
+    "@react-navigation/native-stack":               "^6.9.26",
+    "@react-navigation/bottom-tabs":                "^6.5.20",
+    "@react-native-async-storage/async-storage":    "1.23.1",
+    "nativewind":                                   "^4.0.1",
+    "react-native-paper":                           "^5.12.3",
+    "react-native-vector-icons":                    "^10.1.0",
+    "@expo/vector-icons":                           "^14.0.0",
+    "babel-preset-expo":                            "~11.0.0",
+    # Expo testing
+    "jest-expo":                                    "~51.0.0",
+    "@testing-library/react-native":                "^12.5.0",
 }
 
 _NODE_REQUIRE = re.compile(r"""require\(\s*['"]([^'"]+)['"]\s*\)""")
@@ -233,7 +259,13 @@ def _clean_path(path: str) -> str:
 
 
 def build_package_json(project_name: str, dependencies: list[str], written_paths: list[str]) -> str:
-    """Build a valid, robust package.json listing pinned dependencies and clean, executable npm scripts."""
+    """Build a valid, robust package.json listing pinned dependencies and clean, executable npm scripts.
+
+    Dispatches to three templates:
+      - React Native / Expo (mobile_app): expo start/export scripts, SDK 51, no vite, no react-dom
+      - React / Vite (web frontend): vite dev/build scripts
+      - Node.js (backend): plain node entry-point scripts
+    """
     import json
 
     def pin(pkg: str) -> str:
@@ -247,15 +279,75 @@ def build_package_json(project_name: str, dependencies: list[str], written_paths
         return version
 
     cleaned_paths = [_clean_path(p) for p in written_paths if p]
-    is_frontend = any(
+    safe_name = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in project_name.lower()) or "generated-project"
+
+    # ── Mobile / React Native / Expo detection ────────────────────────────────
+    # Signals: react-native in deps, expo in deps, .tsx files at project root,
+    # AsyncStorage, or React Navigation.
+    _RN_PKG_SIGNALS = {
+        "react-native", "expo", "@react-navigation/native", "@react-navigation/native-stack",
+        "@react-native-async-storage/async-storage", "expo-router", "react-native-screens",
+        "react-native-safe-area-context", "nativewind", "react-native-paper",
+        "react-native-gesture-handler", "react-native-reanimated",
+    }
+    deps_lower = {d.lower() for d in dependencies}
+    is_mobile = bool(_RN_PKG_SIGNALS & deps_lower) or any(
+        p in ("App.tsx", "app.tsx", "App.js", "app.js")
+        for p in cleaned_paths
+    )
+
+    is_frontend = not is_mobile and any(
         p.endswith((".jsx", ".tsx", ".html")) or "react" in p.lower() or "src/components" in p.lower()
         for p in cleaned_paths
     )
 
-    safe_name = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in project_name.lower()) or "generated-project"
+    if is_mobile:
+        # ── React Native / Expo — SDK 51 (current Expo Go compatible) ────────
+        dept_dict = {name: pin(name) for name in dependencies}
+        # Core Expo SDK 51 deps always present
+        for pkg, default in [
+            ("expo",                                      "~51.0.0"),
+            ("react",                                     "18.2.0"),
+            ("react-native",                              "0.74.2"),
+            ("react-native-safe-area-context",            "4.10.1"),
+            ("react-native-screens",                      "3.31.1"),
+            ("expo-status-bar",                           "~1.12.1"),
+        ]:
+            if pkg not in dept_dict:
+                dept_dict[pkg] = NPM_VERSION_MAP.get(pkg, default)
 
-    if is_frontend:
-        # React/Vite/Web Frontend package.json
+        # NEVER include react-dom or vite in a React Native project
+        dept_dict.pop("react-dom", None)
+        dept_dict.pop("vite", None)
+        dept_dict.pop("@vitejs/plugin-react", None)
+
+        payload = {
+            "name": safe_name,
+            "version": "1.0.0",
+            "private": True,
+            "main": "node_modules/expo/AppEntry.js",
+            "scripts": {
+                "start": "expo start",
+                "android": "expo start --android",
+                "ios": "expo start --ios",
+                "web": "expo start --web",
+                "test": "jest --watchAll",
+            },
+            "dependencies": dept_dict,
+            "devDependencies": {
+                "@babel/core": "^7.24.0",
+                "babel-preset-expo": NPM_VERSION_MAP.get("babel-preset-expo", "~11.0.0"),
+                "jest": NPM_VERSION_MAP.get("jest", "^29.7.0"),
+                "jest-expo": NPM_VERSION_MAP.get("jest-expo", "~51.0.0"),
+                "@testing-library/react-native": NPM_VERSION_MAP.get("@testing-library/react-native", "^12.5.0"),
+            },
+            "jest": {
+                "preset": "jest-expo",
+            },
+        }
+
+    elif is_frontend:
+        # ── React / Vite web frontend ─────────────────────────────────────────
         dept_dict = {name: pin(name) for name in dependencies}
         if "react" not in dept_dict:
             dept_dict["react"] = NPM_VERSION_MAP.get("react", "^18.3.0")
@@ -279,8 +371,9 @@ def build_package_json(project_name: str, dependencies: list[str], written_paths
                 "vite": NPM_VERSION_MAP.get("vite", "^5.3.0"),
             },
         }
+
     else:
-        # Node.js Backend package.json
+        # ── Node.js backend ───────────────────────────────────────────────────
         entry = (
             next((path for path in cleaned_paths if path in _ENTRY_CANDIDATES), None)
             or next((path for path in cleaned_paths if path.endswith(".js") and "/" not in path), None)

@@ -55,6 +55,9 @@ class ArchitectureArtifact(BaseModel):
     scalability_notes: str = ""
     out_of_scope: list[str] = Field(default_factory=list)
     anything_unclear: str = ""
+    # Propagated from ClarificationArtifact — used by all downstream stages
+    # (FileStructurePlanner, QA, DevOps) to select the right templates.
+    project_type: str = "web_fullstack"
 
 
 SystemArchitecture = ArchitectureArtifact

@@ -1,0 +1,20 @@
+{
+  "service": "stripe",
+  "display_name": "Stripe Payments",
+  "description": "Stripe payment processing — charges, subscriptions, webhooks",
+  "keywords": ["payment", "stripe", "billing", "subscription", "checkout", "charge", "invoice"],
+  "env_vars": [
+    {"name": "STRIPE_SECRET_KEY", "description": "Stripe secret API key (sk_live_... or sk_test_...)", "required": true},
+    {"name": "STRIPE_WEBHOOK_SECRET", "description": "Stripe webhook signing secret (whsec_...)", "required": true},
+    {"name": "STRIPE_PUBLISHABLE_KEY", "description": "Stripe publishable key for frontend (pk_live_... or pk_test_...)", "required": false}
+  ],
+  "python": {
+    "packages": ["stripe>=7.0.0"],
+    "snippet": "import stripe\nfrom fastapi import Request, HTTPException\n\nstripe.api_key = os.getenv('STRIPE_SECRET_KEY')\n\n# Create payment intent\nasync def create_payment_intent(amount_cents: int, currency: str = 'usd') -> dict:\n    intent = stripe.PaymentIntent.create(amount=amount_cents, currency=currency)\n    return {'client_secret': intent.client_secret, 'intent_id': intent.id}\n\n# Webhook handler\nasync def stripe_webhook(request: Request):\n    payload = await request.body()\n    sig_header = request.headers.get('stripe-signature')\n    try:\n        event = stripe.Webhook.construct_event(\n            payload, sig_header, os.getenv('STRIPE_WEBHOOK_SECRET')\n        )\n    except stripe.error.SignatureVerificationError:\n        raise HTTPException(status_code=400, detail='Invalid signature')\n    if event['type'] == 'payment_intent.succeeded':\n        # TODO: fulfill order\n        pass\n    return {'status': 'ok'}"
+  },
+  "node": {
+    "packages": ["stripe@^14.0.0"],
+    "snippet": "const Stripe = require('stripe');\nconst stripe = Stripe(process.env.STRIPE_SECRET_KEY);\n\n// Create payment intent\nasync function createPaymentIntent(amountCents, currency = 'usd') {\n  const intent = await stripe.paymentIntents.create({ amount: amountCents, currency });\n  return { clientSecret: intent.client_secret, intentId: intent.id };\n}\n\n// Express webhook\napp.post('/webhook/stripe', express.raw({ type: 'application/json' }), (req, res) => {\n  const sig = req.headers['stripe-signature'];\n  let event;\n  try {\n    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);\n  } catch (err) {\n    return res.status(400).send(`Webhook Error: ${err.message}`);\n  }\n  if (event.type === 'payment_intent.succeeded') { /* fulfill */ }\n  res.json({ received: true });\n});"
+  },
+  "docs_url": "https://stripe.com/docs/api"
+}

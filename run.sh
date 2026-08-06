@@ -3,21 +3,27 @@ set -e
 
 echo "=== AI DevOS Startup ==="
 
+if [ -f backend/.env ]; then
+    export $(grep -v '^#' backend/.env | xargs -d '\n') 2>/dev/null || true
+fi
+MODEL="${LLM_MODEL:-qwen2.5-coder:7b}"
+
 # Check Ollama is running
 echo "[1/4] Checking Ollama..."
 if ! curl -s http://localhost:11434/api/tags > /dev/null; then
     echo "ERROR: Ollama is not running."
     echo "Start it with: ollama serve"
-    echo "Pull model with: ollama pull qwen2.5-coder:7b"
+    echo "Pull model with: ollama pull $MODEL"
     exit 1
 fi
 echo "  Ollama OK"
 
 # Check model is available
 echo "[2/4] Checking model..."
-if ! curl -s http://localhost:11434/api/tags | grep -q "qwen2.5-coder"; then
-    echo "Pulling qwen2.5-coder:7b..."
-    ollama pull qwen2.5-coder:7b
+
+if ! curl -s http://localhost:11434/api/tags | grep -q "$MODEL"; then
+    echo "Pulling $MODEL..."
+    ollama pull "$MODEL"
 fi
 echo "  Model OK"
 

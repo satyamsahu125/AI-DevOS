@@ -1,16 +1,26 @@
 import io
+import json
 import zipfile
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 
 from ..execution.project_validator import ProjectValidator
+from ..memory.manager import MemoryManager
 from ..project.manager import ProjectManager
 from ..workspace.manager import WorkspaceManager
 from ..workspace.project_files import ProjectFileManager
 from ..workspace.project_readme import build_run_instructions
-from .dependencies import get_project_file_manager, get_project_manager, get_project_validator, get_workspace_manager
+from .dependencies import get_memory_manager, get_project_file_manager, get_project_manager, get_project_validator, get_workspace_manager
+from .middleware.jwt_auth import get_current_user
 
 router = APIRouter()
+
+
+def _assert_project_access(project, user) -> None:
+    if user.role == "admin":
+        return
+    if project.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Access to this project is not permitted")
 
 
 @router.get("/projects/{project_id}/files")
@@ -46,11 +56,13 @@ def get_run_instructions(
     project_id: str,
     project_manager: ProjectManager = Depends(get_project_manager),
     project_file_manager: ProjectFileManager = Depends(get_project_file_manager),
+    user=Depends(get_current_user),
 ) -> dict:
     """Return a deterministic (non-LLM) README covering what was actually generated and how to run it."""
     project = project_manager.repository.load(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    _assert_project_access(project, user)
     backend_files = project_file_manager.list_written(project_id, "backend")
     frontend_files = project_file_manager.list_written(project_id, "frontend")
     markdown = build_run_instructions(project.name, project.description, backend_files, frontend_files)
@@ -64,11 +76,19 @@ def download_project(
     workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
     project_file_manager: ProjectFileManager = Depends(get_project_file_manager),
     project_validator: ProjectValidator = Depends(get_project_validator),
+    memory: MemoryManager = Depends(get_memory_manager),
+    user=Depends(get_current_user),
 ) -> Response:
-    """Zip and return every real generated file in the project directory for project_id, plus RUN_INSTRUCTIONS.md and VALIDATION_REPORT.md."""
+    """Zip and return every real generated file in the project directory for project_id.
+
+    R3: Includes RUN_INSTRUCTIONS.md (with Docker section), VALIDATION_REPORT.md,
+    and VERIFICATION_REPORT.md (from R2 sandbox results). Dotfiles (Dockerfile,
+    .dockerignore, .github/) are included via rglob("*").
+    """
     project = project_manager.repository.load(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    _assert_project_access(project, user)
 
     project_dir = workspace_manager.get_workspace_path(project_id) / "project"
     backend_files = project_file_manager.list_written(project_id, "backend")
@@ -105,12 +125,19 @@ Overall Result: {"PASSED" if val_result.passed else "FAILED"}
                 arcname = str(file_path.relative_to(project_dir)).replace("\\", "/")
                 archive.write(file_path, arcname=arcname)
 
+        # R3: detect if Dockerfile was generated (so Docker section appears in README)
+        has_dockerfile = any("Dockerfile" in n for n in archive.namelist())
+
         if "RUN_INSTRUCTIONS.md" not in archive.namelist():
             archive.writestr(
                 "RUN_INSTRUCTIONS.md",
-                build_run_instructions(project.name, project.description, backend_files, frontend_files),
+                build_run_instructions(project.name, project.description, backend_files, frontend_files, has_dockerfile=has_dockerfile),
             )
         archive.writestr("VALIDATION_REPORT.md", report_content)
+
+        # R2/R3: include sandbox verification report
+        verification_md = _build_verification_report(project_id, memory)
+        archive.writestr("VERIFICATION_REPORT.md", verification_md)
 
     safe_name = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in project.name.lower().replace(" ", "-")) or project_id
     return Response(
@@ -118,3 +145,68 @@ Overall Result: {"PASSED" if val_result.passed else "FAILED"}
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}.zip"'},
     )
+
+
+def _build_verification_report(project_id: str, memory: MemoryManager) -> str:
+    """Build VERIFICATION_REPORT.md from stored sandbox results.
+
+    R2/R3: Reads the latest sandbox lint/test/build results stored by
+    PipelineSupervisor._run_sandbox() and formats them as markdown.
+    """
+    try:
+        raw = memory.load(project_id, "sandbox:latest")
+        if not raw:
+            return "# Verification Report\n\nNo sandbox verification results available.\n"
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return "# Verification Report\n\nCould not load sandbox results.\n"
+
+    lint = data.get("lint", {})
+    build = data.get("build", {})
+    test = data.get("test", {})
+    sprint = data.get("sprint", 0)
+    stack = data.get("stack", "unknown")
+
+    lint_errors = lint.get("errors", [])
+    lint_count = lint.get("error_count", len(lint_errors))
+    build_ok = build.get("success", True)
+    build_errors = build.get("errors", [])
+    test_passed = test.get("passed", 0)
+    test_total = test.get("total", 0)
+    test_failures = test.get("failures", [])
+
+    lines = [
+        f"# Verification Report — Sprint {sprint}",
+        f"",
+        f"Stack: `{stack}`",
+        f"",
+        f"## Lint",
+        f"Errors: {lint_count}",
+    ]
+    if lint_errors:
+        for e in lint_errors[:30]:
+            lines.append(f"- `{e.get('file','?')}:{e.get('line',0)}` — {e.get('message','')}")
+    else:
+        lines.append("No lint errors detected.")
+
+    lines += [
+        f"",
+        f"## Build",
+        f"Status: {'PASSED ✅' if build_ok else 'FAILED ❌'}",
+    ]
+    if build_errors:
+        for e in build_errors[:10]:
+            lines.append(f"- {e}")
+
+    lines += [
+        f"",
+        f"## Tests",
+        f"Passed: {test_passed}/{test_total}",
+    ]
+    if test_failures:
+        for f in test_failures[:20]:
+            lines.append(f"- **{f.get('test_name','?')}**: {f.get('error','')}")
+    elif test_total == 0:
+        lines.append("No tests found.")
+
+    return "\n".join(lines) + "\n"

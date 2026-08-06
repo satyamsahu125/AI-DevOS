@@ -138,7 +138,7 @@ Here is the {stage} stage output:
 Answer the user's question clearly and concisely.
 Focus on what they asked. Be specific, not generic.
 """
-        reply = self.llm.generate_text(
+        llm_response = self.llm.generate_text(
             prompt=prompt,
             system_prompt=(
                 "You are a helpful assistant answering questions about an AI-generated software project. "
@@ -146,7 +146,7 @@ Focus on what they asked. Be specific, not generic.
             )
         )
         return ChatResponse(
-            reply=reply,
+            reply=llm_response.content,
             artifacts_read=[stage]
         )
 
@@ -223,11 +223,11 @@ User question: {message}
 Answer helpfully based on the project context.
 If the answer isn't in the context, say so clearly.
 """
-        reply = self.llm.generate_text(
+        llm_response = self.llm.generate_text(
             prompt=prompt,
             system_prompt=(
                 "You are a knowledgeable software engineering assistant helping a user understand and manage "
                 "their AI-generated software project."
             )
         )
-        return ChatResponse(reply=reply)
+        return ChatResponse(reply=llm_response.content)

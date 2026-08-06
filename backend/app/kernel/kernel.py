@@ -9,7 +9,10 @@ class AIKernel:
     def __init__(self, bootstrap: Bootstrap | None = None, lifecycle: LifecycleManager | None = None) -> None:
         self._bootstrap = bootstrap or Bootstrap()
         self._lifecycle = lifecycle or LifecycleManager(self._bootstrap)
-        self.container = self._bootstrap._container
+
+    @property
+    def container(self) -> "Container":
+        return self._bootstrap._container
 
     def start(self) -> None:
         self._lifecycle.startup()
