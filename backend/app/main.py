@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.openapi.utils import get_openapi
 
 from .api.exception_handler import application_exception_handler
 from .api.middleware.auth import APIKeyMiddleware
@@ -50,7 +51,36 @@ async def lifespan(app: FastAPI):
 
 
 def create_application() -> FastAPI:
-    app = FastAPI(lifespan=lifespan)
+    app = FastAPI(
+        title="AI DevOS",
+        version="2.0.0",
+        description="Autonomous software engineering platform",
+        lifespan=lifespan,
+    )
+
+    # Add Bearer token security scheme so Swagger UI shows the Authorize button
+    def custom_openapi():
+        if app.openapi_schema:
+            return app.openapi_schema
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+        schema.setdefault("components", {})
+        schema["components"]["securitySchemes"] = {
+            "bearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",
+            }
+        }
+        schema["security"] = [{"bearerAuth": []}]
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = custom_openapi  # type: ignore[method-assign]
 
     # Phase 6: API key authentication middleware
     # Reads VALID_API_KEYS from env; disabled (pass-through) when not set.
