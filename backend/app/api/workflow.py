@@ -1,4 +1,5 @@
 import logging
+import threading
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -45,9 +46,6 @@ class DesignApprovalRequest(BaseModel):
     feedback: str | None = None
     approved: bool = True
     modified_design: dict | None = None
-
-
-import threading
 
 @router.post("/workflow/start")
 def start_workflow(

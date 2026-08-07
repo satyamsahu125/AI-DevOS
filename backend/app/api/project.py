@@ -227,7 +227,7 @@ def list_project_files(
     file_list = []
     if project_dir.exists():
         for p in project_dir.rglob("*"):
-            if p.is_file() and ".attempt-" not in p.name:
+            if p.is_file() and not p.name.startswith("_attempt_"):
                 rel_path = str(p.relative_to(project_dir)).replace("\\", "/")
                 ext = p.suffix.lower()
                 lang_map = {
@@ -314,6 +314,10 @@ def delete_project(
     user=Depends(get_current_user),
 ) -> Response:
     """Delete project_id's workspace, project record, artifact rows, and namespaced memory records."""
+    project = manager.repository.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    _assert_project_access(project, user)
     workspace_manager.delete_workspace(project_id)
     manager.repository.delete(project_id)
     artifact_manager.delete_project_artifacts(project_id)

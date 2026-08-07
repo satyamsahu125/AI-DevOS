@@ -139,7 +139,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await res.json()
     accessTokenRef.current = data.access_token
     if (data.refresh_token) sessionStorage.setItem(REFRESH_KEY, data.refresh_token)
-    setUser({ user_id: data.user_id, email: data.email, role: data.role, anonymous: false })
+
+    // Login response only contains tokens — fetch /auth/me to get user profile
+    const meRes = await fetch("/api/auth/me", {
+      headers: { "Authorization": `Bearer ${data.access_token}` },
+    })
+    if (meRes.ok) {
+      const me = await meRes.json()
+      setUser({ user_id: me.user_id, email: me.email, role: me.role, anonymous: false })
+    } else {
+      // Fallback: use email as display; role unknown until next probe
+      setUser({ user_id: data.user_id ?? email, email, role: "developer", anonymous: false })
+    }
     setAuthEnabled(true)
   }, [])
 

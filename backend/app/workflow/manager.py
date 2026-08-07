@@ -853,10 +853,11 @@ class WorkflowManager:
 
     def _run_sprint(self, project_id: str, sprint: Sprint) -> SprintResult:
         """Run one complete sprint:
-        1. FilePlannerAgent creates file_plan.json
-        2. BackendDeveloper generates backend files
-        3. FrontendDeveloper generates frontend files
-        4. Mark sprint complete
+        1. ScrumMaster breaks sprint goals into user stories and task assignments
+        2. FileStructurePlanner creates file_plan.json (uses ScrumMaster task context)
+        3. BackendDeveloper generates backend files
+        4. FrontendDeveloper generates frontend files
+        5. Mark sprint complete
         """
         logger.info("Starting sprint %d: %s", sprint.sprint_number, sprint.name)
         self.workspace.set_current_sprint(project_id, sprint.sprint_number)
@@ -864,7 +865,33 @@ class WorkflowManager:
         self.workspace.create_sprint_folder(project_id, sprint.sprint_number)
 
         arch = self.artifact_manager.get_artifact(project_id, Stage.Architect)
+        # Build initial context (without ScrumMaster artifact — it hasn't run yet this sprint).
+        initial_context = self._build_sprint_context(project_id, sprint, arch)
+
+        # Step 1: ScrumMaster — breaks sprint goals into user stories and task assignments.
+        # Non-blocking: a failure logs a warning but does not abort the sprint, because
+        # FilePlanner and dev stages can still run from sprint context alone.
+        self.broadcaster.stage_started(project_id, "ScrumMaster", 1)
+        scrum_result = self._run_stage(project_id, "scrum_master", initial_context)
+        if scrum_result.success:
+            self.broadcaster.stage_complete(project_id, "ScrumMaster", 1, 0)
+            self._persist_to_artifact_store(
+                project_id,
+                Stage.ScrumMaster,
+                f"sprint_{sprint.sprint_number}",
+                "scrum_plan",
+            )
+        else:
+            logger.warning(
+                "ScrumMaster failed for sprint %d (non-blocking): %s",
+                sprint.sprint_number, scrum_result.message,
+            )
+            self.broadcaster.stage_failed(project_id, "ScrumMaster", scrum_result.message)
+
+        # Rebuild context so FilePlanner and dev stages can consume the ScrumMaster artifact.
         plan_context = self._build_sprint_context(project_id, sprint, arch)
+
+        # Step 2: FileStructurePlanner — determines which files to create for this sprint.
         self.broadcaster.stage_started(project_id, "FileStructurePlanner", 1)
         plan_result = self._run_stage(project_id, "file_planner", plan_context)
 

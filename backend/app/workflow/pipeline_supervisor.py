@@ -274,7 +274,8 @@ class PipelineSupervisor:
         """Run Discovery phase: requirements, architecture, design.
 
         Runs stages in order (StrategicReview → ProductOwner → Architect →
-        Designer → Security → SprintPlanner → ScrumMaster). Resumes from
+        Designer → Security → SprintPlanner). ScrumMaster runs per-sprint
+        inside _run_sprint(). Resumes from
         current stage. Pauses for design review after Designer.
 
         Returns

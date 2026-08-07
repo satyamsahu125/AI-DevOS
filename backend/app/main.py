@@ -1,3 +1,19 @@
+# ── Load .env FIRST ────────────────────────────────────────────────────────────
+# Several modules read os.getenv() at module-level (AUTH_ENABLED, JWT_SECRET_KEY,
+# VALID_API_KEYS, etc.). If load_dotenv() runs after those modules are imported,
+# the env vars from .env are never seen.  Loading here — before every other import
+# — guarantees .env is in os.environ before any module reads it.
+import os as _os
+from pathlib import Path as _Path
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _env_file = _Path(__file__).resolve().parents[1] / ".env"
+    if _env_file.exists():
+        _load_dotenv(_env_file, override=False)
+except ImportError:
+    pass  # python-dotenv not installed; rely on real env vars
+# ── End early .env load ────────────────────────────────────────────────────────
+
 import asyncio
 from contextlib import asynccontextmanager
 

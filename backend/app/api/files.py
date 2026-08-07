@@ -23,20 +23,20 @@ def _assert_project_access(project, user) -> None:
         raise HTTPException(status_code=403, detail="Access to this project is not permitted")
 
 
-@router.get("/projects/{project_id}/files")
-def list_project_files(project_id: str, project_file_manager: ProjectFileManager = Depends(get_project_file_manager)) -> dict:
-    """Return the real generated project's file tree (paths only), split by area."""
-    return {
-        "backend": project_file_manager.list_written(project_id, "backend"),
-        "frontend": project_file_manager.list_written(project_id, "frontend"),
-    }
-
-
 @router.get("/projects/{project_id}/files/{area}/{file_path:path}")
 def get_project_file_content(
-    project_id: str, area: str, file_path: str, project_file_manager: ProjectFileManager = Depends(get_project_file_manager),
+    project_id: str,
+    area: str,
+    file_path: str,
+    project_file_manager: ProjectFileManager = Depends(get_project_file_manager),
+    project_manager: ProjectManager = Depends(get_project_manager),
+    user=Depends(get_current_user),
 ) -> dict:
     """Return one real generated file's content. 404 if it doesn't exist or escapes the project area."""
+    project = project_manager.repository.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    _assert_project_access(project, user)
     area_root = project_file_manager.area_dir(project_id, area).resolve()
     target = (area_root / file_path).resolve()
     if area_root not in target.parents and target != area_root:
@@ -120,7 +120,7 @@ Overall Result: {"PASSED" if val_result.passed else "FAILED"}
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for file_path in sorted(project_dir.rglob("*")):
             if file_path.is_file():
-                if ".attempt-" in file_path.name or "__pycache__" in str(file_path):
+                if file_path.name.startswith("_attempt_") or "__pycache__" in str(file_path):
                     continue
                 arcname = str(file_path.relative_to(project_dir)).replace("\\", "/")
                 archive.write(file_path, arcname=arcname)
