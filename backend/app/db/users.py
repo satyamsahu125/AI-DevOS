@@ -1,7 +1,7 @@
 """R8 — User store: users + refresh_tokens tables backed by SQLite.
 
 Security design:
-- Passwords hashed with bcrypt (cost factor 12) via passlib.
+- Passwords hashed with bcrypt (cost factor 12) via the bcrypt package directly.
 - Refresh tokens stored as SHA-256 hashes — the plain token is never persisted.
 - Token invalidation is per-token (logout invalidates the specific refresh token used).
 - Existing single-user deployments are unaffected: when AUTH_ENABLED=false,
@@ -32,10 +32,19 @@ _DEFAULT_DB_PATH = Path(os.getenv("AUTH_DB_PATH", "data/auth.db"))
 _BCRYPT_ROUNDS = 12
 
 
-def _get_pwd_context():
-    """Lazy import passlib — only required when auth is enabled."""
-    from passlib.context import CryptContext
-    return CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=_BCRYPT_ROUNDS)
+def _hash_password(password: str) -> str:
+    """Hash a plaintext password with bcrypt. Returns the hash as a str."""
+    import bcrypt
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=_BCRYPT_ROUNDS)).decode("utf-8")
+
+
+def _verify_password(password: str, hashed: str) -> bool:
+    """Return True if password matches the stored bcrypt hash."""
+    import bcrypt
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
 
 
 @dataclass(slots=True)
@@ -100,8 +109,7 @@ class UserStore:
         count = self._conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         if count == 0:
             default_pwd = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin")
-            pwd_ctx = _get_pwd_context()
-            hashed = pwd_ctx.hash(default_pwd)
+            hashed = _hash_password(default_pwd)
             now = datetime.now(timezone.utc).isoformat()
             self._conn.execute(
                 "INSERT INTO users (id, email, hashed_password, role, created_at) VALUES (?,?,?,?,?)",
@@ -120,8 +128,7 @@ class UserStore:
 
     def create_user(self, email: str, password: str, role: str = "developer") -> User:
         """Create a new user. Raises ValueError if email already exists."""
-        pwd_ctx = _get_pwd_context()
-        hashed = pwd_ctx.hash(password)
+        hashed = _hash_password(password)
         user_id = str(uuid4())
         now = datetime.now(timezone.utc).isoformat()
         try:
@@ -160,10 +167,9 @@ class UserStore:
         user = self.get_by_email(email)
         if not user:
             # Constant-time dummy check to prevent user enumeration via timing
-            _get_pwd_context().dummy_verify()
+            _verify_password(password, "$2b$12$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
             return None
-        pwd_ctx = _get_pwd_context()
-        if not pwd_ctx.verify(password, user.hashed_password):
+        if not _verify_password(password, user.hashed_password):
             return None
         # Update last_login
         now = datetime.now(timezone.utc).isoformat()
