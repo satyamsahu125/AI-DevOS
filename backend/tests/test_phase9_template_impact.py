@@ -92,9 +92,10 @@ class TestBugFix:
 
         assembler = ContextAssembler(template_engine=te)
         context_hint = {"architecture_artifact": {"components": ["UserService"]}}
-        augmented, injected = assembler._inject_template(
+        res = assembler._inject_template(
             "BackendDeveloper", "proj-1", "base context", context_hint=context_hint,
         )
+        augmented, injected = res[0], res[1]
         assert injected is True
         assert "STRUCTURAL TEMPLATE" in augmented
         assert "base context" in augmented
@@ -106,7 +107,8 @@ class TestBugFix:
         te = _make_template_engine(tmp_path)
         assembler = ContextAssembler(template_engine=te)
         original = "original context"
-        result, injected = assembler._inject_template("UnknownStage", "proj-x", original)
+        res = assembler._inject_template("UnknownStage", "proj-x", original)
+        result, injected = res[0], res[1]
         assert injected is False
         assert result == original
 
@@ -115,7 +117,8 @@ class TestBugFix:
         from app.workflow.context_assembler import ContextAssembler
 
         assembler = ContextAssembler(template_engine=None)
-        result, injected = assembler._inject_template("Architect", "proj-1", "ctx")
+        res = assembler._inject_template("Architect", "proj-1", "ctx")
+        result, injected = res[0], res[1]
         assert injected is False
         assert result == "ctx"
 
@@ -126,9 +129,11 @@ class TestBugFix:
         te = MagicMock()
         te.find_similar.side_effect = RuntimeError("db exploded")
         assembler = ContextAssembler(template_engine=te)
-        result, injected = assembler._inject_template("Architect", "proj-1", "ctx")
+        res = assembler._inject_template("Architect", "proj-1", "ctx")
+        result, injected = res[0], res[1]
         assert injected is False
         assert result == "ctx"
+
 
 
 # ---------------------------------------------------------------------------
@@ -519,90 +524,66 @@ class TestIsolation:
         te.extract_template({"k": "v"}, stage="Architect", project_id="seed")
 
         assembler = ContextAssembler(template_engine=te)
-        # Both calls must be independent — no leakage between them
-        _, injected_1 = assembler._inject_template("Architect", "proj-a", "ctx")
-        _, injected_2 = assembler._inject_template("NoSuchStage", "proj-b", "ctx")
+        res1 = assembler._inject_template("Architect", "proj-a", "ctx")
+        res2 = assembler._inject_template("NoSuchStage", "proj-b", "ctx")
+        injected_1 = res1[1]
+        injected_2 = res2[1]
 
         assert injected_1 is True
         assert injected_2 is False
+
+
 
 
 # ---------------------------------------------------------------------------
 # F. min_similarity
 # ---------------------------------------------------------------------------
 
-class TestMinSimilarity:
-    """find_similar min_similarity threshold must filter correctly."""
+class TestDeterministicStageSelection:
+    """Phase A: find_similar performs deterministic stage match + recency selection."""
 
-    def _make_engine_with_templates(self, tmp_path: Path):
+    def test_min_similarity_param_does_not_alter_selection(self, tmp_path: Path):
+        """min_similarity param is preserved for API compatibility but does not alter selection."""
         te = _make_template_engine(tmp_path)
-        # High-overlap artifact: shares endpoint/auth/models keys with the query below
-        te.extract_template(
-            {"endpoints": "x", "auth": "x", "models": "x", "tests": "x"},
-            stage="BackendDeveloper",
-        )
-        # Zero-overlap artifact: completely different keys
-        te.extract_template(
-            {"unrelated_key_1": "x", "unrelated_key_2": "x"},
-            stage="BackendDeveloper",
-        )
-        return te
+        te.extract_template({"alpha": "x"}, stage="TestStage")
 
-    def test_result_below_threshold_excluded(self, tmp_path):
-        """A template whose Jaccard score is 0.0 must be excluded at any threshold > 0."""
+        # Query with min_similarity returns the stage template deterministically
+        results_0 = te.find_similar("TestStage", {"gamma": "x"}, min_similarity=0.0)
+        results_1 = te.find_similar("TestStage", {"gamma": "x"}, min_similarity=0.9)
+        assert len(results_0) == 1
+        assert len(results_1) == 1
+        assert results_0[0].template_id == results_1[0].template_id
+
+    def test_context_contents_do_not_alter_ordering(self, tmp_path: Path):
+        """Different contexts return the exact same deterministic template order."""
         te = _make_template_engine(tmp_path)
-        # Store a template with completely different keys from the query context
-        te.extract_template({"alpha": "x", "beta": "x"}, stage="TestStage")
+        te.extract_template({"older": "1"}, stage="TestStage")
+        te.extract_template({"newer": "2"}, stage="TestStage")
 
-        # Query with no overlapping keys → score 0.0
-        results = te.find_similar("TestStage", {"gamma": "x", "delta": "x"}, min_similarity=0.1)
-        assert results == []
+        res_a = te.find_similar("TestStage", {"context_a": "val"})
+        res_b = te.find_similar("TestStage", {"completely_different": "val"})
 
-    def test_result_at_threshold_included(self, tmp_path):
-        """A template whose score equals min_similarity must be included (inclusive)."""
-        te = _make_template_engine(tmp_path)
-        # Template key "shared"; context key "shared" → Jaccard = 1/1 = 1.0
-        te.extract_template({"shared": "x"}, stage="TestStage")
+        assert [t.template_id for t in res_a] == [t.template_id for t in res_b]
+        assert "newer" in res_a[0].structure
 
-        results = te.find_similar("TestStage", {"shared": "val"}, min_similarity=1.0)
-        assert len(results) == 1
-
-    def test_result_above_threshold_included(self, tmp_path):
-        """Templates above min_similarity must be returned."""
-        te = self._make_engine_with_templates(tmp_path)
-        query = {"endpoints": "POST /users", "auth": "JWT", "models": "User", "tests": "pytest"}
-        # High overlap template must survive threshold 0.1
-        results = te.find_similar("BackendDeveloper", query, min_similarity=0.1, limit=5)
-        assert len(results) >= 1
-
-    def test_limit_applied_after_threshold(self, tmp_path):
-        """limit restricts the count of qualifying results after threshold filtering."""
+    def test_limit_applied_to_results(self, tmp_path: Path):
+        """limit restricts the count of returned templates for the stage."""
         te = _make_template_engine(tmp_path)
         for i in range(10):
             te.extract_template({"k": str(i)}, stage="LimitStage")
 
-        # All templates share the "k" key with the query → score > 0
-        results = te.find_similar("LimitStage", {"k": "anything"}, limit=3, min_similarity=0.0)
-        assert len(results) <= 3
+        results = te.find_similar("LimitStage", {"k": "anything"}, limit=3)
+        assert len(results) == 3
 
-    def test_default_min_similarity_is_zero(self, tmp_path):
-        """Default min_similarity=0.0 must return all templates regardless of score."""
+    def test_stage_filtering_mandatory(self, tmp_path: Path):
+        """Only templates matching the requested stage are returned."""
         te = _make_template_engine(tmp_path)
-        te.extract_template({"alpha": "x"}, stage="DefaultStage")
-        te.extract_template({"beta": "x"}, stage="DefaultStage")
+        te.extract_template({"backend": "x"}, stage="BackendDeveloper")
+        te.extract_template({"frontend": "x"}, stage="FrontendDeveloper")
 
-        # Query has no overlap with either → scores = 0.0
-        results = te.find_similar("DefaultStage", {"gamma": "x"})
-        # Both templates must be returned (no threshold)
-        assert len(results) == 2
-
-    def test_invalid_min_similarity_raises(self, tmp_path):
-        """min_similarity outside [0.0, 1.0] must raise ValueError."""
-        te = _make_template_engine(tmp_path)
-        with pytest.raises(ValueError, match="min_similarity"):
-            te.find_similar("AnyStage", {}, min_similarity=1.5)
-        with pytest.raises(ValueError, match="min_similarity"):
-            te.find_similar("AnyStage", {}, min_similarity=-0.1)
+        results = te.find_similar("BackendDeveloper", {})
+        assert len(results) == 1
+        assert results[0].stage == "BackendDeveloper"
 
 
 # ---------------------------------------------------------------------------
@@ -856,3 +837,211 @@ class TestTemplateImpactAnalytics:
         assert entries[0]["stage"] == "Architect"
         assert entries[0]["injected_count"] == 1
         assert entries[0]["non_injected_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# H. Phase B Telemetry Attribution
+# ---------------------------------------------------------------------------
+
+class TestPhaseBTelemetryAttribution:
+    """P9-2b Phase B: Telemetry & Observability Attribution."""
+
+    def test_schema_columns_exist(self, tmp_path):
+        """trajectories and templates tables must contain Phase B telemetry columns."""
+        ll = _make_learning_loop(tmp_path)
+        te = _make_template_engine(tmp_path)
+
+        cursor_traj = ll._conn.execute("PRAGMA table_info(trajectories)")
+        traj_cols = [row[1] for row in cursor_traj.fetchall()]
+        assert "injected_template_id" in traj_cols
+        assert "template_similarity_score" in traj_cols
+
+        cursor_tpl = te._conn.execute("PRAGMA table_info(templates)")
+        tpl_cols = [row[1] for row in cursor_tpl.fetchall()]
+        assert "originating_trajectory_id" in tpl_cols
+
+    def test_historical_rows_receive_null(self, tmp_path):
+        """Historical databases receive NULL for newly added telemetry columns."""
+        db_path = tmp_path / "legacy.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            """CREATE TABLE trajectories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT, stage TEXT,
+                task_description TEXT, artifact_summary TEXT, retry_count INTEGER,
+                approved INTEGER, reviewer_feedback TEXT, agent_model TEXT,
+                tokens_used INTEGER, latency_ms REAL, recorded_at TEXT
+            )"""
+        )
+        conn.execute(
+            "INSERT INTO trajectories VALUES (1, 'p', 'Architect', 't', 's', 0, 1, '', 'm', 10, 1.0, '2026-01-01')"
+        )
+        conn.commit()
+        conn.close()
+
+        from app.memory.learning_loop import LearningLoop
+        ll = LearningLoop(db_path=db_path)
+        row = ll._conn.execute("SELECT injected_template_id, template_similarity_score FROM trajectories WHERE id=1").fetchone()
+        assert row[0] is None
+        assert row[1] is None
+
+    def test_injected_template_id_propagated_end_to_end(self, tmp_path):
+        """ContextAssembler -> LearningMiddleware -> SQLite stores exact injected_template_id."""
+        from app.workflow.context_assembler import ContextAssembler
+        from app.memory.learning_loop import Trajectory
+
+        te = _make_template_engine(tmp_path)
+        tpl = te.extract_template({"endpoints": "POST /v1"}, stage="BackendDeveloper", project_id="p1")
+
+        assembler = ContextAssembler(template_engine=te)
+        result = assembler.assemble("p1", "BackendDeveloper", "task")
+        assert result.template_injected is True
+        assert result.injected_template_id == tpl.template_id
+        assert result.template_similarity_score is None
+
+        ll = _make_learning_loop(tmp_path)
+        traj = Trajectory(
+            stage="BackendDeveloper", task_description="task", artifact_summary="summary",
+            retry_count=0, approved=True, reviewer_feedback="ok", agent_model="model",
+            tokens_used=100, latency_ms=10.0, project_id="p1",
+            template_injected=result.template_injected,
+            injected_template_id=result.injected_template_id,
+            template_similarity_score=result.template_similarity_score,
+        )
+        row_id = ll.record_trajectory(traj)
+        assert row_id is not None
+
+        db_row = ll._conn.execute("SELECT injected_template_id, template_similarity_score FROM trajectories WHERE id=?", (row_id,)).fetchone()
+        assert db_row[0] == tpl.template_id
+        assert db_row[1] is None
+
+    def test_non_injected_stores_null(self, tmp_path):
+        """When no template is injected, injected_template_id is NULL."""
+        from app.workflow.context_assembler import ContextAssembler
+
+        assembler = ContextAssembler(template_engine=None)
+        result = assembler.assemble("p2", "Architect", "task")
+        assert result.template_injected is False
+        assert result.injected_template_id is None
+        assert result.template_similarity_score is None
+
+    def test_template_originating_trajectory_id(self, tmp_path):
+        """Approved attempt records trajectory ID on extracted template."""
+        from app.workflow.middleware.learning import LearningMiddleware
+        from app.memory.lesson_store import LessonStore
+
+        ll = _make_learning_loop(tmp_path)
+        ls = LessonStore(db_path=tmp_path / "lessons.sqlite")
+        te = _make_template_engine(tmp_path)
+        mw = LearningMiddleware(learning_loop=ll, lesson_store=ls, template_engine=te, llm_model="m")
+
+        artifact = MagicMock()
+        artifact.content = "content"
+        artifact.structured_content = {"api": "v1"}
+        rr = _make_review_result(approved=True)
+
+        with patch("app.llm.cost_tracker.get_shared_cost_tracker") as mock_tracker:
+            t = MagicMock()
+            t.last_call_tokens = 50
+            t.last_call_latency = 12.0
+            mock_tracker.return_value = t
+            mw.on_attempt("BackendDeveloper", "proj-b", "task", 0, artifact, rr)
+
+        mw.on_approval("BackendDeveloper", "proj-b", artifact, 0, rr, [])
+
+        row = te._conn.execute("SELECT template_id, originating_trajectory_id FROM templates WHERE stage='BackendDeveloper'").fetchone()
+        assert row is not None
+        assert row[1] is not None
+        assert int(row[1]) > 0
+
+    def test_interleaved_executions_prevent_cross_talk(self, tmp_path):
+        """Interleaved attempts for different projects must not cross-contaminate template attribution."""
+        from app.workflow.middleware.learning import LearningMiddleware
+        from app.memory.lesson_store import LessonStore
+
+        ll = _make_learning_loop(tmp_path)
+        ls = LessonStore(db_path=tmp_path / "lessons.sqlite")
+        te = _make_template_engine(tmp_path)
+        mw = LearningMiddleware(learning_loop=ll, lesson_store=ls, template_engine=te, llm_model="m")
+
+        art_a = MagicMock(content="a", structured_content={"schema": "a"})
+        art_b = MagicMock(content="b", structured_content={"schema": "b"})
+        rr = _make_review_result(approved=True)
+
+        with patch("app.llm.cost_tracker.get_shared_cost_tracker") as mock_tracker:
+            t = MagicMock(last_call_tokens=50, last_call_latency=10.0)
+            mock_tracker.return_value = t
+
+            # Attempt A (Project P1, Architect)
+            mw.on_attempt("Architect", "P1", "task A", 0, art_a, rr)
+
+            # Interleaved Attempt B (Project P2, Designer)
+            mw.on_attempt("Designer", "P2", "task B", 0, art_b, rr)
+
+        # Approval A (Project P1, Architect)
+        mw.on_approval("Architect", "P1", art_a, 0, rr, [])
+        # Approval B (Project P2, Designer)
+        mw.on_approval("Designer", "P2", art_b, 0, rr, [])
+
+        row_a = te._conn.execute("SELECT originating_trajectory_id FROM templates WHERE stage='Architect' AND source_project_id='P1'").fetchone()
+        row_b = te._conn.execute("SELECT originating_trajectory_id FROM templates WHERE stage='Designer' AND source_project_id='P2'").fetchone()
+
+        assert row_a is not None and row_b is not None
+        assert int(row_a[0]) < int(row_b[0])  # Architect was attempt 1, Designer was attempt 2
+
+    def test_same_project_different_stages_isolation(self, tmp_path):
+        """Different stages for the same project must retain distinct trajectory IDs."""
+        from app.workflow.middleware.learning import LearningMiddleware
+        from app.memory.lesson_store import LessonStore
+
+        ll = _make_learning_loop(tmp_path)
+        ls = LessonStore(db_path=tmp_path / "lessons.sqlite")
+        te = _make_template_engine(tmp_path)
+        mw = LearningMiddleware(learning_loop=ll, lesson_store=ls, template_engine=te, llm_model="m")
+
+        art_arch = MagicMock(content="arch", structured_content={"arch": 1})
+        art_qa = MagicMock(content="qa", structured_content={"qa": 1})
+        rr = _make_review_result(approved=True)
+
+        with patch("app.llm.cost_tracker.get_shared_cost_tracker") as mock_tracker:
+            mock_tracker.return_value = MagicMock(last_call_tokens=10, last_call_latency=1.0)
+
+            mw.on_attempt("Architect", "P1", "task 1", 0, art_arch, rr)
+            mw.on_attempt("QA", "P1", "task 2", 0, art_qa, rr)
+
+        mw.on_approval("Architect", "P1", art_arch, 0, rr, [])
+        mw.on_approval("QA", "P1", art_qa, 0, rr, [])
+
+        row_arch = te._conn.execute("SELECT originating_trajectory_id FROM templates WHERE stage='Architect'").fetchone()
+        row_qa = te._conn.execute("SELECT originating_trajectory_id FROM templates WHERE stage='QA'").fetchone()
+
+        assert row_arch[0] != row_qa[0]
+
+    def test_failed_trajectory_recording_does_not_reuse_stale_id(self, tmp_path):
+        """If on_attempt fails to record a trajectory, a previous trajectory is not stale-assigned."""
+        from app.workflow.middleware.learning import LearningMiddleware
+        from app.memory.lesson_store import LessonStore
+
+        ll = _make_learning_loop(tmp_path)
+        ls = LessonStore(db_path=tmp_path / "lessons.sqlite")
+        te = _make_template_engine(tmp_path)
+        mw = LearningMiddleware(learning_loop=ll, lesson_store=ls, template_engine=te, llm_model="m")
+
+        art = MagicMock(content="content", structured_content={"v": 1})
+        rr = _make_review_result(approved=True)
+
+        with patch("app.llm.cost_tracker.get_shared_cost_tracker") as mock_tracker:
+            mock_tracker.return_value = MagicMock(last_call_tokens=10, last_call_latency=1.0)
+            mw.on_attempt("Architect", "P1", "task 1", 0, art, rr)
+
+        # Force record_trajectory to return None (simulating failure)
+        with patch.object(ll, "record_trajectory", return_value=None):
+            mw.on_attempt("Architect", "P1", "task 2", 1, art, rr)
+
+        mw.on_approval("Architect", "P1", art, 1, rr, [])
+
+        row = te._conn.execute("SELECT originating_trajectory_id FROM templates WHERE stage='Architect'").fetchone()
+        assert row is not None
+        assert row[0] is None  # Must be NULL, not stale '1' from task 1
+
+
+

@@ -32,23 +32,16 @@ logger = logging.getLogger(__name__)
 class AssembleResult:
     """Return value of :meth:`ContextAssembler.assemble`.
 
-    Carries both the assembled prompt-context string and a flag indicating
-    whether TemplateEngine injected a structural template hint into the context.
-    The flag survives until trajectory recording so we can correlate template
-    injection with reviewer approval outcomes (P9-2b).
-
-    Attributes
-    ----------
-    context:
-        The fully assembled prompt-context string, ready to pass to StageRunner.
-    template_injected:
-        True if TemplateEngine found a matching template and injected it.
-        False when no template engine is wired, no template was found, or the
-        injection step raised an exception.
+    Carries the assembled prompt-context string, a flag indicating whether
+    TemplateEngine injected a structural template hint into the context,
+    the exact injected_template_id (if injected), and the similarity score (if any).
     """
 
     context: str
     template_injected: bool = False
+    injected_template_id: str | None = None
+    template_similarity_score: float | None = None
+
 
 
 class ContextAssembler:
@@ -148,11 +141,16 @@ class ContextAssembler:
 
         # Post-enrichments applied regardless of path ---
         base = self._inject_gate_feedback(project_id, stage_name, base)
-        base = self._inject_sandbox_results(project_id, stage_name, base)
-        base, template_injected = self._inject_template(
+        base, template_injected, injected_template_id, template_similarity_score = self._inject_template(
             stage_name, project_id, base, context_hint=context_hint,
         )
-        return AssembleResult(context=base, template_injected=template_injected)
+        return AssembleResult(
+            context=base,
+            template_injected=template_injected,
+            injected_template_id=injected_template_id,
+            template_similarity_score=template_similarity_score,
+        )
+
 
     # ------------------------------------------------------------------
     # New path: MemoryOrchestrator
@@ -456,14 +454,14 @@ class ContextAssembler:
 
         Returns
         -------
-        tuple[str, bool]
-            (augmented_content, template_injected)
+        tuple[str, bool, str | None, float | None]
+            (augmented_content, template_injected, injected_template_id, template_similarity_score)
             ``template_injected`` is True only when a template was found and
             successfully appended; False in all other cases including when no
             template engine is wired, no templates exist, or an exception occurs.
         """
         if self._template_engine is None:
-            return content, False
+            return content, False, None, None
         try:
             # Use the richer context_hint when available; fall back to the
             # minimal two-key dict so the legacy path still works.
@@ -475,8 +473,9 @@ class ContextAssembler:
                 stage_name, similarity_context, limit=1,
             )
             if not similar:
-                return content, False
-            injected = self._template_engine.inject_template(similar[0], similarity_context)
+                return content, False, None, None
+            tpl = similar[0]
+            injected = self._template_engine.inject_template(tpl, similarity_context)
             if injected:
                 augmented = (
                     f"{content}\n\n"
@@ -486,9 +485,10 @@ class ContextAssembler:
                 )
                 logger.info(
                     "_inject_template: injected template_id=%s for stage=%s project=%s",
-                    similar[0].template_id, stage_name, project_id,
+                    tpl.template_id, stage_name, project_id,
                 )
-                return augmented, True
+                return augmented, True, tpl.template_id, None
         except Exception as exc:
             logger.debug("_inject_template skipped: %s", exc)
-        return content, False
+        return content, False, None, None
+

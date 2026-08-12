@@ -38,6 +38,8 @@ class Trajectory:
     recorded_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     project_id: str = ""
     template_injected: bool = False   # P9-2b: True when TemplateEngine injected a template
+    injected_template_id: str | None = None
+    template_similarity_score: float | None = None
 
 
 @dataclass(slots=True)
@@ -100,10 +102,21 @@ class LearningLoop:
             self._conn.execute(
                 "ALTER TABLE trajectories ADD COLUMN template_injected INTEGER NOT NULL DEFAULT 0"
             )
+        if "injected_template_id" not in columns:
+            self._conn.execute(
+                "ALTER TABLE trajectories ADD COLUMN injected_template_id TEXT"
+            )
+        if "template_similarity_score" not in columns:
+            self._conn.execute(
+                "ALTER TABLE trajectories ADD COLUMN template_similarity_score REAL"
+            )
         self._conn.commit()
 
-    def record_trajectory(self, trajectory: Trajectory, project_id: str = "") -> None:
-        """Log trajectory to SQLite (always), and embed it into KnowledgeMemory only if approved."""
+    def record_trajectory(self, trajectory: Trajectory, project_id: str = "") -> int | None:
+        """Log trajectory to SQLite (always), and embed it into KnowledgeMemory only if approved.
+        
+        Returns the inserted row integer ID.
+        """
         with self._lock:
             eff_project_id = project_id or getattr(trajectory, "project_id", "") or ""
             logger.info(
@@ -115,8 +128,8 @@ class LearningLoop:
                 INSERT INTO trajectories
                     (project_id, stage, task_description, artifact_summary, retry_count, approved,
                      reviewer_feedback, agent_model, tokens_used, latency_ms, recorded_at,
-                     template_injected)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     template_injected, injected_template_id, template_similarity_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     eff_project_id,
@@ -131,6 +144,8 @@ class LearningLoop:
                     trajectory.latency_ms,
                     trajectory.recorded_at.isoformat(),
                     int(trajectory.template_injected),
+                    trajectory.injected_template_id,
+                    trajectory.template_similarity_score,
                 ),
             )
             self._conn.commit()
@@ -142,6 +157,8 @@ class LearningLoop:
                 category = self._category_for(trajectory.stage, eff_project_id)
                 self.knowledge_memory.store(key, value, category=category, source="learning_loop")
                 logger.debug("approved trajectory embedded into knowledge memory: key=%s category=%s", key, category)
+            return row_id
+
 
     def record_success(
         self,

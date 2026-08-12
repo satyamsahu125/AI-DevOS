@@ -40,6 +40,8 @@ class LearningMiddleware:
         self.lesson_store = lesson_store
         self.template_engine = template_engine
         self._llm_model = llm_model
+        self._last_trajectory_ids: dict[tuple[str, str], str] = {}
+        self._last_trajectory_id: str | None = None
 
     # ------------------------------------------------------------------
     # Hooks called by WorkflowEngine
@@ -54,6 +56,8 @@ class LearningMiddleware:
         artifact: Any,
         review_result: Any,
         template_injected: bool = False,
+        injected_template_id: str | None = None,
+        template_similarity_score: float | None = None,
     ) -> None:
         """Record a Trajectory (approved or rejected) after every attempt.
 
@@ -61,10 +65,17 @@ class LearningMiddleware:
         ----------
         template_injected:
             Set to True when ContextAssembler injected a structural template
-            hint into the context for this attempt.  Propagated from
-            :class:`AssembleResult` via WorkflowEngine so we can later
-            correlate injection with reviewer outcomes (P9-2b).
+            hint into the context for this attempt.
+        injected_template_id:
+            The exact template_id injected for this attempt (P9-2b Phase B).
+        template_similarity_score:
+            Similarity score if computed, or None (P9-2b Phase B).
         """
+        if not hasattr(self, "_last_trajectory_ids") or self._last_trajectory_ids is None:
+            self._last_trajectory_ids = {}
+        self._last_trajectory_ids.pop((project_id, stage_name), None)
+        self._last_trajectory_id = None
+
         try:
             from ...llm.cost_tracker import get_shared_cost_tracker
             tracker = get_shared_cost_tracker()
@@ -80,8 +91,14 @@ class LearningMiddleware:
                 latency_ms=tracker.last_call_latency,
                 project_id=project_id,
                 template_injected=template_injected,
+                injected_template_id=injected_template_id,
+                template_similarity_score=template_similarity_score,
             )
-            self.learning_loop.record_trajectory(trajectory)
+            traj_id = self.learning_loop.record_trajectory(trajectory)
+            if traj_id is not None:
+                tid_str = str(traj_id)
+                self._last_trajectory_ids[(project_id, stage_name)] = tid_str
+                self._last_trajectory_id = tid_str
         except Exception as exc:
             logger.debug("LearningMiddleware.on_attempt failed (non-fatal): %s", exc)
 
@@ -97,7 +114,14 @@ class LearningMiddleware:
         """Extract a Lesson and a structural template on approval."""
         self._record_lesson(stage_name, project_id, artifact, attempt,
                             review_result, failed_approaches)
-        self._extract_template(stage_name, project_id, artifact)
+        trajectory_ids = getattr(self, "_last_trajectory_ids", None)
+        if trajectory_ids is not None and (project_id, stage_name) in trajectory_ids:
+            orig_traj_id = trajectory_ids.get((project_id, stage_name))
+        else:
+            orig_traj_id = getattr(self, "_last_trajectory_id", None)
+        self._extract_template(stage_name, project_id, artifact, originating_trajectory_id=orig_traj_id)
+
+
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -127,13 +151,25 @@ class LearningMiddleware:
         except Exception as exc:
             logger.debug("LearningMiddleware._record_lesson failed (non-fatal): %s", exc)
 
-    def _extract_template(self, stage_name: str, project_id: str, artifact: Any) -> None:
+    def _extract_template(
+        self,
+        stage_name: str,
+        project_id: str,
+        artifact: Any,
+        originating_trajectory_id: str | None = None,
+    ) -> None:
         if self.template_engine is None:
             return
         try:
             struct = getattr(artifact, "structured_content", None) or {}
             if struct:
-                self.template_engine.extract_template(struct, stage_name, project_id)
-                logger.debug("template extracted: stage=%s project=%s", stage_name, project_id)
+                self.template_engine.extract_template(
+                    struct, stage_name, project_id, originating_trajectory_id=originating_trajectory_id,
+                )
+                logger.debug(
+                    "template extracted: stage=%s project=%s orig_traj=%s",
+                    stage_name, project_id, originating_trajectory_id,
+                )
         except Exception as exc:
             logger.debug("LearningMiddleware._extract_template failed (non-fatal): %s", exc)
+

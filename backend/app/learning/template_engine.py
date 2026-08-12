@@ -31,8 +31,6 @@ _VOLATILE_KEYS = frozenset({
 })
 
 _PLACEHOLDER = "__TEMPLATE_VALUE__"
-
-
 @dataclass
 class Template:
     """Structural skeleton of an approved artifact for one stage."""
@@ -42,6 +40,7 @@ class Template:
     structure: dict        # project-specific values replaced with _PLACEHOLDER
     source_project_id: str
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    originating_trajectory_id: str | None = None
 
 
 class TemplateEngine:
@@ -81,7 +80,13 @@ class TemplateEngine:
     # Public API
     # ------------------------------------------------------------------
 
-    def extract_template(self, artifact: dict, stage: str, project_id: str = "") -> Template:
+    def extract_template(
+        self,
+        artifact: dict,
+        stage: str,
+        project_id: str = "",
+        originating_trajectory_id: str | None = None,
+    ) -> Template:
         """Derive a structural skeleton from artifact and persist it.
 
         Volatile keys (project_id, timestamps, etc.) are replaced with
@@ -95,11 +100,12 @@ class TemplateEngine:
                 stage=stage,
                 structure=skeleton,
                 source_project_id=project_id,
+                originating_trajectory_id=originating_trajectory_id,
             )
             self._store(template)
             logger.info(
-                "template_engine.extract_template: stage=%s project=%s template_id=%s",
-                stage, project_id, template.template_id,
+                "template_engine.extract_template: stage=%s project=%s template_id=%s orig_traj=%s",
+                stage, project_id, template.template_id, originating_trajectory_id,
             )
             return template
         except Exception as exc:
@@ -109,58 +115,47 @@ class TemplateEngine:
                 stage=stage,
                 structure={},
                 source_project_id=project_id,
+                originating_trajectory_id=originating_trajectory_id,
             )
 
     def find_similar(
         self,
         stage: str,
-        context: dict,
+        context: dict | None = None,
         limit: int = 3,
         min_similarity: float = 0.0,
     ) -> list[Template]:
-        """Return up to limit templates for stage, ranked by key-set overlap with context.
-
-        Key-set overlap is computed as |template_keys ∩ context_keys| /
-        |template_keys ∪ context_keys|.  Returns most-overlapping first.
-        Falls back to recency (most recent first) when overlap ties.
+        """Return up to limit templates for stage, ordered by recency (latest first).
 
         Parameters
         ----------
         stage:
-            Stage name to filter templates by.
+            Stage name to filter templates by (exact match).
         context:
-            Dict whose flattened key paths are compared against each template's
-            key paths.  Richer context (more keys) produces more meaningful scores.
+            Retained for API compatibility. Formerly used for Jaccard key-set overlap,
+            which was removed in Phase A because template keys (output structure) and context
+            keys (input DTOs) represent disjoint namespaces.
         limit:
-            Maximum number of templates to return (after similarity filtering).
+            Maximum number of templates to return.
         min_similarity:
-            Minimum Jaccard similarity score (inclusive) for a template to be
-            included in the result.  Default 0.0 returns all templates regardless
-            of score, preserving prior behavior.  Must be in [0.0, 1.0].
+            Retained for API compatibility. Dynamic similarity filtering is not active;
+            all templates created via LearningMiddleware represent approved stage outputs.
         """
-        if not (0.0 <= min_similarity <= 1.0):
-            raise ValueError(
-                f"min_similarity must be in [0.0, 1.0], got {min_similarity!r}"
-            )
         try:
             rows = self._conn.execute(
-                "SELECT template_id, stage, structure, source_project_id, created_at "
-                "FROM templates WHERE stage = ? ORDER BY created_at DESC LIMIT 50",
-                (stage,),
+                "SELECT template_id, stage, structure, source_project_id, created_at, originating_trajectory_id "
+                "FROM templates WHERE stage = ? ORDER BY created_at DESC LIMIT ?",
+                (stage, limit),
             ).fetchall()
             if not rows:
                 return []
 
-            context_keys = set(self._flatten_keys(context))
-            scored: list[tuple[float, Template]] = []
-            for template_id, s, structure_json, source_project_id, created_at_str in rows:
+            templates: list[Template] = []
+            for template_id, s, structure_json, source_project_id, created_at_str, originating_trajectory_id in rows:
                 try:
                     structure = json.loads(structure_json)
                 except Exception:
                     structure = {}
-                template_keys = set(self._flatten_keys(structure))
-                union = template_keys | context_keys
-                overlap = len(template_keys & context_keys) / max(len(union), 1)
                 created_at = datetime.fromisoformat(created_at_str)
                 template = Template(
                     template_id=template_id,
@@ -168,13 +163,11 @@ class TemplateEngine:
                     structure=structure,
                     source_project_id=source_project_id,
                     created_at=created_at,
+                    originating_trajectory_id=originating_trajectory_id,
                 )
-                scored.append((overlap, template))
+                templates.append(template)
 
-            scored.sort(key=lambda x: x[0], reverse=True)
-            # Apply min_similarity threshold before applying limit so limit
-            # always refers to the count of qualifying results.
-            return [t for score, t in scored if score >= min_similarity][:limit]
+            return templates
         except Exception as exc:
             logger.warning("find_similar failed for stage=%s: %s", stage, exc)
             return []
@@ -218,18 +211,23 @@ class TemplateEngine:
             )
             """
         )
+        cursor = self._conn.execute("PRAGMA table_info(templates)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "originating_trajectory_id" not in columns:
+            self._conn.execute("ALTER TABLE templates ADD COLUMN originating_trajectory_id TEXT")
         self._conn.commit()
 
     def _store(self, template: Template) -> None:
         self._conn.execute(
-            "INSERT INTO templates (template_id, stage, structure, source_project_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO templates (template_id, stage, structure, source_project_id, created_at, originating_trajectory_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 template.template_id,
                 template.stage,
                 json.dumps(template.structure),
                 template.source_project_id,
                 template.created_at.isoformat(),
+                template.originating_trajectory_id,
             ),
         )
         self._conn.commit()

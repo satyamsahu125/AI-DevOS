@@ -212,6 +212,8 @@ class WorkflowEngine:
         )
         context = assemble_result.context
         _template_injected: bool = assemble_result.template_injected
+        _injected_template_id: str | None = assemble_result.injected_template_id
+        _template_similarity_score: float | None = assemble_result.template_similarity_score
 
         # ── Run through StageRunner with trajectory hook ───────────────
         session_id = session.session_id
@@ -223,7 +225,10 @@ class WorkflowEngine:
             self._learning.on_attempt(
                 stage_name, project_id, content, attempt, artifact, review_result,
                 template_injected=_template_injected,
+                injected_template_id=_injected_template_id,
+                template_similarity_score=_template_similarity_score,
             )
+
 
         result = self._stage_runner.run(
             project_id, stage_name, context, on_attempt=_on_attempt,

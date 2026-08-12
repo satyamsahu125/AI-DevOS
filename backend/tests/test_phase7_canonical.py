@@ -264,32 +264,34 @@ class TestTemplateEngineFindSimilar:
         results = te.find_similar("Architect", {}, limit=3)
         assert len(results) <= 3
 
-    def test_find_similar_higher_overlap_ranks_first(self, tmp_path):
+    def test_find_similar_latest_template_ranks_first(self, tmp_path):
         te = self._engine(tmp_path)
-        # High-overlap: shares many keys with query context
+        # Older template
         te.extract_template(
-            {"endpoints": "x", "auth": "x", "models": "x", "tests": "x"},
+            {"endpoints": "x", "auth": "x"},
             stage="BackendDeveloper",
         )
-        # Low-overlap: only one matching key
+        # Newer template
         te.extract_template(
-            {"unrelated_key_1": "x", "unrelated_key_2": "x"},
+            {"newer_key": "x"},
             stage="BackendDeveloper",
         )
         results = te.find_similar(
             "BackendDeveloper",
-            {"endpoints": "POST /v1/users", "auth": "JWT", "models": "User", "tests": "pytest"},
+            {"endpoints": "POST /v1/users"},
             limit=5,
         )
-        assert len(results) >= 2
-        # Template with "endpoints/auth/models/tests" must rank first
-        assert "endpoints" in results[0].structure or results[0].structure != {}
+        assert len(results) == 2
+        # Phase A: latest created template must rank first
+        assert "newer_key" in results[0].structure
 
     def test_find_similar_non_fatal_on_empty_context(self, tmp_path):
         te = self._engine(tmp_path)
         te.extract_template({"k": "v"}, stage="Reviewer")
         results = te.find_similar("Reviewer", {})
         assert isinstance(results, list)
+        assert len(results) == 1
+
 
 
 class TestTemplateEngineInject:
