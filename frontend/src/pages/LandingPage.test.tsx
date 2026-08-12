@@ -28,9 +28,11 @@ vi.mock("react-router-dom", async () => {
 vi.mock("../lib/auth", () => ({ useAuth: vi.fn() }))
 
 // ─── Global stubs for jsdom ────────────────────────────────────────────────────
+// NOTE: must be beforeEach, not beforeAll.
+// setup.ts calls vi.restoreAllMocks() after every test, which resets the stub's
+// internal vi.fn() instances.  Re-stubbing each time keeps the mock fresh.
 
-beforeAll(() => {
-  // jsdom does not implement IntersectionObserver
+beforeEach(() => {
   vi.stubGlobal(
     "IntersectionObserver",
     vi.fn().mockImplementation(() => ({
@@ -41,7 +43,7 @@ beforeAll(() => {
   )
 })
 
-afterAll(() => {
+afterEach(() => {
   vi.unstubAllGlobals()
 })
 

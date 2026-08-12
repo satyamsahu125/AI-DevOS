@@ -12,7 +12,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path(os.getenv("LEARNING_DB", "data/learning.sqlite"))
+# Phase 6 MIGRATE: anchored default — parents[2] from backend/app/learning/ = backend/.
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+_DEFAULT_DB_PATH = Path(os.getenv("LEARNING_DB", str(_DATA_DIR / "learning.sqlite")))
 
 # Keys whose values are project-specific and should be replaced with
 # placeholders when extracting a template from a concrete artifact.
@@ -109,13 +111,37 @@ class TemplateEngine:
                 source_project_id=project_id,
             )
 
-    def find_similar(self, stage: str, context: dict, limit: int = 3) -> list[Template]:
+    def find_similar(
+        self,
+        stage: str,
+        context: dict,
+        limit: int = 3,
+        min_similarity: float = 0.0,
+    ) -> list[Template]:
         """Return up to limit templates for stage, ranked by key-set overlap with context.
 
         Key-set overlap is computed as |template_keys ∩ context_keys| /
         |template_keys ∪ context_keys|.  Returns most-overlapping first.
         Falls back to recency (most recent first) when overlap ties.
+
+        Parameters
+        ----------
+        stage:
+            Stage name to filter templates by.
+        context:
+            Dict whose flattened key paths are compared against each template's
+            key paths.  Richer context (more keys) produces more meaningful scores.
+        limit:
+            Maximum number of templates to return (after similarity filtering).
+        min_similarity:
+            Minimum Jaccard similarity score (inclusive) for a template to be
+            included in the result.  Default 0.0 returns all templates regardless
+            of score, preserving prior behavior.  Must be in [0.0, 1.0].
         """
+        if not (0.0 <= min_similarity <= 1.0):
+            raise ValueError(
+                f"min_similarity must be in [0.0, 1.0], got {min_similarity!r}"
+            )
         try:
             rows = self._conn.execute(
                 "SELECT template_id, stage, structure, source_project_id, created_at "
@@ -146,7 +172,9 @@ class TemplateEngine:
                 scored.append((overlap, template))
 
             scored.sort(key=lambda x: x[0], reverse=True)
-            return [t for _, t in scored[:limit]]
+            # Apply min_similarity threshold before applying limit so limit
+            # always refers to the count of qualifying results.
+            return [t for score, t in scored if score >= min_similarity][:limit]
         except Exception as exc:
             logger.warning("find_similar failed for stage=%s: %s", stage, exc)
             return []

@@ -24,7 +24,6 @@ from ..shared.dto.pipeline_result import PipelineResult
 from ..shared.dto.workflow_result import WorkflowResult
 from ..shared.enums.project_state import ProjectState
 from ..workspace.manager import WorkspaceManager
-from ..workspace.manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +45,7 @@ _QUICK_BUILD_SKIP_RELEASE = frozenset({
 _QUICK_BUILD_SKIP_GATES = frozenset({
     "architect",         # skip architecture review gate
     "designer",          # skip design review gate
-    "sprint_planner",    # skip sprint plan review gate (not in current pipeline, future-proof)
+    "sprint_planner",    # skip sprint plan review gate in quick mode
 })
 
 # Maximum sprints allowed in quick mode
@@ -121,40 +120,56 @@ class _StageResult:
 class PipelineSupervisor:
     """Orchestrates the full 3-phase pipeline (Discovery → Sprints → Release).
 
-    Replaces the if/elif state machine in WorkflowManager.run().
-    to WorkflowManager._run_sprint for sprint-level execution.
+    Single responsibility: advance the pipeline through Discovery → Sprints →
+    Release phases by delegating to the right collaborator at each step.
 
     Parameters
     ----------
     workspace : WorkspaceManager
-        For reading/writing project state and artifacts.
+        Reads/writes project state and artifacts.
     engine
-        WorkflowEngine instance (calls engine.run_stage() for each stage).
-    workflow_manager
-        WorkflowManager instance for sprint execution.
+        WorkflowEngine — runs individual stages (execute→review→retry).
+    sprint_executor
+        SprintExecutor — runs one complete sprint end-to-end.
+        Eliminates the circular dependency that previously existed when
+        PipelineSupervisor called back into WorkflowManager._run_sprint_with_retry.
     settings
-        Settings object with configuration.
+        Settings object with LLM and feature configuration.
+    change_manager : optional
+        ChangeManager — used by BugAnalyst spec/architecture rollback.
+        If None, BugAnalyst spec/architecture rollback is skipped (logged only).
+    memory_manager : optional
+        MemoryManager — stores sandbox results so BugAnalyst can read them.
+        If None, sandbox results are not persisted to memory.
     """
 
     def __init__(
         self,
         workspace,
         engine,
-        workflow_manager,
+        sprint_executor,
         settings,
         file_indexer=None,
+        dependency_graph=None,
+        code_summarizer=None,
         code_sandbox=None,
         dependency_pinner=None,
         preview_manager=None,
+        change_manager=None,
+        memory_manager=None,
     ) -> None:
         self.workspace = workspace
         self.engine = engine
-        self.workflow_manager = workflow_manager
+        self._sprint_executor = sprint_executor
         self.settings = settings
-        self._file_indexer = file_indexer            # Phase 3: intelligence layer indexing trigger
+        self._file_indexer = file_indexer            # Phase 3: intelligence layer — file indexer
+        self._dependency_graph = dependency_graph    # Phase 3: intelligence layer — dep graph
+        self._code_summarizer = code_summarizer      # Phase 3: intelligence layer — summarizer
         self._code_sandbox = code_sandbox            # Phase 5: code execution sandbox
-        self._dependency_pinner = dependency_pinner   # R2: pin requirements to stable versions
-        self._preview_manager = preview_manager       # R5: live app preview
+        self._dependency_pinner = dependency_pinner  # R2: pin requirements to stable versions
+        self._preview_manager = preview_manager      # R5: live app preview
+        self._change_manager = change_manager        # BugAnalyst spec/arch rollback
+        self._memory_manager = memory_manager        # sandbox result storage
 
     def _get_project_mode(self, project_id: str) -> str:
         """Read project mode from project.json. Returns 'full' if not set."""
@@ -219,6 +234,104 @@ class PipelineSupervisor:
             "[PipelineSupervisor] pipeline starting from state: %s",
             state.value if hasattr(state, "value") else state,
         )
+
+        # ── RESUMING_FROM_CHANGE → REPLANNING ───────────────────────────────────
+        # When ChangeManager.apply() sets RESUMING_FROM_CHANGE the pipeline has
+        # no valid route and previously fell through to the terminal-state handler
+        # (returning success=False with no explanation).  This block is the state
+        # router that makes RESUMING_FROM_CHANGE a valid entry point.
+        #
+        # This does NOT implement actual replanning — it only transitions state
+        # so the next pipeline invocation can detect REPLANNING and act.
+        # Actual selective re-execution is implemented in a later task.
+        if state == ProjectState.RESUMING_FROM_CHANGE:
+            logger.info(
+                "[PipelineSupervisor] RESUMING_FROM_CHANGE detected — "
+                "transitioning to REPLANNING: project=%s",
+                project_id,
+            )
+            self.workspace.update_state(project_id, ProjectState.REPLANNING)
+            data = self.workspace.load_project_json(project_id) or {}
+            return PipelineResult(
+                project_id=project_id,
+                state=ProjectState.REPLANNING,
+                success=True,
+                message="Requirement change applied — pipeline is awaiting replanning.",
+                requires_user_action=False,
+                completed_stages=list(data.get("stages_completed", [])),
+            )
+
+        # ── REPLANNING → selective phase resume ────────────────────────────────
+        # REPLANNING is set by the RESUMING_FROM_CHANGE router (block above).
+        # At this point:
+        #   - stages_completed already contains ONLY safe stages — ChangeManager
+        #     removed the affected stages during apply(), so the affected ones are
+        #     simply absent here.  _run_discovery() / _run_sprints() naturally
+        #     re-run any stage not in stages_completed (their existing skip logic).
+        #   - completed_sprints is NOT modified by ChangeManager — sprints whose
+        #     sprint_number is already in that set are skipped by _run_sprints().
+        #
+        # Known limitation: changes that affect code inside a previously-completed
+        # sprint (sprint_number in completed_sprints) do NOT cause that sprint to
+        # re-run.  Resolving this requires a sprint-number → stage-name mapping
+        # that does not yet exist in the architecture (future task).
+        if state == ProjectState.REPLANNING:
+            from .stage_lookup import resolve_stage_name as _rsn
+            _data = self.workspace.load_project_json(project_id) or {}
+            _completed_set = set(_data.get("stages_completed", []))
+            _quick = self._get_project_mode(project_id) == "quick"
+
+            # Check if every required discovery stage is represented in stages_completed.
+            # Skip quick-build-excluded stages so quick mode doesn't appear incomplete.
+            _discovery_required = [
+                s for s in get_discovery_stages()
+                if not (_quick and s in _QUICK_BUILD_SKIP_DISCOVERY)
+            ]
+            _discovery_complete = all(
+                _rsn(s) in _completed_set for s in _discovery_required
+            )
+
+            if not _discovery_complete:
+                # At least one discovery stage was removed by ChangeManager.
+                # _run_discovery() will skip stages still in _completed_set and
+                # only execute the missing (affected) ones.
+                logger.info(
+                    "[PipelineSupervisor] REPLANNING: discovery incomplete — "
+                    "resuming from Discovery phase: project=%s",
+                    project_id,
+                )
+                self.workspace.update_state(project_id, ProjectState.REQUIREMENTS_READY)
+                state = ProjectState.REQUIREMENTS_READY
+            else:
+                # Discovery is intact — check whether sprint work is still pending.
+                _sprint_plan = self.workspace.get_sprint_plan(project_id)
+                _sprint_stale = _sprint_plan.stale if _sprint_plan else False
+                _completed_sprint_nums = set(_data.get("completed_sprints", []))
+                _pending_sprints = _sprint_plan is not None and any(
+                    s.sprint_number not in _completed_sprint_nums
+                    for s in _sprint_plan.sprints
+                )
+
+                if _sprint_stale or _pending_sprints:
+                    logger.info(
+                        "[PipelineSupervisor] REPLANNING: discovery intact — "
+                        "resuming from Sprints phase "
+                        "(stale=%s pending_sprints=%s): project=%s",
+                        _sprint_stale, _pending_sprints, project_id,
+                    )
+                    self.workspace.update_state(project_id, ProjectState.SPRINT_IN_PROGRESS)
+                    state = ProjectState.SPRINT_IN_PROGRESS
+                else:
+                    # Discovery complete and all sprints accounted for — resume Release.
+                    logger.info(
+                        "[PipelineSupervisor] REPLANNING: discovery and sprints intact — "
+                        "resuming from Release phase: project=%s",
+                        project_id,
+                    )
+                    self.workspace.update_state(project_id, ProjectState.ALL_SPRINTS_COMPLETE)
+                    state = ProjectState.ALL_SPRINTS_COMPLETE
+            # Fall through — the existing phase routing below picks up the
+            # updated state and delegates to the correct phase method.
 
         # Resume from current state — do not re-run completed phases
         if state in DISCOVERY_STATES:
@@ -357,6 +470,24 @@ class PipelineSupervisor:
             if stage_key == "designer" and quick_mode:
                 logger.info("[PipelineSupervisor] quick mode: auto-approving design gate")
 
+            # Phase 4: After SprintPlanner — pause for sprint plan review before sprint execution.
+            # R9: skip gate in quick mode (auto-approve).
+            if stage_key == "sprint_planner" and not quick_mode:
+                logger.info("[PipelineSupervisor] sprint plan ready, pausing for human review gate")
+                self.workspace.update_state(project_id, ProjectState.SPRINT_PLAN_REVIEW_PENDING)
+                data = self.workspace.load_project_json(project_id) or {}
+                return PipelineResult(
+                    project_id=project_id,
+                    state=ProjectState.SPRINT_PLAN_REVIEW_PENDING,
+                    success=True,
+                    message="Sprint plan ready for review",
+                    requires_user_action=True,
+                    action_needed="review_sprint_plan",
+                    completed_stages=list(data.get("stages_completed", [])),
+                )
+            if stage_key == "sprint_planner" and quick_mode:
+                logger.info("[PipelineSupervisor] quick mode: auto-approving sprint plan gate")
+
         logger.info("[PipelineSupervisor] Discovery phase complete")
         self.workspace.update_state(project_id, ProjectState.DESIGN_APPROVED)
         data = self.workspace.load_project_json(project_id) or {}
@@ -437,7 +568,7 @@ class PipelineSupervisor:
 
             # R10: instrument each sprint with a tracing span (no-op when OTel not configured).
             with sprint_span(project_id=project_id, sprint_number=n):
-                sprint_result = self.workflow_manager._run_sprint_with_retry(project_id, sprint, max_attempts=2)
+                sprint_result = self._sprint_executor.run(project_id, sprint)
 
             # R2: Syntax check before marking sprint complete — fail fast on parse errors.
             # Only runs when CodeSandbox is enabled; skips silently in dev mode.
@@ -464,9 +595,19 @@ class PipelineSupervisor:
                     "[PipelineSupervisor] sprint %d failed: %s",
                     n, sprint_result.message,
                 )
+                # AC-P2-08: transition to SPRINT_BLOCKED so the failure state is
+                # visible, durable, and meaningful.  Without this the project stays
+                # SPRINT_IN_PROGRESS even though execution has stopped.
+                self.workspace.update_state(project_id, ProjectState.SPRINT_BLOCKED)
+                # Persist the failure reason so it survives a process restart.
+                self.workspace.update_project_json(
+                    project_id,
+                    {f"sprint_{n}_failure_reason": sprint_result.message},
+                )
+                data = self.workspace.load_project_json(project_id) or {}
                 return PipelineResult(
                     project_id=project_id,
-                    state=self.workspace.get_state(project_id),
+                    state=ProjectState.SPRINT_BLOCKED,
                     success=False,
                     message=f"Sprint {n} failed: {sprint_result.message}",
                     failed_stage=f"sprint_{n}",
@@ -474,7 +615,9 @@ class PipelineSupervisor:
                     completed_stages=list(data.get("stages_completed", [])),
                 )
 
-            self.workspace.mark_sprint_complete(project_id, n)
+            # SprintExecutor.run() already calls mark_sprint_complete before returning.
+            # Calling it again here would cause a read-modify-write race on project.json
+            # if any concurrent write occurs between the two calls.
             logger.info("[PipelineSupervisor] sprint %d complete", n)
             # Phase 3: trigger intelligence layer to index the newly written files.
             # Non-blocking — failures are logged but never stop the pipeline.
@@ -509,6 +652,12 @@ class PipelineSupervisor:
     # generated project (e.g. auth tests against a calculator app).
     _MAX_BUG_FIX_ITERATIONS = 2
 
+    # Maximum number of spec_bug / architecture_bug rollbacks before giving up
+    # and continuing to DEPLOYABLE.  Without this guard an unfixable architecture
+    # defect (e.g. persistent schema parse failure) causes an infinite loop:
+    # BugAnalyst → rollback → Architect re-runs → same defect → BugAnalyst → ...
+    _MAX_ARCH_ROLLBACK_ITERATIONS = 2
+
     def _run_release(self, project_id: str, request: str) -> PipelineResult:
         """Run Release phase: Integration, QA, BugAnalyst, DevOps, Documentation, Retro.
 
@@ -527,6 +676,7 @@ class PipelineSupervisor:
         from .stage_lookup import resolve_stage_name
 
         bug_fix_iterations = 0
+        arch_rollback_iterations = 0
         # Stages to restart from after a code_bug fix (skip Integration, re-run QA+)
         _POST_FIX_START = "qa"
 
@@ -582,35 +732,88 @@ class PipelineSupervisor:
 
                         if bug_type in ("spec_bug", "architecture_bug"):
                             logger.info("[PipelineSupervisor] BugAnalyst detected %s, rolling back pipeline", bug_type)
-                            change = self.workflow_manager.submit_requirement_change(
-                                project_id=project_id,
-                                change_description=(
-                                    f"BugAnalyst detected {bug_type}: "
-                                    f"{structured.get('targeted_fix_instruction', structured.get('fix_instruction'))}"
-                                ),
-                            )
-                            self.workflow_manager.apply_requirement_change(
-                                project_id=project_id,
-                                change_id=change.change_id,
-                                confirmed=True,
-                            )
-                            return PipelineResult(
-                                project_id=project_id,
-                                state=ProjectState.RESUMING_FROM_CHANGE,
-                                success=True,
-                                message=f"Rollback triggered due to {bug_type}",
-                                completed_stages=[],
-                            )
+                            if arch_rollback_iterations >= self._MAX_ARCH_ROLLBACK_ITERATIONS:
+                                logger.warning(
+                                    "[PipelineSupervisor] BugAnalyst %s rollback limit reached "
+                                    "(%d/%d) — skipping rollback and advancing to DEPLOYABLE. "
+                                    "project=%s bug=%s",
+                                    bug_type,
+                                    arch_rollback_iterations,
+                                    self._MAX_ARCH_ROLLBACK_ITERATIONS,
+                                    project_id,
+                                    structured.get("targeted_fix_instruction", ""),
+                                )
+                                # Do not roll back — fall through so the release loop
+                                # finishes naturally (DevOps, Docs, Retro) and reaches DEPLOYABLE.
+                            else:
+                                arch_rollback_iterations += 1
+                                if self._change_manager is not None:
+                                    change = self._change_manager.submit(
+                                        project_id=project_id,
+                                        change_description=(
+                                            f"BugAnalyst detected {bug_type}: "
+                                            f"{structured.get('targeted_fix_instruction', structured.get('fix_instruction'))}"
+                                        ),
+                                    )
+                                    self._change_manager.apply(
+                                        project_id=project_id,
+                                        change_id=change.change_id,
+                                        confirmed=True,
+                                    )
+                                else:
+                                    logger.warning(
+                                        "[PipelineSupervisor] BugAnalyst %s rollback skipped — "
+                                        "no change_manager wired: project=%s",
+                                        bug_type, project_id,
+                                    )
+                                    self.workspace.update_state(project_id, ProjectState.RESUMING_FROM_CHANGE)
+                                return PipelineResult(
+                                    project_id=project_id,
+                                    state=ProjectState.RESUMING_FROM_CHANGE,
+                                    success=True,
+                                    message=f"Rollback triggered due to {bug_type}",
+                                    completed_stages=[],
+                                )
 
                         elif bug_type == "code_bug":
                             if bug_fix_iterations >= self._MAX_BUG_FIX_ITERATIONS:
                                 logger.warning(
                                     "[PipelineSupervisor] BugAnalyst code_bug fix limit reached "
-                                    "(%d/%d) — accepting current state and continuing to DEPLOYABLE. "
-                                    "project=%s",
+                                    "(%d/%d): project=%s",
                                     bug_fix_iterations, self._MAX_BUG_FIX_ITERATIONS, project_id,
                                 )
-                                # Do not apply another fix — let the loop finish naturally
+                                # AC-P2-10: if the build is still failing at the limit,
+                                # do NOT advance to DEPLOYABLE — transition to SPRINT_BLOCKED.
+                                _failure_reason = self._check_build_state_from_memory(project_id)
+                                if _failure_reason:
+                                    logger.error(
+                                        "[PipelineSupervisor] bug-fix limit exhausted with "
+                                        "build still failing — transitioning to SPRINT_BLOCKED. "
+                                        "project=%s reason=%s",
+                                        project_id, _failure_reason,
+                                    )
+                                    self.workspace.update_state(
+                                        project_id, ProjectState.SPRINT_BLOCKED,
+                                    )
+                                    self.workspace.update_project_json(
+                                        project_id,
+                                        {"bug_fix_failure_reason": _failure_reason},
+                                    )
+                                    _data = self.workspace.load_project_json(project_id) or {}
+                                    return PipelineResult(
+                                        project_id=project_id,
+                                        state=ProjectState.SPRINT_BLOCKED,
+                                        success=False,
+                                        message=(
+                                            f"Bug-fix limit ({self._MAX_BUG_FIX_ITERATIONS}) exhausted "
+                                            f"with build still failing: {_failure_reason}"
+                                        ),
+                                        completed_stages=list(
+                                            _data.get("stages_completed", [])
+                                        ),
+                                    )
+                                # Build is passing — fall through so the release loop finishes
+                                # naturally (DevOps, Docs, Retro) and reaches DEPLOYABLE.
                             else:
                                 bug_fix_iterations += 1
                                 affected = structured.get("affected_agent", "Backend")
@@ -621,7 +824,49 @@ class PipelineSupervisor:
                                     bug_fix_iterations, self._MAX_BUG_FIX_ITERATIONS, target_stage, project_id,
                                 )
                                 fix_content = f"A bug was found. Your task is to apply the following fix: {fix}"
-                                self.workflow_manager.run_stage(project_id, target_stage, fix_content)
+                                from .stage_lookup import resolve_stage_name as _resolve
+                                self.engine.run(project_id, _resolve(target_stage), fix_content)
+
+                                # AC-08: After the fix, re-run the sandbox so BugAnalyst's
+                                # next iteration sees actual results for the patched code, not
+                                # stale pre-fix results.  Non-blocking — failure is logged.
+                                try:
+                                    data_for_sprint = self.workspace.load_project_json(project_id) or {}
+                                    current_sprint = int(data_for_sprint.get("current_sprint_number", 0))
+                                    if self._code_sandbox is not None and current_sprint > 0:
+                                        logger.info(
+                                            "[PipelineSupervisor] re-running sandbox after bug fix %d/%d: "
+                                            "project=%s sprint=%d",
+                                            bug_fix_iterations, self._MAX_BUG_FIX_ITERATIONS,
+                                            project_id, current_sprint,
+                                        )
+                                        fresh_result = self._code_sandbox.run(
+                                            project_id,
+                                            sprint=current_sprint,
+                                            require_execution=True,
+                                        )
+                                        if self._memory_manager is not None:
+                                            self._memory_manager.store(
+                                                project_id, "sandbox:latest", fresh_result.to_json(),
+                                            )
+                                        # Also update ArtifactStore so the fresh result is persistent.
+                                        store = self.workspace.get_artifact_store(project_id)
+                                        store.write(
+                                            scope=f"sprint_{current_sprint}",
+                                            name=f"sandbox_result_fix_{bug_fix_iterations}",
+                                            data=fresh_result._to_dict(),
+                                        )
+                                        logger.info(
+                                            "[PipelineSupervisor] post-fix sandbox: build=%s tests=%d/%d",
+                                            fresh_result.build.success,
+                                            fresh_result.test.passed,
+                                            fresh_result.test.total,
+                                        )
+                                except Exception as sandbox_exc:
+                                    logger.warning(
+                                        "[PipelineSupervisor] post-fix sandbox re-run failed (non-fatal): %s",
+                                        sandbox_exc,
+                                    )
 
                                 # Clear only QA and BugAnalyst from completed so they re-run.
                                 # Integration result is still valid — leave it in completed.
@@ -655,6 +900,47 @@ class PipelineSupervisor:
             completed_stages=list(data.get("stages_completed", [])),
         )
 
+    def _check_build_state_from_memory(self, project_id: str) -> str:
+        """AC-P2-10: Return a failure reason string if the latest sandbox build is
+        still failing, or an empty string if the build is passing (or unknown).
+
+        Reads from memory_manager at "sandbox:latest" — the key written by
+        both _run_sandbox() (post-sprint) and the post-fix sandbox re-run.
+
+        Returns
+        -------
+        str
+            Non-empty if build is broken (message describes the failure).
+            Empty string if build is passing or if no sandbox result is available
+            (no evidence of failure → give benefit of the doubt).
+        """
+        if self._memory_manager is None or self._code_sandbox is None:
+            # No sandbox wired — we cannot verify, assume passing for backward compat.
+            return ""
+        try:
+            import json as _json
+            from ..shared.dto.sandbox_result import SandboxResult
+            raw = self._memory_manager.load(project_id, "sandbox:latest")
+            if not raw:
+                return ""
+            data = _json.loads(raw) if isinstance(raw, str) else raw
+            result = SandboxResult.from_dict(data)
+            if not result.build.success:
+                errors = "; ".join(result.build.errors[:3]) or "build error"
+                return f"build failed: {errors}"
+            if result.test.failed > 0 and result.test.total > 0:
+                return (
+                    f"tests failing: {result.test.failed}/{result.test.total} failed"
+                )
+            return ""
+        except Exception as exc:
+            logger.warning(
+                "[PipelineSupervisor] _check_build_state_from_memory error "
+                "(treating as passing): project=%s error=%s",
+                project_id, exc,
+            )
+            return ""
+
     def _start_preview(self, project_id: str, sprint_number: int = 0) -> None:
         """R5: Start or restart the live preview after a sprint sandbox passes.
 
@@ -666,7 +952,7 @@ class PipelineSupervisor:
             return
         try:
             # Only start if build was successful (R2 gate)
-            memory_manager = getattr(self.workflow_manager, "memory_manager", None)
+            memory_manager = self._memory_manager
             if memory_manager is not None:
                 import json as _json
                 raw = memory_manager.load(project_id, "sandbox:latest")
@@ -769,56 +1055,107 @@ class PipelineSupervisor:
             )
 
     def _trigger_intelligence_index(self, project_id: str, sprint_number: int = 0) -> None:
-        """Trigger FileIndexer to index project files after a sprint completes.
+        """Trigger the intelligence layer after a sprint completes.
 
-        Non-blocking: any exception is caught and logged — never propagates
-        to the pipeline. This enables ContextOrchestrator (Layer 4) to serve
-        file-level context for subsequent sprints and the Release phase.
+        Calls FileIndexer, ProjectDependencyGraph, and CodeSummarizer in order:
+          1. file_indexer.index_project() — walks the workspace and indexes every
+             source file into SQLite so subsequent queries are up to date.
+          2. dependency_graph.build() — (re-)builds the reverse dep graph from
+             the freshly indexed data.
+          3. code_summarizer.build_project_overview() — pre-computes the project
+             overview so ContextOrchestrator can serve it without an extra query.
+
+        Non-blocking: the entire block is wrapped in try/except — any failure is
+        logged as WARNING and never propagates to the sprint loop.  Each
+        component is only called when it was wired into the constructor.
         """
         if self._file_indexer is None:
             return
         try:
             workspace_path = self.workspace.get_workspace_path(project_id)
-            self._file_indexer.index_project(project_id, str(workspace_path))
+            self._file_indexer.index_project(project_id, str(workspace_path), sprint_number)
+            if self._dependency_graph is not None:
+                self._dependency_graph.build(project_id)
+            if self._code_summarizer is not None:
+                self._code_summarizer.build_project_overview(project_id)
             logger.info(
-                "[PipelineSupervisor] intelligence index updated: project=%s sprint=%d",
+                "intelligence layer updated: project_id=%s sprint=%d",
                 project_id, sprint_number,
             )
         except Exception as exc:
             logger.warning(
-                "[PipelineSupervisor] intelligence index failed (non-fatal): project=%s sprint=%d error=%s",
-                project_id, sprint_number, exc,
+                "intelligence layer update failed: %s — continuing",
+                exc,
             )
 
     def _run_sandbox(self, project_id: str, sprint_number: int = 0) -> None:
-        """Run the code execution sandbox after a sprint completes.
+        """Load or run the code execution sandbox result after a sprint completes.
 
-        Non-blocking — exceptions are caught and logged. Results are stored
-        in memory at "sandbox:latest" so BugAnalyst can read them in the
-        Release phase. When SANDBOX_ENABLED=false (default), CodeSandbox.run()
-        returns a disabled result immediately — no subprocess is executed.
+        Phase 1: SprintExecutor already runs the sandbox (install → build → test)
+        and persists the result to ArtifactStore at sprint_N/sandbox_result.
+        This method first checks whether that result exists; if so, it loads it
+        instead of re-running to avoid double execution.  If SprintExecutor did
+        not run the sandbox (backward compat when code_sandbox is not wired to
+        SprintExecutor), falls back to running it fresh here.
+
+        Either way, the result is stored in memory_manager at "sandbox:latest"
+        so BugAnalyst can read it in the Release phase and _start_preview() can
+        check build success.
+
+        Non-blocking — exceptions are caught and logged.
         """
         if self._code_sandbox is None:
             return
         try:
-            sandbox_result = self._code_sandbox.run(project_id, sprint=sprint_number)
-            # Store for BugAnalyst consumption in Release phase
-            memory_manager = getattr(self.workflow_manager, "memory_manager", None)
+            from ..shared.dto.sandbox_result import SandboxResult
+
+            # ── Try to load the already-persisted result from SprintExecutor ──
+            sandbox_result: SandboxResult | None = None
+            try:
+                store = self.workspace.get_artifact_store(project_id)
+                if store.exists(f"sprint_{sprint_number}", "sandbox_result"):
+                    data = store.read(f"sprint_{sprint_number}", "sandbox_result")
+                    if data:
+                        sandbox_result = SandboxResult.from_dict(data)
+                        logger.info(
+                            "[PipelineSupervisor] sandbox result loaded from ArtifactStore "
+                            "(no re-run): project=%s sprint=%d build=%s",
+                            project_id, sprint_number, sandbox_result.build.success,
+                        )
+            except Exception as load_exc:
+                logger.debug(
+                    "[PipelineSupervisor] could not load persisted sandbox result: %s", load_exc,
+                )
+
+            # ── Fall back to running fresh if not already persisted ──────────
+            if sandbox_result is None:
+                sandbox_result = self._code_sandbox.run(project_id, sprint=sprint_number)
+                logger.info(
+                    "[PipelineSupervisor] sandbox ran fresh: project=%s sprint=%d build=%s",
+                    project_id, sprint_number, sandbox_result.build.success,
+                )
+
+            # ── Store in memory for BugAnalyst + _start_preview ───────────────
+            memory_manager = self._memory_manager
             if memory_manager is not None:
                 memory_manager.store(project_id, "sandbox:latest", sandbox_result.to_json())
                 logger.info(
-                    "[PipelineSupervisor] sandbox results stored: project=%s sprint=%d "
-                    "lint=%d test=%d/%d build=%s",
+                    "[PipelineSupervisor] sandbox results in memory: project=%s sprint=%d "
+                    "install=%s lint=%d test=%d/%d build=%s",
                     project_id, sprint_number,
+                    sandbox_result.install.success,
                     sandbox_result.lint.error_count,
                     sandbox_result.test.passed, sandbox_result.test.total,
                     sandbox_result.build.success,
                 )
             else:
-                logger.debug("[PipelineSupervisor] sandbox ran but memory_manager not wired — results not persisted")
+                logger.debug(
+                    "[PipelineSupervisor] sandbox result not persisted to memory "
+                    "(memory_manager not wired): project=%s sprint=%d", project_id, sprint_number,
+                )
         except Exception as exc:
             logger.warning(
-                "[PipelineSupervisor] sandbox failed (non-fatal): project=%s sprint=%d error=%s",
+                "[PipelineSupervisor] sandbox step failed (non-fatal): project=%s sprint=%d error=%s",
                 project_id, sprint_number, exc,
             )
 

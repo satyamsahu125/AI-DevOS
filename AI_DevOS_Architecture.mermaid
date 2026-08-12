@@ -1,0 +1,293 @@
+flowchart TD
+
+    %% ─────────────────────────────────────────────
+    %% API LAYER
+    %% ─────────────────────────────────────────────
+    subgraph API["🌐 API Layer"]
+        HTTP["POST /workflow/start\n/workflow/{id}/run"]
+        GATES["gates.py\n/gates/architecture/approve\n/gates/design/approve\n/gates/sprint-plan/approve"]
+    end
+
+    %% ─────────────────────────────────────────────
+    %% WORKFLOW MANAGER
+    %% ─────────────────────────────────────────────
+    subgraph WM_BOX["WorkflowManager — State Machine Coordinator"]
+        WM["WorkflowManager\n• reads ProjectState\n• routes to handler\n• no business logic"]
+        ES["ExecutionStateRegistry\n(duplicate-run guard)"]
+    end
+
+    %% ─────────────────────────────────────────────
+    %% DELEGATES
+    %% ─────────────────────────────────────────────
+    subgraph DELEGATES["Delegates"]
+        QAO["QAOrchestrator\nCLARIFYING / QA_PENDING\n/ QA_IN_PROGRESS states"]
+        CM["ChangeManager\nrequirement impact\nanalysis + apply"]
+        PS["PipelineSupervisor\n3-phase pipeline\norchestrator"]
+    end
+
+    %% ─────────────────────────────────────────────
+    %% PIPELINE SUPERVISOR
+    %% ─────────────────────────────────────────────
+    subgraph PS_PHASES["PipelineSupervisor — 3 Phases"]
+        DISC["Discovery Phase\nStrategicReview → ProductOwner\n→ Architect → Designer\n→ Security → SprintPlanner"]
+        SPRINT_PHASE["Sprints Phase\nfor each sprint in plan"]
+        REL["Release Phase\nIntegration → QA → BugAnalyst\n→ DevOps → Document → Retro"]
+        SE["SprintExecutor\nruns exactly one sprint:\nScrumMaster → FilePlanner\n→ BackendDev → FrontendDev\n→ SprintDeploy → SprintReview"]
+    end
+
+    %% ─────────────────────────────────────────────
+    %% WORKFLOW ENGINE
+    %% ─────────────────────────────────────────────
+    subgraph WE_BOX["WorkflowEngine — Stage Lifecycle Coordinator"]
+        WE["WorkflowEngine\n(thin coordinator)"]
+        SR["StageRunner\nexecute → review → retry loop"]
+        CA["ContextAssembler\nall prompt context enrichment\n(fixes sprint context discard bug)"]
+        PT["ProgressTracker\n0–100% from workspace state"]
+    end
+
+    %% ─────────────────────────────────────────────
+    %% MIDDLEWARE
+    %% ─────────────────────────────────────────────
+    subgraph MW["Middleware — Cross-cutting Concerns"]
+        LMW["LearningMiddleware\ntrajectory recording\nlesson + template extraction"]
+        CPM["CheckpointMiddleware\ncrash-recovery checkpoint\nsave / delete"]
+        GMW["GitMiddleware\ncommit approved artifact\nto workspace git"]
+    end
+
+    %% ─────────────────────────────────────────────
+    %% EXECUTION LAYER
+    %% ─────────────────────────────────────────────
+    subgraph EXEC["Execution Layer"]
+        EXMGR["ExecutionManager"]
+        EXENG["ExecutionEngine"]
+        EXPIPE["ExecutionPipeline\nresolve agent → execute\n→ SafetyPolicy check\n→ persist artifact"]
+        SP["SafetyPolicy\n(write boundary guard)"]
+        REV["Reviewer\nquality + schema validation\nASK_HUMAN / APPROVED / REJECTED"]
+        RT["RetryPolicy +\nIntelligentRetryEngine"]
+    end
+
+    %% ─────────────────────────────────────────────
+    %% AGENT FACTORY & AGENTS
+    %% ─────────────────────────────────────────────
+    subgraph AGENTS["Agents (resolved via AgentFactory)"]
+        AF["AgentFactory\n(AgentRegistry + AgentResolver)"]
+
+        subgraph DISC_AGENTS["Discovery Agents"]
+            DA["StrategicReviewAgent\nProductOwnerAgent\nArchitectAgent\nDesignerAgent\nSecurityAgent\nSprintPlannerAgent"]
+        end
+
+        subgraph SPRINT_AGENTS["Sprint Agents"]
+            SA["ScrumMasterAgent\nFileStructurePlannerAgent\nBackendDeveloperAgent\nFrontendDeveloperAgent\nSprintDeployAgent\nSprintReviewAgent"]
+        end
+
+        subgraph REL_AGENTS["Release Agents"]
+            RA["IntegrationDeveloperAgent\nQAAgent\nBugAnalystAgent\nDevOpsAgent\nDocumentAgent\nRetroAgent"]
+        end
+
+        subgraph SPEC_AGENTS["Specialist Agents"]
+            SPA["ClarificationAgent\nDomainResearcherAgent\nTechLeadAgent\nChatRouter"]
+        end
+    end
+
+    %% ─────────────────────────────────────────────
+    %% MEMORY LAYER
+    %% ─────────────────────────────────────────────
+    subgraph MEMORY["Memory Layer"]
+        MO["MemoryOrchestrator\n4-layer context assembler\nLayer1: working\nLayer2: episodic\nLayer3: semantic\nLayer4: procedural"]
+        MM["MemoryManager\nraw key-value store\n(redis or in-process)"]
+        AMGR["ArtifactManager\nstage artifact persistence\nper-project per-attempt"]
+        CTX["ContextManager\nLayer 3 — semantic memory\ncross-project patterns"]
+        LL["LearningLoop\ntrajectory DB\napproval/rejection recording"]
+        LS["LessonStore\nlesson extraction DB"]
+        KM["KnowledgeMemory\ncross-project knowledge"]
+        PEL["ProjectEventLog\nevent history"]
+    end
+
+    %% ─────────────────────────────────────────────
+    %% INTELLIGENCE LAYER
+    %% ─────────────────────────────────────────────
+    subgraph INTELLIGENCE["Intelligence Layer"]
+        CO["ContextOrchestrator\nLayer 4 — procedural intelligence\nfile-level context for stages"]
+        FI["FileIndexer\nsymbol + file index\n(sqlite)"]
+        PDG["ProjectDependencyGraph\nfile dependency graph"]
+        CS["CodeSummarizer\nfile-level summaries"]
+        SM["SprintMonitor\nsprint output validation\nsprint brief generation"]
+        MR["ModelRouter\nper-stage LLM profiles"]
+        TE["TemplateEngine\nstructural template\nextraction + injection"]
+        IA["ImpactAnalyzer\nchange → affected stages\nfile-level impact"]
+    end
+
+    %% ─────────────────────────────────────────────
+    %% INFRASTRUCTURE
+    %% ─────────────────────────────────────────────
+    subgraph INFRA["Infrastructure"]
+        LLM["LLMManager\nBedrock / Claude / Gemini\n(configured via LLM_PROVIDER)"]
+        WS["WorkspaceManager\nproject.json\nstate transitions\nartifact paths"]
+        BC["Broadcaster\nWebSocket events\n(status / stage / log)"]
+        PW["ProjectWriter\nwrites generated files\nto workspace"]
+        CPMGR["CheckpointManager\ncrash recovery\nsession state"]
+        CSAND["CodeSandbox\nlint + test + build\n(SANDBOX_ENABLED)"]
+        DPIN["DependencyPinner\npin requirements.txt\npackage.json"]
+        PREV["PreviewManager\nlive subprocess preview\n(PREVIEW_ENABLED)"]
+    end
+
+    %% ═══════════════════════════════════════════
+    %% CONNECTIONS
+    %% ═══════════════════════════════════════════
+
+    %% API → WorkflowManager
+    HTTP -->|"run(project_id, request)"| WM
+    GATES -->|"approve → update state\n+ schedule resume"| WM
+    GATES -->|"is_running check"| ES
+
+    %% WorkflowManager internals
+    WM --- ES
+    WM -->|"CLARIFYING / QA states"| QAO
+    WM -->|"submit / apply change"| CM
+    WM -->|"all other states"| PS
+    WM -->|"run_stage()"| WE
+
+    %% QAOrchestrator
+    QAO -->|"create ClarificationAgent"| AF
+    QAO -->|"resume after Q&A"| PS
+    QAO -->|"run StrategicReview"| WE
+    QAO --- WS
+    QAO --- BC
+
+    %% ChangeManager
+    CM -->|"analyze impact"| IA
+    CM --- WS
+    CM --- BC
+
+    %% PipelineSupervisor phases
+    PS --> DISC
+    PS --> SPRINT_PHASE
+    PS --> REL
+    SPRINT_PHASE -->|"for each sprint"| SE
+    DISC -->|"_run_stage_safe()"| WE
+    REL -->|"_run_stage_safe()"| WE
+    PS -->|"BugAnalyst rollback"| CM
+    PS --- CSAND
+    PS --- DPIN
+    PS --- PREV
+    PS -->|"index after sprint"| FI
+
+    %% SprintExecutor
+    SE -->|"all sprint stages"| WE
+    SE -->|"resolve agents"| AF
+    SE -->|"validate + brief"| SM
+    SE --- WS
+    SE --- AMGR
+
+    %% WorkflowEngine internals
+    WE -->|"execute-review-retry"| SR
+    WE -->|"build prompt context"| CA
+    WE --> PT
+    WE -->|"on_attempt hook"| LMW
+    WE -->|"on_attempt hook"| CPM
+    WE -->|"on_approval"| LMW
+    WE -->|"on_approval"| GMW
+    WE -->|"record message/design"| MM
+    WE -->|"mark_approved"| AMGR
+    WE -->|"record_approval"| MO
+    WE --- BC
+    WE --- MR
+
+    %% StageRunner
+    SR -->|"execute_stage()"| EXMGR
+    SR -->|"review artifact"| REV
+    SR --- RT
+    SR --- PEL
+    SR -->|"is_stop_requested"| ES
+
+    %% ContextAssembler
+    CA -->|"get_context() — 4 layers"| MO
+    CA -->|"predecessor message"| MM
+    CA -->|"predecessor artifact"| AMGR
+    CA -->|"relevant patterns"| LL
+    CA -->|"lessons"| LS
+    CA -->|"gate feedback / sandbox"| WS
+    CA -->|"structural templates"| TE
+
+    %% Middleware
+    LMW --- LL
+    LMW --- LS
+    LMW --- TE
+    CPM --- CPMGR
+    GMW --- WS
+
+    %% Reviewer
+    REV --- LL
+
+    %% Execution layer chain
+    EXMGR --> EXENG
+    EXENG --> EXPIPE
+    EXPIPE -->|"create(stage_name)"| AF
+    EXPIPE -->|"save artifact"| AMGR
+    EXPIPE --> SP
+
+    %% AgentFactory → Agent groups
+    AF --> DA
+    AF --> SA
+    AF --> RA
+    AF --> SPA
+
+    %% All agents → LLM
+    DA --> LLM
+    SA --> LLM
+    RA --> LLM
+    SPA --> LLM
+
+    %% Code-writing agents → ProjectWriter → workspace
+    SA -->|"BackendDev / FrontendDev"| PW
+    PW --> WS
+
+    %% MemoryOrchestrator internals
+    MO -->|"Layer 1"| MM
+    MO -->|"Layer 2"| AMGR
+    MO -->|"Layer 3"| CTX
+    MO -->|"Layer 4"| CO
+    MO --- LL
+    MO --- LS
+
+    %% ContextOrchestrator (Layer 4)
+    CO --> FI
+    CO --> PDG
+    CO --> CS
+    CO --> KM
+    CO --- LS
+    CO --- AMGR
+    SM --- FI
+    SM --- PDG
+
+    %% ImpactAnalyzer
+    IA --- LLM
+    IA --- FI
+    IA --- PDG
+    IA --- CS
+
+    %% LLMManager
+    LLM -->|"token cost"| PT
+
+    %% Styling
+    classDef apiNode fill:#4a90d9,stroke:#2c5f8a,color:#fff
+    classDef wmNode fill:#7b68ee,stroke:#5a4fcf,color:#fff
+    classDef delegateNode fill:#9b59b6,stroke:#7d3c98,color:#fff
+    classDef engineNode fill:#e67e22,stroke:#ca6f1e,color:#fff
+    classDef middlewareNode fill:#f39c12,stroke:#d68910,color:#fff
+    classDef execNode fill:#e74c3c,stroke:#cb4335,color:#fff
+    classDef agentNode fill:#27ae60,stroke:#1e8449,color:#fff
+    classDef memoryNode fill:#16a085,stroke:#0e6655,color:#fff
+    classDef intelNode fill:#2980b9,stroke:#1a6091,color:#fff
+    classDef infraNode fill:#7f8c8d,stroke:#5f6a6a,color:#fff
+
+    class HTTP,GATES apiNode
+    class WM,ES wmNode
+    class QAO,CM,PS delegateNode
+    class DISC,SPRINT_PHASE,REL,SE,WE,SR,CA,PT engineNode
+    class LMW,CPM,GMW middlewareNode
+    class EXMGR,EXENG,EXPIPE,SP,REV,RT execNode
+    class AF,DA,SA,RA,SPA agentNode
+    class MO,MM,AMGR,CTX,LL,LS,KM,PEL memoryNode
+    class CO,FI,PDG,CS,SM,MR,TE,IA intelNode
+    class LLM,WS,BC,PW,CPMGR,CSAND,DPIN,PREV infraNode

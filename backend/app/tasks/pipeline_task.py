@@ -36,33 +36,33 @@ _BROKER_URL = os.environ.get("CELERY_BROKER_URL", "")
 _RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", _BROKER_URL)
 
 # --------------------------------------------------------------------------
-# Celery app setup (lazy — only built when Redis is configured)
+# Celery app setup
 # --------------------------------------------------------------------------
+#
+# `celery_app` is a MODULE-LEVEL name.  Celery's `-A` flag discovers it via:
+#
+#     celery -A app.tasks.pipeline_task worker
+#
+# Celery looks for an attribute named `app` or `celery_app` (or any Celery
+# instance) at the top of the named module.  It CANNOT call a function.
+#
+# Eagerly create the app when the broker URL is known at import time so the
+# worker process finds a real Celery instance immediately.  When the broker
+# URL is absent (dev / CI without Redis) `celery_app` stays None and
+# `dispatch_pipeline()` falls back to threads as before.
 
-_celery_app: Any = None
+celery_app: Any = None
+_celery_app: Any = None          # internal alias kept for _get_celery_app() callers
 
-
-def _get_celery_app():
-    """Return the Celery app singleton, creating it if needed.
-
-    Returns None when CELERY_BROKER_URL is not set or Celery is not installed.
-    """
-    global _celery_app
-    if _celery_app is not None:
-        return _celery_app
-
-    if not _BROKER_URL:
-        logger.debug("[pipeline_task] CELERY_BROKER_URL not set — Celery disabled, using threads")
-        return None
-
+if _BROKER_URL:
     try:
-        from celery import Celery  # type: ignore[import]
-        app = Celery(
+        from celery import Celery as _Celery  # type: ignore[import]
+        celery_app = _Celery(
             "aidevos",
             broker=_BROKER_URL,
             backend=_RESULT_BACKEND or None,
         )
-        app.conf.update(
+        celery_app.conf.update(
             task_serializer="json",
             accept_content=["json"],
             result_serializer="json",
@@ -70,12 +70,21 @@ def _get_celery_app():
             task_acks_late=True,          # re-queue if worker crashes
             worker_prefetch_multiplier=1,  # one pipeline per worker slot
         )
-        _celery_app = app
+        _celery_app = celery_app          # keep internal alias in sync
         logger.info("[pipeline_task] Celery configured: broker=%s", _BROKER_URL)
-        return app
     except ImportError:
         logger.warning("[pipeline_task] celery not installed — falling back to threads")
-        return None
+else:
+    logger.debug("[pipeline_task] CELERY_BROKER_URL not set — Celery disabled, using threads")
+
+
+def _get_celery_app():
+    """Return the Celery app singleton.
+
+    Kept for backward-compatibility with callers that use the function form.
+    Returns None when CELERY_BROKER_URL is not set or Celery is not installed.
+    """
+    return celery_app
 
 
 # --------------------------------------------------------------------------
@@ -121,7 +130,17 @@ def _define_celery_task(app):
     return run_pipeline
 
 
-_task_fn = None
+# Register the Celery task eagerly at module import time.
+#
+# WHY: A Celery worker process imports this module and then blocks waiting for
+# tasks from the broker. It never calls dispatch_pipeline(), so lazy
+# registration via _get_task() means the worker starts with ZERO registered
+# tasks and silently discards every incoming message.
+#
+# FIX: Call _define_celery_task() immediately after the Celery app is created.
+# _get_task() still works for dispatch_pipeline() — it finds _task_fn already
+# set and returns it without re-registering.
+_task_fn = _define_celery_task(celery_app) if celery_app is not None else None
 
 
 def _get_task():
@@ -129,6 +148,7 @@ def _get_task():
     global _task_fn
     if _task_fn is not None:
         return _task_fn
+    # Celery not configured at import time — check again in case env changed.
     app = _get_celery_app()
     if app is None:
         return None

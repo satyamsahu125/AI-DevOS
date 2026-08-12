@@ -12,7 +12,9 @@ from .knowledge_memory import KnowledgeMemory
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path(os.getenv("LEARNING_DB", "data/learning.sqlite"))
+# Phase 6 MIGRATE: anchored default — parents[2] from backend/app/memory/ = backend/.
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+_DEFAULT_DB_PATH = Path(os.getenv("LEARNING_DB", str(_DATA_DIR / "learning.sqlite")))
 
 
 @dataclass(slots=True)
@@ -35,6 +37,7 @@ class Trajectory:
     latency_ms: float
     recorded_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     project_id: str = ""
+    template_injected: bool = False   # P9-2b: True when TemplateEngine injected a template
 
 
 @dataclass(slots=True)
@@ -92,6 +95,11 @@ class LearningLoop:
         columns = [row[1] for row in cursor.fetchall()]
         if "project_id" not in columns:
             self._conn.execute("ALTER TABLE trajectories ADD COLUMN project_id TEXT NOT NULL DEFAULT ''")
+        # P9-2b: track whether TemplateEngine injected a structural template for this run.
+        if "template_injected" not in columns:
+            self._conn.execute(
+                "ALTER TABLE trajectories ADD COLUMN template_injected INTEGER NOT NULL DEFAULT 0"
+            )
         self._conn.commit()
 
     def record_trajectory(self, trajectory: Trajectory, project_id: str = "") -> None:
@@ -106,8 +114,9 @@ class LearningLoop:
                 """
                 INSERT INTO trajectories
                     (project_id, stage, task_description, artifact_summary, retry_count, approved,
-                     reviewer_feedback, agent_model, tokens_used, latency_ms, recorded_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     reviewer_feedback, agent_model, tokens_used, latency_ms, recorded_at,
+                     template_injected)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     eff_project_id,
@@ -121,6 +130,7 @@ class LearningLoop:
                     trajectory.tokens_used,
                     trajectory.latency_ms,
                     trajectory.recorded_at.isoformat(),
+                    int(trajectory.template_injected),
                 ),
             )
             self._conn.commit()
@@ -272,3 +282,167 @@ class LearningLoop:
                 (stage, limit),
             ).fetchall()
             return [row[0] for row in rows]
+
+    def get_trajectory_correlation(
+        self,
+        project_id: str = "",
+        stage: str = "",
+    ) -> list[dict]:
+        """Return approval statistics grouped by model profile (stage + agent_model).
+
+        Each result row is enriched with temperature and max_tokens from
+        STAGE_PROFILES so callers can correlate approval rates with the
+        temperature profile that was configured for each stage — without
+        requiring temperature to be stored in the trajectory rows themselves.
+
+        Args:
+            project_id: When non-empty, restrict results to this project only.
+            stage:      When non-empty, restrict results to this stage only.
+
+        Returns:
+            List of dicts sorted by (stage, temperature, model), each containing:
+                stage, provider, model, temperature, max_tokens,
+                total, approved, rejected, approval_rate.
+            Safe to expose via analytics API — no prompts, feedback, or credentials.
+        """
+        # Import here to avoid a circular dependency at module level.
+        from ..llm.model_router import STAGE_PROFILES
+
+        # Build the SQL predicate dynamically to avoid four near-identical queries.
+        conditions: list[str] = []
+        params: list[str] = []
+        if project_id:
+            conditions.append("project_id = ?")
+            params.append(project_id)
+        if stage:
+            conditions.append("stage = ?")
+            params.append(stage)
+
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        sql = f"""
+            SELECT stage, agent_model,
+                   COUNT(*) AS total,
+                   SUM(approved) AS approved_count
+            FROM trajectories
+            {where_clause}
+            GROUP BY stage, agent_model
+        """
+
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+
+        result: list[dict] = []
+        for stage_name, agent_model, total, approved_count in rows:
+            profile = STAGE_PROFILES.get(stage_name)
+            temperature = profile.temperature if profile is not None else None
+            max_tokens = profile.max_tokens if profile is not None else None
+            provider = profile.provider if profile is not None else ""
+            approved = int(approved_count or 0)
+            rejected = int(total) - approved
+            approval_rate = round(approved / int(total), 4) if total else 0.0
+            result.append({
+                "stage": stage_name,
+                "provider": provider,
+                "model": agent_model or "",
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "total": int(total),
+                "approved": approved,
+                "rejected": rejected,
+                "approval_rate": approval_rate,
+            })
+
+        # Deterministic ordering: stage → temperature (ascending) → model
+        result.sort(
+            key=lambda r: (
+                r["stage"],
+                r["temperature"] if r["temperature"] is not None else 0.0,
+                r["model"],
+            )
+        )
+        logger.debug(
+            "get_trajectory_correlation: project=%r stage=%r → %d groups",
+            project_id, stage, len(result),
+        )
+        return result
+
+    def get_template_impact(self, stage: str | None = None) -> list[dict]:
+        """Return per-stage approval statistics split by whether a template was injected.
+
+        Queries the ``trajectories`` table (which has had a ``template_injected``
+        column since P9-2b) and groups by (stage, template_injected), then pairs
+        each stage's injected/non-injected groups into a single summary row.
+
+        Args:
+            stage: When non-empty/non-None, restrict results to this stage only.
+                   Pass None or empty string to return all stages.
+
+        Returns:
+            List of dicts sorted by stage name, each containing:
+                stage                   — stage name
+                injected_count          — runs where template was injected
+                non_injected_count      — runs where no template was injected
+                injected_approved       — approved count for injected runs
+                non_injected_approved   — approved count for non-injected runs
+                injected_approval_rate  — float in [0.0, 1.0], 0.0 when count=0
+                non_injected_approval_rate — float in [0.0, 1.0], 0.0 when count=0
+
+            Safe to expose via the analytics API — no prompts, feedback, or
+            credentials are included.
+        """
+        conditions: list[str] = []
+        params: list[str] = []
+        if stage:
+            conditions.append("stage = ?")
+            params.append(stage)
+
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        sql = f"""
+            SELECT stage, template_injected,
+                   COUNT(*) AS total,
+                   SUM(approved) AS approved_count
+            FROM trajectories
+            {where_clause}
+            GROUP BY stage, template_injected
+        """
+
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+
+        # Collect rows keyed by stage, accumulating injected and non-injected buckets.
+        by_stage: dict[str, dict] = {}
+        for stage_name, injected_flag, total, approved_count in rows:
+            entry = by_stage.setdefault(stage_name, {
+                "stage": stage_name,
+                "injected_count": 0,
+                "non_injected_count": 0,
+                "injected_approved": 0,
+                "non_injected_approved": 0,
+            })
+            total = int(total)
+            approved = int(approved_count or 0)
+            if int(injected_flag):
+                entry["injected_count"] += total
+                entry["injected_approved"] += approved
+            else:
+                entry["non_injected_count"] += total
+                entry["non_injected_approved"] += approved
+
+        # Compute approval rates and assemble the final list.
+        result: list[dict] = []
+        for entry in by_stage.values():
+            ic = entry["injected_count"]
+            nc = entry["non_injected_count"]
+            entry["injected_approval_rate"] = (
+                round(entry["injected_approved"] / ic, 4) if ic else 0.0
+            )
+            entry["non_injected_approval_rate"] = (
+                round(entry["non_injected_approved"] / nc, 4) if nc else 0.0
+            )
+            result.append(entry)
+
+        result.sort(key=lambda r: r["stage"])
+        logger.debug(
+            "get_template_impact: stage=%r → %d stage entries", stage, len(result),
+        )
+        return result

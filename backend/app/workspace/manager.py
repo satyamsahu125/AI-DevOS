@@ -6,6 +6,7 @@ import os
 import shutil
 import threading
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,6 +31,34 @@ def _get_project_lock(project_id: str) -> threading.Lock:
         return _project_locks[project_id]
 
 
+def _atomic_replace(src: str, dst: Path, *, retries: int = 8, base_delay: float = 0.05) -> None:
+    """Rename src → dst atomically, retrying on Windows WinError 5.
+
+    os.replace() uses MoveFileExW on Windows, which fails with WinError 5
+    (Access Denied) when another thread holds dst open without
+    FILE_SHARE_DELETE (the default for Python's built-in open()).  A brief
+    retry loop is sufficient: the other reader will have closed the file
+    within a few milliseconds.
+
+    On POSIX the rename is always atomic; this function reduces to a single
+    os.replace() call there.
+    """
+    import sys
+    last_exc: Exception | None = None
+    for attempt in range(max(1, retries)):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError as exc:
+            # WinError 5 only — don't swallow genuine permission failures.
+            if sys.platform != "win32" or getattr(exc, "winerror", None) != 5:
+                raise
+            last_exc = exc
+            time.sleep(base_delay * (attempt + 1))
+    assert last_exc is not None
+    raise last_exc
+
+
 class WorkspaceManager:
     """Owns every project's on-disk workspace, keyed by project_id (not name).
 
@@ -41,7 +70,12 @@ class WorkspaceManager:
     """
 
     def __init__(self, root: Path | None = None) -> None:
-        self.root = root or Path(os.getenv("WORKSPACE_ROOT", "temp-workspace"))
+        # Always resolve to an absolute path.  tempfile.mkstemp() returns an
+        # absolute tmp_path even when dir= is relative, so os.replace(tmp_path,
+        # path) with a relative path on Windows triggers MoveFileExW with a
+        # mixed absolute/relative pair — causing WinError 5 (Access Denied).
+        raw = root or Path(os.getenv("WORKSPACE_ROOT", "temp-workspace"))
+        self.root = raw.resolve()
         self.layout = WorkspaceLayout(self.root)
         self.repository = WorkspaceRepository(self.root)
 
@@ -133,7 +167,19 @@ class WorkspaceManager:
         path = self.get_workspace_path(project_id) / "project.json"
         if not path.exists():
             return None
-        raw = path.read_text(encoding="utf-8")
+        # Retry on PermissionError: on Windows, os.replace() briefly holds an
+        # exclusive file lock during the rename phase of update_project_json().
+        # A concurrent read arriving in that 1-5 ms window raises PermissionError.
+        # Three attempts with 50 ms sleep is sufficient to outlast the rename.
+        raw: str = ""
+        for _attempt in range(3):
+            try:
+                raw = path.read_text(encoding="utf-8")
+                break
+            except PermissionError:
+                if _attempt == 2:
+                    raise
+                time.sleep(0.05)
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
@@ -168,7 +214,12 @@ class WorkspaceManager:
             try:
                 with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
                     json.dump(data, f, indent=2)
-                os.replace(tmp_path, path)
+                # On Windows, os.replace uses MoveFileExW which fails with
+                # WinError 5 (Access Denied) when another thread has
+                # project.json open without FILE_SHARE_DELETE (Python's
+                # default open() behaviour).  Retry briefly — the reader
+                # will have closed the file by then.
+                _atomic_replace(tmp_path, path)
             except Exception:
                 try:
                     os.unlink(tmp_path)

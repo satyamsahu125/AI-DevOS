@@ -12,7 +12,10 @@ from ..shared.enums.stage import Stage
 from ..shared.models.stage_artifact import StageArtifact
 from ..workspace.manager import WorkspaceManager
 
-_DEFAULT_DB_PATH = Path(os.getenv("MEMORY_DB_PATH", "memory/memory.db"))
+# Phase 6 MIGRATE: anchored default — parents[2] from backend/app/artifact/ = backend/.
+# Previous default "memory/memory.db" was relative and pointed to the wrong location.
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+_DEFAULT_DB_PATH = Path(os.getenv("MEMORY_DB_PATH", str(_DATA_DIR / "memory.sqlite")))
 
 
 class ArtifactManager:
@@ -42,6 +45,14 @@ class ArtifactManager:
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._ensure_schema()
+
+    def close(self) -> None:
+        """Close SQLite database connection to release file lock."""
+        if hasattr(self, "_conn") and self._conn:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
 
     def _ensure_schema(self) -> None:
         self._conn.execute(
@@ -86,6 +97,14 @@ class ArtifactManager:
         safety_flags = list(safety_flags or [])
         now = datetime.now(timezone.utc)
 
+        # Non-fatal: read current requirement version from project.json
+        requirement_version_id: str | None = None
+        try:
+            pj = self.workspace_manager.load_project_json(project_id) or {}
+            requirement_version_id = pj.get("current_requirement_version_id") or None
+        except Exception:
+            pass
+
         artifacts_dir = self.workspace_manager.get_workspace_path(project_id) / "artifacts"
         artifacts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -110,6 +129,7 @@ class ArtifactManager:
             "attempt": attempt,
             "content": content,
             "structured": structured_content,
+            "requirement_version_id": requirement_version_id,
         }
         json_text = json.dumps(json_body, indent=2)
         json_path.write_text(json_text, encoding="utf-8")
@@ -133,6 +153,7 @@ class ArtifactManager:
             safety_flags=safety_flags,
             project_id=project_id,
             attempt=attempt,
+            requirement_version_id=requirement_version_id,
         )
 
     def is_approved(self, project_id: str, stage: Stage, attempt: int) -> bool:
@@ -177,6 +198,7 @@ class ArtifactManager:
             structured_content=data.get("structured", {}),
             project_id=project_id,
             attempt=attempt,
+            requirement_version_id=data.get("requirement_version_id"),
         )
 
     def list_artifacts(self, project_id: str) -> list[StageArtifact]:
@@ -202,12 +224,13 @@ class ArtifactManager:
         return [self._row_to_artifact(project_id, stage_value, file_path, json_path, attempt) for stage_value, file_path, json_path, attempt in rows]
 
     def _row_to_artifact(self, project_id: str, stage_value: str, file_path: str, json_path: str, attempt: int) -> StageArtifact:
-        content, structured = "", {}
+        content, structured, requirement_version_id = "", {}, None
         path = Path(json_path)
         if path.exists():
             data = json.loads(path.read_text(encoding="utf-8"))
             content = data.get("content", "")
             structured = data.get("structured", {})
+            requirement_version_id = data.get("requirement_version_id")
         return StageArtifact(
             artifact_id="",
             name=stage_value,
@@ -217,4 +240,5 @@ class ArtifactManager:
             structured_content=structured,
             project_id=project_id,
             attempt=attempt,
+            requirement_version_id=requirement_version_id,
         )

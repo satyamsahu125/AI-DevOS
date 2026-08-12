@@ -13,6 +13,7 @@ from ..agents.factory import AgentFactory
 from ..agents.file_planner import FilePlannerAgent
 from ..agents.frontend import FrontendDeveloperAgent
 from ..agents.sprint_planner import SprintPlannerAgent
+from ..agents.sprint_delta import SprintDeltaAgent
 from ..artifact.manager import ArtifactManager
 from ..config.manager import ConfigurationManager
 from ..context.context import ContextManager
@@ -46,7 +47,6 @@ from ..workflow.engine import WorkflowEngine
 from ..workflow.execution_state import ExecutionStateRegistry
 from ..workflow.manager import WorkflowManager
 from ..workflow.retry_engine import IntelligentRetryEngine
-from ..workflow.retry_policy import RetryPolicy
 from ..execution.preview_manager import PreviewManager
 from ..workspace.dependency_pinner import DependencyPinner
 from ..workspace.file_registry import FileRegistry
@@ -208,8 +208,10 @@ class Container:
             logger.warning("container: ContextManager registration failed (non-fatal): %s", _ctx_exc)
             self._dependencies.register_singleton("context_manager", lambda: None)
         from ..llm.cost_tracker import CostTracker
-        # Phase 6: anchored path — safe when uvicorn is started from any directory.
-        _data_dir = Path(__file__).resolve().parents[3] / "data"
+        # Phase 6 MIGRATE: anchored path — parents[2] from backend/app/kernel/ = backend/.
+        # Fix: was parents[3] (AI-DevOS3/ project root, wrong for Docker).
+        # Now parents[2] = backend/, so _data_dir = backend/data/ — matches spec target.
+        _data_dir = Path(__file__).resolve().parents[2] / "data"
         _data_dir.mkdir(parents=True, exist_ok=True)
         self._dependencies.register_singleton(
             "cost_tracker",
@@ -218,34 +220,51 @@ class Container:
 
         # ── Intelligence Layer ────────────────────────────────────────────────
         # Phase 6: anchored path — safe when uvicorn is started from any directory.
-        self._dependencies.register_singleton(
-            "file_indexer",
-            lambda: FileIndexer(db_path=str(_data_dir / "file_index.db")),
-        )
-        self._dependencies.register_singleton(
-            "dependency_graph",
-            lambda: ProjectDependencyGraph(
+        # Phase 3 Task 4: factory functions replace bare lambdas so that:
+        #   (a) construction errors propagate — no silent swallowing,
+        #   (b) each component is validated non-None and logged at the
+        #       construction boundary, following the _build_prompt_analyzer pattern.
+
+        def _build_file_indexer():
+            obj = FileIndexer(db_path=str(_data_dir / "file_index.db"))
+            assert obj is not None, "FileIndexer construction returned None"
+            logger.info("container: FileIndexer initialized")
+            return obj
+
+        def _build_dependency_graph():
+            obj = ProjectDependencyGraph(
                 file_indexer=self._dependencies.resolve("file_indexer"),
-            ),
-        )
-        self._dependencies.register_singleton(
-            "code_summarizer",
-            lambda: CodeSummarizer(
+            )
+            assert obj is not None, "ProjectDependencyGraph construction returned None"
+            logger.info("container: ProjectDependencyGraph initialized")
+            return obj
+
+        def _build_code_summarizer():
+            obj = CodeSummarizer(
                 file_indexer=self._dependencies.resolve("file_indexer"),
-            ),
-        )
-        self._dependencies.register_singleton(
-            "context_orchestrator",
-            lambda: ContextOrchestrator(
+            )
+            assert obj is not None, "CodeSummarizer construction returned None"
+            logger.info("container: CodeSummarizer initialized")
+            return obj
+
+        def _build_context_orchestrator():
+            obj = ContextOrchestrator(
                 file_indexer=self._dependencies.resolve("file_indexer"),
                 dependency_graph=self._dependencies.resolve("dependency_graph"),
                 code_summarizer=self._dependencies.resolve("code_summarizer"),
                 knowledge_memory=self._dependencies.resolve("knowledge_memory"),
-                lesson_store=self._dependencies.resolve("lesson_store"),  # Phase 3: now properly registered
+                lesson_store=self._dependencies.resolve("lesson_store"),
                 artifact_manager=self._dependencies.resolve("artifact_manager"),
                 workspace_manager=self._dependencies.resolve("workspace_manager"),
-            ),
-        )
+            )
+            assert obj is not None, "ContextOrchestrator construction returned None"
+            logger.info("container: ContextOrchestrator initialized")
+            return obj
+
+        self._dependencies.register_singleton("file_indexer", _build_file_indexer)
+        self._dependencies.register_singleton("dependency_graph", _build_dependency_graph)
+        self._dependencies.register_singleton("code_summarizer", _build_code_summarizer)
+        self._dependencies.register_singleton("context_orchestrator", _build_context_orchestrator)
         self._dependencies.register_singleton(
             "sprint_monitor",
             lambda: SprintMonitor(
@@ -305,6 +324,14 @@ class Container:
             lambda: SprintPlannerAgent(llm_manager=self._dependencies.resolve("llm_manager")),
         )
         self._dependencies.register_singleton(
+            "sprint_delta_agent",
+            lambda: SprintDeltaAgent(
+                llm_manager=self._dependencies.resolve("llm_manager"),
+                artifact_manager=self._dependencies.resolve("artifact_manager"),
+                file_registry=self._dependencies.resolve("file_registry"),
+            ),
+        )
+        self._dependencies.register_singleton(
             "file_planner_agent",
             lambda: FilePlannerAgent(
                 llm_manager=self._dependencies.resolve("llm_manager"),
@@ -345,12 +372,12 @@ class Container:
             ),
         )
         def _build_workflow_engine():
-            engine = WorkflowEngine(
+            return WorkflowEngine(
                 execution_manager=self._dependencies.resolve("execution_manager"),
                 learning_loop=self._dependencies.resolve("learning_loop"),
                 artifact_manager=self._dependencies.resolve("artifact_manager"),
                 workspace_manager=self._dependencies.resolve("workspace_manager"),
-                retry_policy=RetryPolicy(max_retries=settings.runtime.retry_limit),
+                memory_manager=self._dependencies.resolve("memory_manager"),
                 event_log=self._dependencies.resolve("event_log"),
                 execution_state=self._dependencies.resolve("execution_state"),
                 broadcaster=self._dependencies.resolve("broadcaster"),
@@ -358,13 +385,9 @@ class Container:
                 config_manager=self._dependencies.resolve("configuration_manager"),
                 memory_orchestrator=self._dependencies.resolve("memory_orchestrator"),
                 retry_engine=self._dependencies.resolve("retry_engine"),
+                model_router=self._dependencies.resolve("model_router"),
+                template_engine=self._dependencies.resolve("template_engine"),
             )
-            # BUG-5 fix: wire ModelRouter and TemplateEngine (built but never called before).
-            # Set directly since WorkflowEngine.__init__ doesn't accept them as params (avoids
-            # breaking the constructor signature for existing tests).
-            engine.model_router = self._dependencies.resolve("model_router")
-            engine.template_engine = self._dependencies.resolve("template_engine")
-            return engine
 
         self._dependencies.register_singleton("workflow_engine", _build_workflow_engine)
         self._dependencies.register_singleton(
@@ -384,6 +407,7 @@ class Container:
                 file_indexer=self._dependencies.resolve("file_indexer"),
                 dep_graph=self._dependencies.resolve("dependency_graph"),
                 code_summarizer=self._dependencies.resolve("code_summarizer"),
+                workspace_manager=self._dependencies.resolve("workspace_manager"),
             ),
         )
         self._dependencies.register_singleton(
@@ -395,14 +419,16 @@ class Container:
                 agent_factory=self._dependencies.resolve("agent_factory"),
                 project_validator=self._dependencies.resolve("project_validator"),
                 impact_analyzer=self._dependencies.resolve("impact_analyzer"),
-                container=self,  # gives _run_sprint() access to DI-wired developer agents
+                container=self,
                 sprint_monitor=self._dependencies.resolve("sprint_monitor"),
                 domain_researcher=self._dependencies.resolve("domain_researcher_agent"),
                 config_manager=self._dependencies.resolve("configuration_manager"),
-                file_indexer=self._dependencies.resolve("file_indexer"),        # Phase 3: intelligence trigger
-                code_sandbox=self._dependencies.resolve("code_sandbox"),        # Phase 5: code execution sandbox
-                dependency_pinner=self._dependencies.resolve("dependency_pinner"),  # R2: pin dependency versions
-                preview_manager=self._dependencies.resolve("preview_manager"),      # R5: live app preview
+                file_indexer=self._dependencies.resolve("file_indexer"),
+                dependency_graph=self._dependencies.resolve("dependency_graph"),
+                code_summarizer=self._dependencies.resolve("code_summarizer"),
+                code_sandbox=self._dependencies.resolve("code_sandbox"),
+                dependency_pinner=self._dependencies.resolve("dependency_pinner"),
+                preview_manager=self._dependencies.resolve("preview_manager"),
             ),
         )
         self._dependencies.register_singleton(
@@ -475,7 +501,16 @@ class Container:
 
     @property
     def context_manager(self) -> ContextManager | None:
-        """Returns None — ContextManager is not wired into the live pipeline yet."""
+        """ContextManager singleton for Layer 3 semantic memory (BUG-5 fix, R1.9).
+
+        Provides cross-project patterns and lessons to MemoryOrchestrator via
+        MemoryOrchestrator._load_semantic() → ContextManager.build_context().
+        Wired into the live pipeline: WorkflowEngine → ContextAssembler →
+        MemoryOrchestrator → ContextManager.
+
+        Returns None only if construction failed during container build
+        (failure is logged at WARNING level in _register_singletons).
+        """
         return self._context
 
     @property

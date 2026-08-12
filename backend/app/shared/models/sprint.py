@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SprintStatus(str, Enum):
@@ -37,8 +37,25 @@ class SprintPlan(BaseModel):
     project_id: str
     total_sprints: int
     sprints: list[Sprint] = Field(default_factory=list)
-    created_at: datetime
-    rationale: str  # why split this way
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    rationale: str = ""  # why split this way; optional — LLMs often omit it
+    stale: bool = False  # True when a requirement change has invalidated this plan
+    requirement_version_id: str | None = None  # version that produced this plan
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def _ensure_utc(cls, v: object) -> datetime:
+        """Coerce naive datetimes to UTC; reject empty strings early."""
+        if v is None or v == "":
+            return datetime.now(timezone.utc)
+        if isinstance(v, str):
+            dt = datetime.fromisoformat(v)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v  # type: ignore[return-value]
 
 
 class SprintResult(BaseModel):

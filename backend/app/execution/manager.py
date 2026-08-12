@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from ..agents.factory import AgentFactory
 from ..artifact.manager import ArtifactManager
@@ -20,6 +21,20 @@ class ExecutionManager:
     ) -> None:
         """Wire the execution engine used to run a stage."""
         self.engine = ExecutionEngine(artifact_manager, agent_factory)
+
+    @property
+    def llm_manager(self) -> Any | None:
+        """Return the LLMManager shared by the agent factory, or None if unavailable.
+
+        WorkflowEngine already accesses execution_manager.llm_manager via
+        getattr() to set_context() and set_stage_profile() before each
+        execution. This property completes that access path so those calls
+        actually reach the LLM instead of silently returning None.
+        """
+        try:
+            return self.engine.pipeline.agent_factory._llm_manager
+        except AttributeError:
+            return None
 
     def execute_stage(self, project_id: str, stage_name: str, content: str, attempt: int = 1) -> ExecutionResult:
         """Execute stage_name with content (scoped to project_id) and return the resulting ExecutionResult."""

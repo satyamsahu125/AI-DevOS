@@ -16,6 +16,7 @@ from ..workflow.stage_lookup import resolve_stage_name
 from ..workspace.manager import WorkspaceManager
 from .dependencies import get_artifact_manager, get_project_manager, get_workflow_manager, get_workspace_manager
 from .middleware.jwt_auth import get_current_user
+from ..tasks.pipeline_task import dispatch_pipeline
 from ..shared.models.project import Project
 
 
@@ -32,15 +33,32 @@ router = APIRouter()
 
 
 def launch_pipeline_background(manager: WorkflowManager, project_id: str, req: str = "", skip_qa: bool = False, is_stage: bool = False, stage_name: str = "", comment_text: str = ""):
-    def _run():
-        try:
-            if is_stage:
+    """Launch pipeline execution in the background.
+
+    For full pipeline runs (is_stage=False) delegates to dispatch_pipeline(),
+    which uses Celery when CELERY_BROKER_URL is set and falls back to a daemon
+    thread when Redis/Celery is unavailable.
+
+    For stage-level runs (is_stage=True) uses a daemon thread directly — no
+    Celery task exists for single-stage execution.
+
+    Phase 6: threading.Thread for full pipeline runs replaced with dispatch_pipeline().
+    """
+    if is_stage:
+        # Single-stage run — no Celery task for this path; keep threading.
+        def _run_stage():
+            try:
                 manager.run_stage(project_id, stage_name, comment_text)
-            else:
-                manager.run(project_id, req, skip_qa)
-        except Exception as e:
-            logger.error("Pipeline crashed in background thread", exc_info=e)
-    threading.Thread(target=_run, daemon=True, name=f"workflow-{project_id}").start()
+            except Exception as exc:
+                logger.error(
+                    "[workflow] stage pipeline crashed: project_id=%s stage=%s error=%s",
+                    project_id, stage_name, exc,
+                    exc_info=True,
+                )
+        threading.Thread(target=_run_stage, daemon=True, name=f"workflow-{project_id}").start()
+    else:
+        # Full pipeline run — Celery when available, thread fallback otherwise.
+        dispatch_pipeline(manager, project_id, req, skip_qa)
 
 class DesignApprovalRequest(BaseModel):
     feedback: str | None = None
@@ -71,13 +89,9 @@ def start_workflow(
             "message": "Workflow is already running in background",
         }
 
-    def _run_pipeline():
-        try:
-            manager.run(request.project_id, content)
-        except Exception as e:
-            logger.error("Pipeline crashed in background thread", exc_info=e)
-
-    threading.Thread(target=_run_pipeline, daemon=True, name=f"workflow-{request.project_id}").start()
+    # Phase 6: replaced bare threading.Thread with dispatch_pipeline() so Celery
+    # is used when CELERY_BROKER_URL is configured, with a thread fallback otherwise.
+    dispatch_pipeline(manager, request.project_id, content)
     
     state = manager.workspace_manager.get_state(request.project_id)
     return {
@@ -316,8 +330,9 @@ def workflow_status(
                 inflated.append(s)
 
     # ── Progress ──────────────────────────────────────────────────────────────
-    # 20 total stages: 12 in STAGE_ORDER (workflow.json) + 8 non-STAGE_ORDER.
-    FULL_PIPELINE_STAGE_COUNT = 20
+    # 21 total stages: 13 in STAGE_ORDER (workflow.json, incl. clarification)
+    # + 8 non-STAGE_ORDER sprint-internal stages.
+    FULL_PIPELINE_STAGE_COUNT = 21
     total_stages = FULL_PIPELINE_STAGE_COUNT
     if state_str in ("deployable", "done"):
         progress_percent = 100
@@ -606,8 +621,14 @@ def get_pending_approval(
                 if art and art.content:
                     artifact_preview = art.content[:500]
                 break
-    except Exception:
-        pass
+    except Exception as _preview_exc:
+        logger.warning(
+            "workflow: could not load artifact preview for project %s stage %s: %s",
+            project_id,
+            curr_stage,
+            _preview_exc,
+            exc_info=True,
+        )
 
     return {
         "stage": curr_stage,

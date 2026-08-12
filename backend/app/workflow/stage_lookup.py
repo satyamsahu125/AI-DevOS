@@ -33,6 +33,10 @@ _REGISTRY_KEY_TO_STAGE: dict[str, Stage] = {
     "integration": Stage.Integration,
     "integration_developer": Stage.Integration,
     "integrationdeveloper": Stage.Integration,
+    # SprintDeltaPlanner
+    "sprint_delta": Stage.SprintDelta,
+    "sprintdelta": Stage.SprintDelta,
+    "sprint_delta_planner": Stage.SprintDelta,
 }
 
 

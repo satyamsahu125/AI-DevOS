@@ -93,9 +93,9 @@ async def get_project_integrations(project_id: str) -> dict[str, Any]:
     Reads from the artifact store if the Integration stage has run.
     Falls back to keyword detection from memory if the artifact is missing.
     """
-    from ..kernel.container import container
+    from .dependencies import get_container
     try:
-        artifact_manager = container.resolve("artifact_manager")
+        artifact_manager = get_container().resolve("artifact_manager")
         # Integration artifact is stored as "integration-output" for the project
         artifact = artifact_manager.get_latest(project_id, "integration-output")
         if artifact is not None:
@@ -126,10 +126,10 @@ async def get_project_integrations(project_id: str) -> dict[str, Any]:
 @router.get("/projects/{project_id}/integrations/env-vars")
 async def get_project_env_vars(project_id: str) -> dict[str, Any]:
     """Return the full list of required environment variables for this project's integrations."""
-    from ..kernel.container import container
+    from .dependencies import get_container
     detected: list[str] = []
     try:
-        artifact_manager = container.resolve("artifact_manager")
+        artifact_manager = get_container().resolve("artifact_manager")
         artifact = artifact_manager.get_latest(project_id, "integration-output")
         if artifact is not None:
             structured = getattr(artifact, "structured_content", None) or {}

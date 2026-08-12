@@ -90,12 +90,14 @@ class ImpactAnalyzer:
         file_indexer=None,
         dep_graph=None,
         code_summarizer=None,
+        workspace_manager=None,
     ) -> None:
         self.llm = llm_manager
         self.artifacts = artifact_manager
         self._file_indexer = file_indexer
         self._dep_graph = dep_graph
         self._code_summarizer = code_summarizer
+        self._workspace_manager = workspace_manager
 
     def analyze(
         self,
@@ -161,7 +163,7 @@ class ImpactAnalyzer:
             ),
             safe_stages=safe_stages,
             affected_files=affected_files[:20],
-            sprints_to_replan=[1] if needs_replan else [],
+            sprints_to_replan=self._compute_sprints_to_replan(project_id) if needs_replan else [],
             estimated_rerun_time=f"~{len(all_affected)} stages",
             explanation=explanation,
             can_preserve=safe_stages,
@@ -268,7 +270,7 @@ Example: add_feature
                     "You classify software requirement changes. "
                     "Reply with only the type name."
                 ),
-            ).strip().lower()
+            ).content.strip().lower()
 
             valid_types = CHANGE_TYPE_IMPACT.keys()
             if result in valid_types:
@@ -325,6 +327,43 @@ Example: add_feature
                 if isinstance(planned, list):
                     files.extend(planned[:5])
         return files
+
+    def _compute_sprints_to_replan(self, project_id: str) -> list[int]:
+        """Return sprint numbers not yet completed, sorted ascending.
+
+        Reads sprint state from project.json via workspace_manager:
+          - sprint_plan.sprints[].sprint_number — all planned sprints
+          - completed_sprints                   — sprint numbers already done
+
+        A sprint is included if its number does NOT appear in completed_sprints.
+        This is deterministic: identical project state → identical result.
+
+        Returns [] when workspace_manager is absent, or when no sprint_plan
+        exists yet (i.e. the sprint planner stage has not run).
+        """
+        if self._workspace_manager is None:
+            return []
+        try:
+            data = self._workspace_manager.load_project_json(project_id) or {}
+            sprint_plan_data = data.get("sprint_plan")
+            if not sprint_plan_data:
+                return []
+            sprints = sprint_plan_data.get("sprints", [])
+            completed: set[int] = set(data.get("completed_sprints") or [])
+            return sorted(
+                s["sprint_number"]
+                for s in sprints
+                if isinstance(s.get("sprint_number"), int)
+                and s["sprint_number"] not in completed
+            )
+        except Exception as exc:
+            logger.warning(
+                "[ImpactAnalyzer] _compute_sprints_to_replan failed "
+                "(returning []): project=%s error=%s",
+                project_id,
+                exc,
+            )
+            return []
 
     def _build_explanation(
         self,

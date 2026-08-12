@@ -81,14 +81,34 @@ class CodeSandbox:
     # Public API
     # ------------------------------------------------------------------
 
-    def run(self, project_id: str, sprint: int = 0) -> SandboxResult:
-        """Run lint + build + test for project_id's generated code.
+    def run(
+        self,
+        project_id: str,
+        sprint: int = 0,
+        *,
+        require_execution: bool = False,
+    ) -> SandboxResult:
+        """Run install + lint + build + test for project_id's generated code.
 
-        Returns SandboxResult with all three checks populated. Stops after
-        build failure (no point testing unimportable code). Non-fatal.
+        Execution order: install → lint → build → test.
+        Stops after install failure (no point building without dependencies).
+        Stops after build failure (no point testing unimportable code).
+        Non-fatal: any exception is caught, logged, and returned as a failed check.
+
+        Parameters
+        ----------
+        require_execution:
+            When True, always runs even if SANDBOX_ENABLED=false.
+            SANDBOX_ENABLED then controls isolation only (Docker vs subprocess),
+            not whether execution happens.  Use this flag when sprint verification
+            is unconditionally required regardless of the operator's preference
+            for Docker isolation.
         """
-        logger.info("[CodeSandbox] run: project=%s sprint=%d enabled=%s", project_id, sprint, self._enabled)
-        if not self._enabled:
+        logger.info(
+            "[CodeSandbox] run: project=%s sprint=%d enabled=%s require_execution=%s",
+            project_id, sprint, self._enabled, require_execution,
+        )
+        if not self._enabled and not require_execution:
             return SandboxResult.disabled(project_id, sprint)
 
         project_dir = self._resolve_project_dir(project_id)
@@ -106,12 +126,34 @@ class CodeSandbox:
 
         result = SandboxResult(project_id=project_id, sprint=sprint, stack=stack, enabled=True)
 
+        # ── Step 1: Install dependencies ────────────────────────────────────
+        try:
+            result.install = self.install(project_dir, stack)
+        except Exception as exc:
+            logger.warning("[CodeSandbox] install failed (non-fatal): %s", exc)
+            result.install = BuildResult(success=False, errors=[str(exc)])
+
+        if not result.install.success:
+            logger.info(
+                "[CodeSandbox] stopping after install failure, skipping lint/build/test: project=%s",
+                project_id,
+            )
+            # Surface install failure as build failure so the sprint knows it failed.
+            result.build = BuildResult(
+                success=False,
+                errors=result.install.errors,
+                duration_ms=result.install.duration_ms,
+            )
+            return result
+
+        # ── Step 2: Lint ─────────────────────────────────────────────────────
         try:
             result.lint = self.lint(project_dir, stack)
         except Exception as exc:
             logger.warning("[CodeSandbox] lint failed (non-fatal): %s", exc)
             result.lint = LintResult(errors=[{"file": "?", "line": 0, "message": str(exc)}], error_count=1)
 
+        # ── Step 3: Build ────────────────────────────────────────────────────
         try:
             result.build = self.build(project_dir, stack)
         except Exception as exc:
@@ -119,9 +161,10 @@ class CodeSandbox:
             result.build = BuildResult(success=False, errors=[str(exc)])
 
         if not result.build.success:
-            logger.info("[CodeSandbox] stopping after build failure, skipping tests")
+            logger.info("[CodeSandbox] stopping after build failure, skipping tests: project=%s", project_id)
             return result
 
+        # ── Step 4: Test ─────────────────────────────────────────────────────
         try:
             result.test = self.test(project_dir, stack)
         except Exception as exc:
@@ -129,8 +172,9 @@ class CodeSandbox:
             result.test = TestResult(total=0, failures=[{"test_name": "?", "error": str(exc)}])
 
         logger.info(
-            "[CodeSandbox] complete: project=%s lint_errors=%d tests=%d/%d build=%s",
-            project_id, result.lint.error_count, result.test.passed, result.test.total, result.build.success,
+            "[CodeSandbox] complete: project=%s lint_errors=%d tests=%d/%d build=%s install=%s",
+            project_id, result.lint.error_count, result.test.passed, result.test.total,
+            result.build.success, result.install.success,
         )
         return result
 
@@ -223,6 +267,25 @@ class CodeSandbox:
             return self._build_node(project_dir, started)
         return BuildResult(success=True)  # unknown — assume ok
 
+    def install(self, project_dir: Path, stack: str) -> BuildResult:
+        """Install project dependencies and return a BuildResult.
+
+        Python: ``pip install -r requirements.txt`` (or pyproject.toml).
+        Node: ``npm install``.
+        Unknown stack: no-op (returns success so the pipeline continues).
+
+        The result is a BuildResult — success=False means installation failed
+        and the sprint should be considered broken.
+        """
+        started = time.time()
+        if stack == "python":
+            return self._install_python(project_dir, started)
+        if stack == "node":
+            return self._install_node(project_dir, started)
+        # Unknown stack — nothing to install; do not block.
+        logger.debug("[CodeSandbox] install: unknown stack, skipping: %s", project_dir)
+        return BuildResult(success=True, duration_ms=0)
+
     def test(self, project_dir: Path, stack: str) -> TestResult:
         """Run test suite and return TestResult."""
         started = time.time()
@@ -235,6 +298,90 @@ class CodeSandbox:
     # ------------------------------------------------------------------
     # Private helpers — Python stack
     # ------------------------------------------------------------------
+
+    def _install_python(self, project_dir: Path, started: float) -> BuildResult:
+        """Install Python dependencies via pip.
+
+        Looks for requirements.txt, then pyproject.toml.  If neither exists,
+        returns success (no deps to install).  Captures stderr so BugAnalyst
+        can read the exact pip error when packages are missing or incompatible.
+        """
+        req_file = self._find_requirements_file(project_dir)
+        if req_file is None:
+            logger.debug("[CodeSandbox] _install_python: no requirements file found, skipping")
+            return BuildResult(success=True, duration_ms=0)
+
+        cmd = ["pip", "install", "-r", str(req_file), "--quiet"]
+        logger.info("[CodeSandbox] _install_python: pip install -r %s", req_file.name)
+        proc = self._run_subprocess(cmd, cwd=project_dir)
+        ms = int((time.time() - started) * 1000)
+
+        if proc.returncode == 0:
+            return BuildResult(success=True, duration_ms=ms, stdout=proc.stdout or "")
+
+        # Collect the most relevant error lines (cap at 20 to avoid token overflow)
+        raw_errors = (proc.stderr or proc.stdout or "").splitlines()
+        errors = [ln for ln in raw_errors if ln.strip()][:20]
+        logger.warning("[CodeSandbox] pip install failed (exit=%d): %s", proc.returncode, errors[:3])
+        return BuildResult(
+            success=False,
+            errors=errors or [f"pip install exited with code {proc.returncode}"],
+            duration_ms=ms,
+            stderr=proc.stderr or "",
+        )
+
+    def _install_node(self, project_dir: Path, started: float) -> BuildResult:
+        """Install Node dependencies via npm install.
+
+        Requires a package.json at project root (or one level deep).
+        If no package.json is found, returns success (no deps to install).
+        """
+        pkg_json = self._find_package_json(project_dir)
+        if pkg_json is None:
+            logger.debug("[CodeSandbox] _install_node: no package.json found, skipping")
+            return BuildResult(success=True, duration_ms=0)
+
+        install_dir = pkg_json.parent
+        cmd = ["npm", "install", "--loglevel=error"]
+        logger.info("[CodeSandbox] _install_node: npm install in %s", install_dir)
+        proc = self._run_subprocess(cmd, cwd=install_dir)
+        ms = int((time.time() - started) * 1000)
+
+        if proc.returncode == 0:
+            return BuildResult(success=True, duration_ms=ms)
+
+        raw_errors = (proc.stderr or proc.stdout or "").splitlines()
+        errors = [ln for ln in raw_errors if ln.strip()][:20]
+        logger.warning("[CodeSandbox] npm install failed (exit=%d): %s", proc.returncode, errors[:3])
+        return BuildResult(
+            success=False,
+            errors=errors or [f"npm install exited with code {proc.returncode}"],
+            duration_ms=ms,
+            stderr=proc.stderr or "",
+        )
+
+    def _find_requirements_file(self, project_dir: Path) -> Path | None:
+        """Find requirements.txt or pyproject.toml at root or one level deep."""
+        candidates = [project_dir]
+        if project_dir.is_dir():
+            candidates.extend(c for c in project_dir.iterdir() if c.is_dir())
+        for candidate in candidates:
+            for name in ("requirements.txt", "pyproject.toml"):
+                p = candidate / name
+                if p.exists():
+                    return p
+        return None
+
+    def _find_package_json(self, project_dir: Path) -> Path | None:
+        """Find package.json at root or one level deep."""
+        candidates = [project_dir]
+        if project_dir.is_dir():
+            candidates.extend(c for c in project_dir.iterdir() if c.is_dir())
+        for candidate in candidates:
+            p = candidate / "package.json"
+            if p.exists():
+                return p
+        return None
 
     def _lint_python(self, project_dir: Path, started: float) -> LintResult:
         """Run ruff check. Falls back to flake8 if ruff not available."""
@@ -431,11 +578,18 @@ class CodeSandbox:
         return errors
 
     def _resolve_project_dir(self, project_id: str) -> Path | None:
-        """Resolve the generated project directory for project_id."""
+        """Resolve the generated project directory for project_id.
+
+        Always returns an absolute (resolved) Path so that paths produced by
+        rglob() are also absolute and can safely be passed to subprocess calls
+        that set cwd= — without this, subprocess interprets the rglob-relative
+        path relative to the subprocess's own cwd, producing a doubled path
+        like project_dir/project_dir/… that does not exist ([Errno 2]).
+        """
         if self._workspace is None:
             return None
         try:
-            ws_path = self._workspace.get_workspace_path(project_id)
+            ws_path = Path(self._workspace.get_workspace_path(project_id)).resolve()
             project_dir = ws_path / "project"
             if project_dir.exists():
                 return project_dir

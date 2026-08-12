@@ -12,14 +12,22 @@ from typing import Any
 import hnswlib
 import numpy as np
 
+from .secret_scrubber import SecretScrubber as _SecretScrubber
+
 logger = logging.getLogger(__name__)
+
+# Phase 7: shared scrubber instance — scrubs text BEFORE embedding and
+# SQLite persistence so secrets never enter the vector index or knowledge DB.
+_scrubber = _SecretScrubber()
 
 _EMBEDDING_DIM = 384
 _MODEL_NAME = "all-MiniLM-L6-v2"
 _DEFAULT_MAX_ELEMENTS = 1000
 
-_DEFAULT_DB_PATH = Path(os.getenv("KNOWLEDGE_DB", "data/knowledge.sqlite"))
-_DEFAULT_INDEX_PATH = Path(os.getenv("KNOWLEDGE_INDEX", "data/knowledge.hnsw"))
+# Phase 6 MIGRATE: anchored defaults — parents[2] from backend/app/memory/ = backend/.
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+_DEFAULT_DB_PATH = Path(os.getenv("KNOWLEDGE_DB", str(_DATA_DIR / "knowledge.sqlite")))
+_DEFAULT_INDEX_PATH = Path(os.getenv("KNOWLEDGE_INDEX", str(_DATA_DIR / "knowledge.hnsw")))
 
 # Shared across instances in this process: the sentence-transformers model is
 # expensive to load (seconds, real torch weights), so every KnowledgeMemory
@@ -135,8 +143,16 @@ class KnowledgeMemory:
 
         Re-storing under an existing key replaces it: the old vector is
         removed from the HNSW index first, so there's no stale/duplicate entry.
+
+        Phase 7 — secret scrubbing:
+        The value is sanitised by SecretScrubber BEFORE embedding, SQLite
+        insertion, or HNSW indexing.  If the scrubber itself raises, the call
+        is aborted to prevent unredacted secrets from reaching the store.
         """
         with self._lock:
+            # Scrub BEFORE any I/O — must be the first operation on value.
+            value = _scrubber.scrub_or_raise(value)
+
             logger.debug("store: key=%s category=%s", key, category)
             existing_id = self._get_id_by_key(key)
             if existing_id is not None:

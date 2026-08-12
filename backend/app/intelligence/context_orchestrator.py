@@ -92,6 +92,16 @@ class ContextOrchestrator:
 
         package = ContextPackage(stage=stage, task=task_description)
 
+        # Load project.json once; used by both artifact staleness check and
+        # requirement-changes injection below.  Non-fatal if unavailable.
+        pj: dict = {}
+        current_version_id: str | None = None
+        try:
+            pj = self.workspace.load_project_json(project_id) or {}
+            current_version_id = pj.get("current_requirement_version_id") or None
+        except Exception as exc:
+            logger.debug("project.json load skipped: %s", exc)
+
         # 1. Compact project overview (always)
         package.project_overview = self.summarizer.build_project_overview(
             project_id, max_files=15
@@ -113,8 +123,10 @@ class ContextOrchestrator:
                     project_id, relevant_files
                 )
 
-        # 4. Prerequisite stage artifacts
-        package.stage_artifacts = self._load_stage_artifacts(project_id, stage)
+        # 4. Prerequisite stage artifacts (stale artifacts are excluded)
+        package.stage_artifacts = self._load_stage_artifacts(
+            project_id, stage, current_version_id=current_version_id
+        )
 
         # 5. Past patterns (KnowledgeMemory semantic search)
         try:
@@ -142,9 +154,8 @@ class ContextOrchestrator:
         except Exception as exc:
             logger.debug("Lesson load skipped: %s", exc)
 
-        # 7. Requirement changes
+        # 7. Requirement changes (reuses already-loaded pj)
         try:
-            pj = self.workspace.load_project_json(project_id) or {}
             changes = pj.get("requirement_changes", [])
             if changes:
                 package.requirement_changes = [
@@ -163,20 +174,84 @@ class ContextOrchestrator:
         return package
 
     def get_project_state(self, project_id: str) -> dict:
-        """Return a lightweight dict summary of project intelligence state.
+        """Return structured intelligence state for *project_id*.
 
-        Never returns None — always returns a dict (may be empty `{}`).
-        Called by MemoryOrchestrator._load_intelligence() for Layer 4 assembly.
+        Always returns a dict with all required fields — never None, never a
+        partial dict.  Consumers check ``state["is_populated"]`` before using
+        file-level data so Sprint 1 behaviour is preserved: the layer simply
+        reports ``is_populated=False`` until the first ``index_project()`` pass.
+
+        Fields
+        ------
+        files        List of indexed file paths; empty list before first sprint.
+        symbols      Flat list of all class and function names across files.
+        dependencies Reverse dependency graph ``{file: [files that import it]}``
+                     as returned by ``ProjectDependencyGraph.build()``.
+        summaries    Dict ``{file_path: one-line summary}`` built via
+                     ``CodeSummarizer.summarize_file(detail_level="minimal")``.
+        indexed_at   ISO-8601 timestamp of the most recently indexed file, or
+                     empty string when no files are indexed yet.
+        is_populated ``True`` when at least one file is in the index.
+
+        Called by ``MemoryOrchestrator._load_intelligence()`` for Layer 4 assembly.
         """
+        _empty: dict = {
+            "files": [],
+            "symbols": [],
+            "dependencies": {},
+            "summaries": {},
+            "indexed_at": "",
+            "is_populated": False,
+        }
         try:
-            overview = self.summarizer.build_project_overview(project_id, max_files=10)
+            indexed = self.indexer.get_project_index(project_id)
+            if not indexed:
+                return _empty
+
+            file_paths = [f.file_path for f in indexed]
+
+            # Collect all class and function names across the project
+            symbols: list[str] = []
+            for f in indexed:
+                symbols.extend(f.classes)
+                symbols.extend(f.functions)
+
+            # Reverse dependency graph — non-fatal, falls back to empty dict
+            dependencies: dict = {}
+            try:
+                dependencies = self.dep_graph.build(project_id)
+            except Exception as _dep_exc:
+                logger.debug(
+                    "get_project_state: dep_graph.build skipped for %s: %s",
+                    project_id, _dep_exc,
+                )
+
+            # Per-file one-line summaries — individual file errors are skipped
+            summaries: dict[str, str] = {}
+            for fp in file_paths:
+                try:
+                    summaries[fp] = self.summarizer.summarize_file(
+                        project_id, fp, detail_level="minimal"
+                    )
+                except Exception as _sum_exc:
+                    logger.debug(
+                        "get_project_state: summarize_file skipped for %s/%s: %s",
+                        project_id, fp, _sum_exc,
+                    )
+
+            indexed_at = max((f.last_updated for f in indexed), default="")
+
             return {
-                "project_overview": overview or "",
-                "file_count": len(getattr(self.indexer, "_index", {}).get(project_id, {})),
+                "files": file_paths,
+                "symbols": symbols,
+                "dependencies": dependencies,
+                "summaries": summaries,
+                "indexed_at": indexed_at,
+                "is_populated": True,
             }
         except Exception as exc:
             logger.debug("get_project_state failed for %s: %s", project_id, exc)
-            return {}
+            return _empty
 
     # ------------------------------------------------------------------
     # Prompt formatting
@@ -227,9 +302,20 @@ class ContextOrchestrator:
     # ------------------------------------------------------------------
 
     def _load_stage_artifacts(
-        self, project_id: str, current_stage: str
+        self,
+        project_id: str,
+        current_stage: str,
+        *,
+        current_version_id: str | None = None,
     ) -> dict[str, str]:
-        """Load and truncate prerequisite stage artifacts."""
+        """Load and truncate prerequisite stage artifacts.
+
+        Artifacts whose ``requirement_version_id`` does not match
+        ``current_version_id`` are considered STALE and excluded from context.
+        Legacy artifacts (no ``requirement_version_id``) are always included for
+        backward compatibility.  When ``current_version_id`` is None the
+        staleness check is skipped entirely.
+        """
         needed = _STAGE_NEEDS.get(current_stage, [])
         result: dict[str, str] = {}
 
@@ -248,11 +334,20 @@ class ContextOrchestrator:
                 if stage_enum is None:
                     continue
                 art = self.artifacts.get_artifact(project_id, stage_enum)
-                if art and art.content:
-                    content = art.content
-                    if len(content) > 2000:
-                        content = content[:2000] + "\n...[truncated]"
-                    result[stage_name] = content
+                if not art or not art.content:
+                    continue
+                if art.is_stale(current_version_id):
+                    logger.info(
+                        "Stale artifact excluded from context: project=%s stage=%s "
+                        "artifact_version=%s current_version=%s",
+                        project_id, stage_name,
+                        art.requirement_version_id, current_version_id,
+                    )
+                    continue
+                content = art.content
+                if len(content) > 2000:
+                    content = content[:2000] + "\n...[truncated]"
+                result[stage_name] = content
             except Exception as exc:
                 logger.debug("Artifact load skipped for %s: %s", stage_name, exc)
 

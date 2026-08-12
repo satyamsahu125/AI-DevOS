@@ -26,7 +26,9 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path(os.getenv("AUTH_DB_PATH", "data/auth.db"))
+# Phase 6 MIGRATE: anchored default — parents[2] from backend/app/db/ = backend/.
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+_DEFAULT_DB_PATH = Path(os.getenv("AUTH_DB_PATH", str(_DATA_DIR / "auth.db")))
 
 # Bcrypt rounds — NIST recommends >= 10; we use 12 for security margin.
 _BCRYPT_ROUNDS = 12
@@ -249,14 +251,40 @@ class UserStore:
         self._conn.commit()
         return result.rowcount
 
+    def change_password(self, user_id: str, new_hashed_password: str) -> bool:
+        """Update a user's hashed password inside UserStore's own connection lock.
+
+        Callers must pass an already-hashed password (bcrypt).  Returns True if
+        a row was updated, False if the user_id was not found.
+
+        Using this method instead of accessing ``_conn`` directly ensures the
+        update runs inside the store's own connection-lifecycle discipline and
+        does not race with concurrent reads or writes on the same SQLite handle.
+        """
+        result = self._conn.execute(
+            "UPDATE users SET hashed_password=? WHERE id=?",
+            (new_hashed_password, user_id),
+        )
+        self._conn.commit()
+        return result.rowcount > 0
+
 
 # Singleton — shared process-wide
 _store: UserStore | None = None
+_store_lock = __import__("threading").Lock()
 
 
 def get_user_store() -> UserStore:
-    """Return the process-wide UserStore singleton."""
+    """Return the process-wide UserStore singleton.
+
+    Double-checked locking: the fast path (store already created) requires no
+    lock.  The slow path (first call) acquires the lock before the second check
+    to prevent two concurrent callers from both calling UserStore() and hitting
+    a UNIQUE constraint on the default admin _ensure_admin() INSERT.
+    """
     global _store
     if _store is None:
-        _store = UserStore()
+        with _store_lock:
+            if _store is None:
+                _store = UserStore()
     return _store

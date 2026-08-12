@@ -20,6 +20,7 @@ from .registry import AgentRegistry
 from .resolver import AgentResolver
 from .retro import RetroAgent
 from .scrum_master import ScrumMasterAgent
+from .sprint_delta import SprintDeltaAgent
 from .security import SecurityAgent
 from .sprint_deploy import SprintDeployAgent
 from .sprint_planner import SprintPlannerAgent
@@ -69,6 +70,7 @@ class AgentFactory:
         self.registry.register("clarification", ClarificationAgent)
         self.registry.register("sprint_planner", SprintPlannerAgent)
         self.registry.register("scrum_master", ScrumMasterAgent)
+        self.registry.register("sprint_delta", SprintDeltaAgent)
         self.registry.register("tech_lead", TechLeadAgent)
         self.registry.register("bug_analyst", BugAnalystAgent)
         # sprint_deploy / sprint_review are invoked directly by WorkflowManager._run_sprint

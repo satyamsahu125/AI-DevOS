@@ -72,6 +72,13 @@ class AgentPerformanceScorer:
             else "needs_improvement"
         )
 
+        # Flag for model escalation: chronic quality issues where retrying with the
+        # same model is unlikely to help — IntelligentRetryEngine reads this flag
+        # via _effective_max_retries() to log a warning and (in future) route to
+        # a more capable model.  Written to memory as part of the score JSON so
+        # the engine can read it without an extra LearningLoop round-trip.
+        needs_model_escalation = quality == "needs_improvement" and avg_retries > 1.5
+
         result = {
             "stage": stage,
             "score": round(composite, 3),
@@ -81,6 +88,7 @@ class AgentPerformanceScorer:
             "avg_retries": round(avg_retries, 2),
             "total_runs": total,
             "recommendation": self._recommendation(quality, avg_retries),
+            "needs_model_escalation": needs_model_escalation,
         }
         # Persist score to memory so IntelligentRetryEngine can read it without
         # querying the LearningLoop on every decision (avoids repeated DB round-trips).

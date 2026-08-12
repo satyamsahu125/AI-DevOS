@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from ..llm.cost_tracker import get_shared_cost_tracker, TOKEN_COST_PER_1K
 
@@ -236,6 +236,18 @@ async def get_stage_analytics(stage_name: str) -> dict[str, Any]:
         avg_tokens = 0
         avg_latency_ms = 0
 
+    # P9-2a: include ModelRouter profile metadata so callers can confirm which
+    # temperature / max_tokens profile is active for this stage.
+    from ..llm.model_router import STAGE_PROFILES
+    profile = STAGE_PROFILES.get(stage_name)
+    model_profile: dict = {}
+    if profile is not None:
+        model_profile = {
+            "provider": profile.provider,
+            "temperature": profile.temperature,
+            "max_tokens": profile.max_tokens,
+        }
+
     return {
         "stage": stage_name,
         "total_runs": perf.total if perf else (cost.calls if cost else 0),
@@ -244,12 +256,149 @@ async def get_stage_analytics(stage_name: str) -> dict[str, Any]:
         "avg_tokens": avg_tokens or (round(perf.avg_tokens, 0) if perf else 0),
         "avg_latency_ms": avg_latency_ms or (round(perf.avg_latency, 0) if perf else 0),
         "common_failures": failure_patterns,
+        "model_profile": model_profile,          # P9-2a: R9 exit criterion
     }
 
 
 # ---------------------------------------------------------------------------
 # GET /analytics/learning
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# GET /analytics/model-correlation   (P9-2a)
+# ---------------------------------------------------------------------------
+
+@router.get("/api/analytics/model-correlation")
+@router.get("/analytics/model-correlation")
+async def get_model_correlation(
+    project_id: str = Query(default="", description="Filter to a single project (empty = all projects)"),
+    stage: str = Query(default="", description="Filter to a single stage (empty = all stages)"),
+) -> dict[str, Any]:
+    """Approval-rate correlation by model profile (stage × temperature × model).
+
+    Queries persisted LearningLoop trajectory data and annotates each group
+    with the ModelRouter temperature/max_tokens profile for that stage.
+    Results are grouped by (stage, agent_model) and sorted deterministically.
+
+    This endpoint exposes only analytics metadata — no prompts, feedback text,
+    API keys, or sensitive context are included in the response.
+
+    Query parameters:
+        project_id: When provided, restrict correlation to this project only.
+        stage:      When provided, restrict correlation to this stage only.
+    """
+    ll = _get_learning_loop()
+    if ll is None:
+        return {
+            "project_id": project_id or None,
+            "stage": stage or None,
+            "groups": [],
+            "total_trajectories": 0,
+        }
+
+    try:
+        groups = ll.get_trajectory_correlation(project_id=project_id, stage=stage)
+    except Exception as exc:
+        logger.warning("[analytics] model_correlation failed: %s", exc)
+        groups = []
+
+    total = sum(g["total"] for g in groups)
+    return {
+        "project_id": project_id or None,
+        "stage": stage or None,
+        "groups": groups,
+        "total_trajectories": total,
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /analytics/profiles   (P9-2a)
+# ---------------------------------------------------------------------------
+
+@router.get("/api/analytics/profiles")
+@router.get("/analytics/profiles")
+async def get_model_profiles() -> dict[str, Any]:
+    """Return all ModelRouter stage profiles with validation status.
+
+    Useful for confirming which temperature / max_tokens profile is active
+    per stage and verifying that no profile violates documented constraints.
+    """
+    from ..llm.model_router import STAGE_PROFILES, validate_all_stage_profiles
+
+    validation_errors = validate_all_stage_profiles()
+    profiles_out = {}
+    for stage_name, profile in sorted(STAGE_PROFILES.items()):
+        profiles_out[stage_name] = {
+            "provider": profile.provider,
+            "model": profile.model,
+            "temperature": profile.temperature,
+            "max_tokens": profile.max_tokens,
+            "valid": stage_name not in validation_errors,
+            "errors": validation_errors.get(stage_name, []),
+        }
+
+    return {
+        "stage_count": len(STAGE_PROFILES),
+        "invalid_count": len(validation_errors),
+        "all_valid": len(validation_errors) == 0,
+        "profiles": profiles_out,
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /analytics/template-impact   (P9-2b)
+# ---------------------------------------------------------------------------
+
+@router.get("/api/analytics/template-impact")
+@router.get("/analytics/template-impact")
+async def get_template_impact(
+    stage: str = Query(default="", description="Filter to a single stage (empty = all stages)"),
+) -> dict[str, Any]:
+    """Per-stage approval statistics split by whether a template was injected.
+
+    Compares executions that received a TemplateEngine structural hint against
+    those that did not.  Useful for measuring whether template injection
+    improves reviewer approval rates without requiring dynamic tuning.
+
+    Query parameters:
+        stage: When provided, restrict results to this stage only.
+
+    Response fields per stage entry:
+        stage                      — stage name
+        injected_count             — runs where a template was injected
+        non_injected_count         — runs with no template injection
+        injected_approved          — approved count for injected runs
+        non_injected_approved      — approved count for non-injected runs
+        injected_approval_rate     — float in [0.0, 1.0]
+        non_injected_approval_rate — float in [0.0, 1.0]
+
+    No prompts, reviewer feedback, or credentials are included in the response.
+    """
+    ll = _get_learning_loop()
+    if ll is None:
+        return {
+            "stage_filter": stage or None,
+            "stages": [],
+            "total_injected": 0,
+            "total_non_injected": 0,
+        }
+
+    try:
+        entries = ll.get_template_impact(stage=stage or None)
+    except Exception as exc:
+        logger.warning("[analytics] template_impact failed: %s", exc)
+        entries = []
+
+    total_injected = sum(e["injected_count"] for e in entries)
+    total_non_injected = sum(e["non_injected_count"] for e in entries)
+
+    return {
+        "stage_filter": stage or None,
+        "stages": entries,
+        "total_injected": total_injected,
+        "total_non_injected": total_non_injected,
+    }
+
 
 @router.get("/api/analytics/learning")
 @router.get("/analytics/learning")

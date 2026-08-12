@@ -140,6 +140,75 @@ class FileIndexer:
         )
         return metadata
 
+    def index_project(
+        self,
+        project_id: str,
+        workspace_path: str,
+        sprint_number: int = 0,
+    ) -> int:
+        """Index every source file found under *workspace_path* for *project_id*.
+
+        Walks the directory tree and calls ``index_file()`` for each recognised
+        source file (Python, TypeScript, JavaScript, YAML, JSON, Markdown).
+        Skips generated / dependency directories that should never be indexed
+        (``node_modules``, ``__pycache__``, ``.git``, virtual-env dirs, build
+        output directories).
+
+        Returns the count of files successfully indexed.  Individual file
+        errors are logged at DEBUG level and skipped so one unreadable file
+        never aborts the whole pass.
+
+        Called by ``PipelineSupervisor._trigger_intelligence_index()`` after
+        each sprint completes so that ``ProjectDependencyGraph`` and
+        ``CodeSummarizer`` can serve up-to-date results for subsequent sprints
+        and the Release phase.
+        """
+        from pathlib import Path
+
+        workspace = Path(workspace_path)
+        if not workspace.exists():
+            logger.debug(
+                "index_project: workspace does not exist — skipping: project=%s path=%s",
+                project_id, workspace_path,
+            )
+            return 0
+
+        _EXTENSIONS = frozenset({
+            ".py", ".ts", ".js", ".tsx", ".jsx",
+            ".yaml", ".yml", ".json", ".md",
+        })
+        _SKIP_DIRS = frozenset({
+            "node_modules", "__pycache__", ".git",
+            "venv", ".venv", "env",
+            "dist", "build", ".next", ".cache",
+        })
+
+        count = 0
+        for file_path in workspace.rglob("*"):
+            if not file_path.is_file():
+                continue
+            # Skip files inside any blacklisted directory
+            if any(part in _SKIP_DIRS for part in file_path.parts):
+                continue
+            if file_path.suffix not in _EXTENSIONS:
+                continue
+            try:
+                content = file_path.read_text(encoding="utf-8", errors="ignore")
+                rel_path = str(file_path.relative_to(workspace))
+                self.index_file(project_id, rel_path, content, sprint_number)
+                count += 1
+            except Exception as exc:
+                logger.debug(
+                    "index_project: skipping %s: %s",
+                    file_path, exc,
+                )
+
+        logger.debug(
+            "index_project: indexed %d file(s): project=%s path=%s sprint=%d",
+            count, project_id, workspace_path, sprint_number,
+        )
+        return count
+
     def get_project_index(self, project_id: str) -> list[FileMetadata]:
         """Return all indexed files for *project_id*, ordered by path."""
         rows = self._conn.execute(

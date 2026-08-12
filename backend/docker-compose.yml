@@ -27,7 +27,7 @@ services:
 
   worker:
     build: .
-    command: celery -A app.tasks.pipeline_task._get_celery_app worker --loglevel=info --concurrency=2
+    command: celery -A app.tasks.pipeline_task worker --loglevel=info --concurrency=2
     env_file:
       - .env
     environment:

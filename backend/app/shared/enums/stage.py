@@ -25,3 +25,4 @@ class Stage(str, Enum):
     SprintDeploy = "SprintDeploy"
     SprintReview = "SprintReview"
     Integration = "Integration"  # R6: generates client code for external service integrations
+    SprintDelta = "SprintDelta"  # decides create/update/patch per file before FileStructurePlanner

@@ -24,9 +24,11 @@ class MemoryManager:
 
     def __init__(self, root: Path | None = None, repository: MemoryRepository | None = None) -> None:
         """Wire the on-disk root and the MemoryRepository/SQLite backend used to persist entries."""
-        # Env var MEMORY_DB (set in backend/.env) gives the full db path.
-        # When root is passed explicitly (tests / DI) use root/memory.sqlite.
-        _default_db = Path(os.getenv("MEMORY_DB", "data/memory.sqlite"))
+        # Phase 6 MIGRATE: anchored default — parents[2] from backend/app/memory/ = backend/.
+        # Env var MEMORY_DB overrides; explicit root= (tests / DI) takes precedence over both.
+        _data_dir = Path(__file__).resolve().parents[2] / "data"
+        _data_dir.mkdir(parents=True, exist_ok=True)
+        _default_db = Path(os.getenv("MEMORY_DB", str(_data_dir / "memory.sqlite")))
         if root is not None:
             db_path = root / "memory.sqlite"
             self.root = root
@@ -101,6 +103,30 @@ class MemoryManager:
     def load_stage_output(self, project_id: str, stage_name: str) -> str | None:
         """Return the approved output for stage_name, or None if not yet run."""
         return self.load(project_id, f"workflow:stage:{stage_name}")
+
+    def store_sprint_stage_output(
+        self, project_id: str, sprint_number: int, stage_name: str, content: str
+    ) -> None:
+        """Persist a sprint-scoped stage output.
+
+        Uses key ``sprint:{sprint_number}:stage:{stage_name}`` so Sprint 1 and
+        Sprint 2 outputs for the same stage never collide.  Cross-sprint
+        canonical outputs (Architect, ProductOwner, etc.) should continue to
+        use :meth:`store_stage_output`.
+        """
+        key = f"sprint:{sprint_number}:stage:{stage_name}"
+        self.store(project_id, key, content)
+        logger.debug(
+            "store_sprint_stage_output: project=%s sprint=%d stage=%s bytes=%d",
+            project_id, sprint_number, stage_name, len(content),
+        )
+
+    def load_sprint_stage_output(
+        self, project_id: str, sprint_number: int, stage_name: str
+    ) -> str | None:
+        """Return the approved output for stage_name within sprint_number, or None."""
+        key = f"sprint:{sprint_number}:stage:{stage_name}"
+        return self.load(project_id, key)
 
     def list_for_project(self, project_id: str) -> list[MemoryRecord]:
         """Return every record namespaced under project_id (title starting with "{project_id}:")."""

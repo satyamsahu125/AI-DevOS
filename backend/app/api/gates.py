@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -300,17 +301,26 @@ def _remove_from_completed(project_id: str, stage_value: str, workspace) -> None
 def _schedule_resume(project_id: str, container) -> None:
     """Fire-and-forget: schedule the pipeline to resume via background task.
 
-    Currently runs synchronously on the API thread (acceptable for MVP —
-    Phase 6 will move this to Celery). The pipeline is already idempotent
-    so re-calling it is safe.
+    Uses ExecutionStateRegistry (the canonical duplicate-run guard) instead of
+    a module-level set.  wm.run() calls mark_running/mark_stopped, so this check
+    is a best-effort early-exit — the final guard is inside WorkflowManager.run().
     """
+    try:
+        execution_state = container.resolve("execution_state")
+    except Exception:
+        execution_state = None
+
+    if execution_state is not None and execution_state.is_running(project_id):
+        logger.warning(
+            "gates: pipeline already running for %s — ignoring duplicate resume request",
+            project_id,
+        )
+        return
+
     try:
         wm = container.resolve("workflow_manager")
         data = container.resolve("workspace_manager").load_project_json(project_id) or {}
         request = data.get("original_request") or data.get("description") or ""
-        # run() is synchronous — for MVP this blocks the API response briefly.
-        # TODO(Phase 6): replace with Celery pipeline_task.delay(project_id, request)
-        import threading
         t = threading.Thread(
             target=_run_pipeline_safe,
             args=(wm, project_id, request),
@@ -323,8 +333,14 @@ def _schedule_resume(project_id: str, container) -> None:
 
 
 def _run_pipeline_safe(wm, project_id: str, request: str) -> None:
-    """Run pipeline in background thread; catch and log all exceptions."""
+    """Run pipeline in background thread; catch and log all exceptions.
+
+    The execution guard (mark_running / mark_stopped) is owned by wm.run(),
+    so nothing extra is needed here.
+    """
     try:
         wm.run(project_id, request)
     except Exception as exc:
-        logger.error("gates: background pipeline run failed for %s: %s", project_id, exc, exc_info=True)
+        logger.error(
+            "gates: background pipeline run failed for %s: %s", project_id, exc, exc_info=True,
+        )

@@ -1,0 +1,18 @@
+{
+  "project_id": "8cb05499-182b-4e4a-9861-6992ee075610",
+  "elapsed_seconds": 921.5,
+  "pipeline_result": {
+    "success": false,
+    "state": "ProjectState.ARCHITECTURE_REVIEW_PENDING",
+    "message": "Architecture ready for review",
+    "completed_stages": [
+      "StrategicReview",
+      "Clarification",
+      "ProductOwner",
+      "Architect"
+    ],
+    "failed_stage": null
+  },
+  "artifacts": {},
+  "generated_files": []
+}

@@ -189,8 +189,10 @@ async def change_password(
     from passlib.context import CryptContext
     pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
     new_hash = pwd_ctx.hash(body.new_password)
-    store._conn.execute("UPDATE users SET hashed_password=? WHERE id=?", (new_hash, user.id))
-    store._conn.commit()
+    # Use the public UserStore method — never access _conn directly from outside
+    # the store.  Direct _conn access bypasses the store's connection-lifecycle
+    # discipline and races with concurrent requests on the same SQLite handle.
+    store.change_password(user.id, new_hash)
     # Invalidate all refresh tokens so existing sessions must re-login
     store.invalidate_all_for_user(user.id)
     logger.info("[auth] password changed: user_id=%s", user.id)

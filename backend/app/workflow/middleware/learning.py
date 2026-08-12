@@ -1,0 +1,139 @@
+"""LearningMiddleware — trajectory recording, lesson extraction, template extraction.
+
+Single responsibility: after every stage attempt (approved or rejected),
+record what happened so future runs can learn from it.
+
+Three sub-tasks live here because they all answer the same question
+("what happened on this attempt?") and share the same data sources.
+They are not split further because separating them would require passing
+the same attempt data through three independent hooks with no benefit.
+"""
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from typing import Any
+
+from ...memory.lesson_store import Lesson, new_lesson_id
+from ...memory.learning_loop import Trajectory
+
+logger = logging.getLogger(__name__)
+
+
+class LearningMiddleware:
+    """Records trajectories, extracts lessons, and saves structural templates.
+
+    Called by WorkflowEngine:
+      - on_attempt(attempt, artifact, review_result) — after every attempt
+      - on_approval(stage_name, project_id, artifact, attempt,
+                    review_result, failed_approaches) — only on approval
+    """
+
+    def __init__(
+        self,
+        learning_loop: Any,
+        lesson_store: Any,
+        template_engine: Any = None,
+        llm_model: str = "",
+    ) -> None:
+        self.learning_loop = learning_loop
+        self.lesson_store = lesson_store
+        self.template_engine = template_engine
+        self._llm_model = llm_model
+
+    # ------------------------------------------------------------------
+    # Hooks called by WorkflowEngine
+    # ------------------------------------------------------------------
+
+    def on_attempt(
+        self,
+        stage_name: str,
+        project_id: str,
+        content: str,
+        attempt: int,
+        artifact: Any,
+        review_result: Any,
+        template_injected: bool = False,
+    ) -> None:
+        """Record a Trajectory (approved or rejected) after every attempt.
+
+        Parameters
+        ----------
+        template_injected:
+            Set to True when ContextAssembler injected a structural template
+            hint into the context for this attempt.  Propagated from
+            :class:`AssembleResult` via WorkflowEngine so we can later
+            correlate injection with reviewer outcomes (P9-2b).
+        """
+        try:
+            from ...llm.cost_tracker import get_shared_cost_tracker
+            tracker = get_shared_cost_tracker()
+            trajectory = Trajectory(
+                stage=stage_name,
+                task_description=content,
+                artifact_summary=(artifact.content or "")[:300],
+                retry_count=attempt,
+                approved=review_result.approved,
+                reviewer_feedback=review_result.overall_feedback,
+                agent_model=self._llm_model,
+                tokens_used=tracker.last_call_tokens,
+                latency_ms=tracker.last_call_latency,
+                project_id=project_id,
+                template_injected=template_injected,
+            )
+            self.learning_loop.record_trajectory(trajectory)
+        except Exception as exc:
+            logger.debug("LearningMiddleware.on_attempt failed (non-fatal): %s", exc)
+
+    def on_approval(
+        self,
+        stage_name: str,
+        project_id: str,
+        artifact: Any,
+        attempt: int,
+        review_result: Any,
+        failed_approaches: list[str],
+    ) -> None:
+        """Extract a Lesson and a structural template on approval."""
+        self._record_lesson(stage_name, project_id, artifact, attempt,
+                            review_result, failed_approaches)
+        self._extract_template(stage_name, project_id, artifact)
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _record_lesson(
+        self,
+        stage_name: str,
+        project_id: str,
+        artifact: Any,
+        attempt: int,
+        review_result: Any,
+        failed_approaches: list[str],
+    ) -> None:
+        try:
+            lesson = Lesson(
+                lesson_id=new_lesson_id(),
+                stage=stage_name,
+                project_id=project_id,
+                what_worked=(artifact.content or "")[:300],
+                what_failed="; ".join(failed_approaches),
+                reviewer_said=review_result.overall_feedback,
+                retry_count_when_learned=attempt,
+                created_at=datetime.now(timezone.utc),
+            )
+            self.lesson_store.add_lesson(lesson)
+        except Exception as exc:
+            logger.debug("LearningMiddleware._record_lesson failed (non-fatal): %s", exc)
+
+    def _extract_template(self, stage_name: str, project_id: str, artifact: Any) -> None:
+        if self.template_engine is None:
+            return
+        try:
+            struct = getattr(artifact, "structured_content", None) or {}
+            if struct:
+                self.template_engine.extract_template(struct, stage_name, project_id)
+                logger.debug("template extracted: stage=%s project=%s", stage_name, project_id)
+        except Exception as exc:
+            logger.debug("LearningMiddleware._extract_template failed (non-fatal): %s", exc)

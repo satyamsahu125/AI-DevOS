@@ -57,6 +57,21 @@ function renderLogin() {
   )
 }
 
+/**
+ * The LoginPage renders two buttons named "Sign In":
+ *   1. A tab toggle button (switches between Sign In / Register modes)
+ *   2. The actual form submit button (type="submit")
+ *
+ * getByRole throws when it finds multiple matches, so we select the submit
+ * button explicitly by its type attribute.
+ */
+function getSignInSubmitButton(): HTMLElement {
+  const buttons = screen.getAllByRole("button", { name: /sign in/i })
+  const submit = buttons.find(btn => btn.getAttribute("type") === "submit")
+  if (!submit) throw new Error("No submit button with name /sign in/i found")
+  return submit
+}
+
 beforeEach(() => {
   mockNavigate.mockClear()
   mockLogin.mockClear()
@@ -71,12 +86,12 @@ describe("LoginPage — sign-in mode", () => {
     renderLogin()
     expect(screen.getByPlaceholderText("you@example.com")).toBeInTheDocument()
     expect(screen.getByPlaceholderText("••••••••")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument()
+    expect(getSignInSubmitButton()).toBeInTheDocument()
   })
 
   it("submit button is disabled when fields are empty", () => {
     renderLogin()
-    expect(screen.getByRole("button", { name: /sign in/i })).toBeDisabled()
+    expect(getSignInSubmitButton()).toBeDisabled()
   })
 
   it("submit button enables after typing email and password", async () => {
@@ -86,7 +101,7 @@ describe("LoginPage — sign-in mode", () => {
     await user.type(screen.getByPlaceholderText("you@example.com"), "dev@x.com")
     await user.type(screen.getByPlaceholderText("••••••••"), "pass1234")
 
-    expect(screen.getByRole("button", { name: /sign in/i })).not.toBeDisabled()
+    expect(getSignInSubmitButton()).not.toBeDisabled()
   })
 
   it("calls login() with trimmed email + password on submit", async () => {
@@ -96,7 +111,7 @@ describe("LoginPage — sign-in mode", () => {
 
     await user.type(screen.getByPlaceholderText("you@example.com"), "  dev@x.com  ")
     await user.type(screen.getByPlaceholderText("••••••••"), "pass1234")
-    await user.click(screen.getByRole("button", { name: /sign in/i }))
+    await user.click(getSignInSubmitButton())
 
     await waitFor(() => expect(mockLogin).toHaveBeenCalledWith("dev@x.com", "pass1234"))
   })
@@ -108,7 +123,7 @@ describe("LoginPage — sign-in mode", () => {
 
     await user.type(screen.getByPlaceholderText("you@example.com"), "dev@x.com")
     await user.type(screen.getByPlaceholderText("••••••••"), "pass1234")
-    await user.click(screen.getByRole("button", { name: /sign in/i }))
+    await user.click(getSignInSubmitButton())
 
     await waitFor(() =>
       expect(mockNavigate).toHaveBeenCalledWith("/projects", { replace: true }),
@@ -122,7 +137,7 @@ describe("LoginPage — sign-in mode", () => {
 
     await user.type(screen.getByPlaceholderText("you@example.com"), "bad@x.com")
     await user.type(screen.getByPlaceholderText("••••••••"), "wrongpass")
-    await user.click(screen.getByRole("button", { name: /sign in/i }))
+    await user.click(getSignInSubmitButton())
 
     await waitFor(() =>
       expect(screen.getByText("Invalid credentials")).toBeInTheDocument(),
@@ -138,7 +153,7 @@ describe("LoginPage — sign-in mode", () => {
 
     await user.type(screen.getByPlaceholderText("you@example.com"), "bad@x.com")
     await user.type(screen.getByPlaceholderText("••••••••"), "wrongpass")
-    await user.click(screen.getByRole("button", { name: /sign in/i }))
+    await user.click(getSignInSubmitButton())
 
     await waitFor(() =>
       expect(screen.getByText("Authentication failed")).toBeInTheDocument(),

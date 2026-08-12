@@ -13,7 +13,9 @@ from .exceptions import ExecutionException
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path(os.getenv("MEMORY_DB_PATH", "backend/app/memory/memory.db"))
+# Phase 6 MIGRATE: anchored default — parents[2] from backend/app/execution/ = backend/.
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+_DEFAULT_DB_PATH = Path(os.getenv("MEMORY_DB_PATH", str(_DATA_DIR / "memory.sqlite")))
 _DEFAULT_WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "temp-workspace"))
 
 

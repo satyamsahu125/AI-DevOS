@@ -8,7 +8,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path(os.getenv("LESSONS_DB", "data/lessons.sqlite"))
+# Phase 6 MIGRATE: anchored default — parents[2] from backend/app/memory/ = backend/.
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+_DEFAULT_DB_PATH = Path(os.getenv("LESSONS_DB", str(_DATA_DIR / "lessons.sqlite")))
 
 
 @dataclass(slots=True)

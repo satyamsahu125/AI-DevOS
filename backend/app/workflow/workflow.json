@@ -1,6 +1,12 @@
 {
   "stages": [
     {
+      "name": "clarification",
+      "requires": [],
+      "emits": ["ClarificationResult"],
+      "description": "Optional pre-planning clarification of ambiguous requirements before strategic review."
+    },
+    {
       "name": "strategic_review",
       "requires": [],
       "emits": ["StrategicBrief"]
@@ -59,6 +65,57 @@
       "name": "retro",
       "requires": ["Documentation"],
       "emits": ["RetroReport"]
+    }
+  ],
+  "sprint_stages": [
+    {
+      "name": "scrum_master",
+      "requires": ["SprintPlan"],
+      "emits": ["ScrumMasterPlan"],
+      "blocking": false,
+      "description": "Breaks the sprint goal into concrete task cards with estimates. Non-blocking — sprint continues on failure."
+    },
+    {
+      "name": "sprint_delta",
+      "requires": ["ScrumMasterPlan"],
+      "emits": ["SprintDeltaPlan"],
+      "blocking": false,
+      "description": "Sprint 2+: classifies each file as create/update/patch so FileStructurePlanner sets operations reliably. No-op on Sprint 1."
+    },
+    {
+      "name": "file_planner",
+      "requires": ["ScrumMasterPlan"],
+      "emits": ["FileStructurePlan"],
+      "blocking": true,
+      "description": "Plans the full file tree for this sprint: paths, purposes, responsible_stage (backend/frontend), and tech stack."
+    },
+    {
+      "name": "backend",
+      "requires": ["FileStructurePlan"],
+      "emits": ["BackendCode"],
+      "blocking": true,
+      "description": "Generates backend source files. One LLM call per file; syntax-validated before write."
+    },
+    {
+      "name": "frontend",
+      "requires": ["FileStructurePlan"],
+      "emits": ["FrontendCode"],
+      "blocking": true,
+      "description": "Generates frontend source files. One LLM call per file; syntax-validated before write."
+    },
+    {
+      "name": "sprint_deploy",
+      "requires": ["BackendCode", "FrontendCode"],
+      "emits": ["DeployResult"],
+      "blocking": false,
+      "description": "Validates the sprint build: Dockerfile check, import resolution, basic smoke test."
+    },
+    {
+      "name": "sprint_review",
+      "requires": ["DeployResult"],
+      "emits": ["SprintReviewReport"],
+      "blocking": false,
+      "description": "Summarises sprint output quality and flags issues for the next sprint's context."
     }
   ]
 }

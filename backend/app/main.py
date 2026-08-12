@@ -18,16 +18,21 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.openapi.utils import get_openapi
 
 from .api.exception_handler import application_exception_handler
 from .api.middleware.auth import APIKeyMiddleware
+from .api.middleware.rate_limit import RateLimitMiddleware
+from .api.middleware.request_size import RequestSizeLimitMiddleware
+from .api.middleware.logging_context import LoggingContextMiddleware
 from .api.router import api_router
 from .events.broadcaster import broadcaster
 from .kernel.kernel import AIKernel
 from .observability.logging import configure_logging
 from .observability.tracing import configure_tracing, instrument_fastapi
+from .observability.prometheus import instrument_prometheus
 from .shared.exceptions.base import ApplicationException
 
 # Phase 6: configure structured logging before anything else runs
@@ -82,12 +87,41 @@ def create_application() -> FastAPI:
 
     app.openapi = custom_openapi  # type: ignore[method-assign]
 
+    # CORS — must be added before any auth middleware so preflight OPTIONS
+    # requests are handled before they hit the auth layer.
+    # In production set ALLOWED_ORIGINS to the exact frontend origin(s).
+    _raw_origins = _os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+    _allow_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allow_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     # Phase 6: API key authentication middleware
     # Reads VALID_API_KEYS from env; disabled (pass-through) when not set.
     app.add_middleware(APIKeyMiddleware)
 
+    # Phase 6: Rate limiting — 10 project creates/minute per API key.
+    # Disabled by default (RATE_LIMIT_ENABLED=false); enable in production.
+    app.add_middleware(RateLimitMiddleware)
+
+    # Phase 6: Request body size limit — reject bodies > 50 KB.
+    # Prevents oversized descriptions from being embedded in every LLM prompt.
+    app.add_middleware(RequestSizeLimitMiddleware)
+
+    # Phase 6: Per-request structured logging context.
+    # Binds request_id and project_id to every log line for the request lifetime.
+    app.add_middleware(LoggingContextMiddleware)
+
     # R10: FastAPI auto-instrumentation (no-op when OTEL_ENDPOINT is not set)
     instrument_fastapi(app)
+
+    # Phase 6: Prometheus /metrics endpoint.
+    # Disabled when PROMETHEUS_ENABLED=false (default); enable in production.
+    instrument_prometheus(app)
 
     app.include_router(api_router)
     app.add_exception_handler(ApplicationException, application_exception_handler)

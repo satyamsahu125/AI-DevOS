@@ -28,21 +28,22 @@ log.info("CWD: %s", os.getcwd())
 
 # ── import kernel + managers ──────────────────────────────────────────────────
 log.info("Importing kernel…")
-from app.kernel.bootstrap import Bootstrap
+from app.kernel.kernel import AIKernel
 from app.workspace.manager import WorkspaceManager
 from app.project.manager import ProjectManager
 
-bootstrap = Bootstrap()
-container = bootstrap._container
+kernel = AIKernel()
+kernel.start()
+container = kernel.container
 
-log.info("Bootstrap complete. Container type: %s", type(container).__name__)
+log.info("AIKernel started. Container type: %s", type(container).__name__)
 
 # Resolve singletons from container
 workspace_manager: WorkspaceManager = container.workspace_manager
 project_manager: ProjectManager     = container.project_manager
 workflow_manager                    = container.workflow_manager
 
-log.info("Managers resolved OK")
+log.info("Managers resolved OK: proj_mgr=%s wf_mgr=%s", type(project_manager).__name__, type(workflow_manager).__name__)
 
 # ── create project ────────────────────────────────────────────────────────────
 PROJECT_NAME = "MoodSync"
@@ -53,8 +54,11 @@ DESCRIPTION  = (
     "Backend: FastAPI + SQLite. Frontend: React + TypeScript."
 )
 
+from app.shared.dto.project_request import ProjectRequest
+
 log.info("Creating project '%s'…", PROJECT_NAME)
-project = project_manager.create_project(name=PROJECT_NAME, description=DESCRIPTION)
+req = ProjectRequest(name=PROJECT_NAME, description=DESCRIPTION)
+project = project_manager.create_project(req)
 project_id = getattr(project, "id", None) or getattr(project, "project_id", None) or str(project)
 log.info("Project created: %s", project_id)
 

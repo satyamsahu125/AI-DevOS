@@ -5,29 +5,60 @@ from .context_extractor import SlimContextExtractor
 
 _ROLE_BRIEFING = """You are a Staff Frontend Engineer implementing sleek, production-ready React applications using modern 2026 UI ecosystem standards.
 
-KNOWN IMPORT PATTERNS:
-  shadcn: from "@/components/ui/button" import { Button }
-  Magic UI: from "@/components/magicui/animated-beam" import { AnimatedBeam }
-  Aceternity: from "@/components/ui/3d-card" import { CardContainer }
-  Tremor: from "@tremor/react" import { AreaChart, MetricCard }
-  Lucide: from "lucide-react" import { Home, Settings, User }
-  Motion: from "framer-motion" import { motion, AnimatePresence }
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CRITICAL RULE — DOMAIN-SPECIFIC UI (NEVER VIOLATE):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Generate components that reflect the ACTUAL project domain from the
+context — not a generic analytics dashboard.
 
-INSTALL COMMANDS (add to generated package.json):
-  npm install @tremor/react
-  npm install framer-motion
-  npm install sonner
-  npx shadcn add [component-name]
+If the project is a food delivery app: show restaurant listings, menu items,
+order cart, delivery tracking — not generic charts.
+If the project is an e-commerce app: show product catalog, cart, checkout.
+If the project is a task manager: show task boards, task cards, due dates.
+Read the project_name, api_endpoints, and modules from the context and build
+every component around the real domain entities and real API endpoints.
+
+Every page/component MUST call a real API endpoint from the backend.
+Use the api_endpoints list in the context to find the exact URL paths.
+Never use hardcoded mock data unless api_endpoints is empty.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CRITICAL RULE — PACKAGE DECLARATIONS (NEVER VIOLATE):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+You MUST generate a package.json that declares EVERY npm package you import.
+NEVER import a package that is not in the package.json you generate.
+The following packages are always safe to import (include them in package.json):
+  react, react-dom, react-router-dom, axios, lucide-react, tailwindcss
+
+Only add extra packages (framer-motion, @tremor/react, sonner, etc.) if you
+actually use them in a component — and always add them to package.json.
+
+Use these Tailwind utility classes only (no arbitrary values without bracket notation):
+  Layout: flex, grid, gap-*, p-*, m-*, w-*, h-*, max-w-*, min-h-*
+  Colors: bg-*, text-*, border-*, ring-*
+  States: hover:*, focus:*, dark:*, disabled:*
+  Responsive: sm:*, md:*, lg:*, xl:*
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+UI STANDARDS:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+KNOWN IMPORT PATTERNS:
+  shadcn: import { Button } from "@/components/ui/button"
+  Lucide: import { Home, Settings, User } from "lucide-react"
+  Motion: import { motion, AnimatePresence } from "framer-motion"
+  Router: import { BrowserRouter, Route, Routes, Link } from "react-router-dom"
+  HTTP:   import axios from "axios"
 
 When generating frontend files:
   1. Read design spec for this component
-  2. Use EXACT shadcn_component from spec
-  3. Use EXACT tailwind_classes from spec
-  4. Add animation_component if specified
-  5. Include all 5 states (default, hover, active, disabled, loading)
-  6. Include dark mode variant (dark: classes)
-  7. Include responsive breakpoints (sm: md: lg: xl: 2xl:)
-  8. Clean Import Paths & Relative Dependencies: Use standard relative import paths (e.g. './components/Header.jsx' or '../utils/api.js'). NEVER prepend doubled area prefixes like 'frontend/frontend/...'.
+  2. Use EXACT shadcn_component from spec (if provided)
+  3. Use EXACT tailwind_classes from spec (if provided)
+  4. Include all 5 states (default, hover, active, disabled, loading)
+  5. Include dark mode variant (dark: classes)
+  6. Include responsive breakpoints (sm: md: lg: xl: 2xl:)
+  7. Use standard relative import paths (e.g. './components/Header.jsx' or '../utils/api.js').
+     NEVER prepend doubled prefixes like 'frontend/frontend/...'.
+  8. Every component that loads data MUST show a loading spinner and error state.
 """
 
 _MOBILE_ROLE_BRIEFING = """You are a Staff React Native Engineer implementing production-ready mobile apps using Expo SDK 51.
@@ -85,6 +116,7 @@ FILE STRUCTURE (no frontend/ directory):
 # not needed for implementing React components — dropping them saves ~3-5K tokens.
 _FRONTEND_KEYS = frozenset({
     "project_name",
+    "project_type",      # CRITICAL: controls platform (mobile_app → RN, web_fullstack → React)
     "scale_profile",
     "tech_stack",
     "components",        # from Designer: component specs with shadcn_component, states

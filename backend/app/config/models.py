@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import BaseModel, Field
+
+# Phase 6 MIGRATE: anchored data directory — independent of process CWD.
+# From backend/app/config/models.py: parents[2] = backend/
+_SETTINGS_DATA_DIR: str = str(Path(__file__).resolve().parents[2] / "data")
 
 
 class LLMConfig(BaseModel):
@@ -46,9 +52,12 @@ class SprintRetryConfig(BaseModel):
 class Settings(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
-    knowledge_db: str = Field(default="data/knowledge.sqlite")
-    learning_db: str = Field(default="data/learning.sqlite")
-    lessons_db: str = Field(default="data/lessons.sqlite")
-    memory_db_path: str = Field(default="backend/app/memory/memory.db")
+    # Phase 6 MIGRATE: absolute defaults anchored to backend/data/.
+    # These are overridden by KNOWLEDGE_DB, LEARNING_DB, LESSONS_DB env vars via loader.py.
+    # Absolute paths mean the application works regardless of the CWD uvicorn is started from.
+    knowledge_db: str = Field(default_factory=lambda: f"{_SETTINGS_DATA_DIR}/knowledge.sqlite")
+    learning_db: str = Field(default_factory=lambda: f"{_SETTINGS_DATA_DIR}/learning.sqlite")
+    lessons_db: str = Field(default_factory=lambda: f"{_SETTINGS_DATA_DIR}/lessons.sqlite")
+    memory_db_path: str = Field(default_factory=lambda: f"{_SETTINGS_DATA_DIR}/memory.sqlite")
     workspace_root: str = Field(default="temp-workspace")
     sprint_retry: SprintRetryConfig = Field(default_factory=SprintRetryConfig, description="Sprint feedback loop retry limits")

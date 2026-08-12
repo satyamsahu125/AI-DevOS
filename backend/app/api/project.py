@@ -1,4 +1,5 @@
 import json
+import os
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
@@ -29,6 +30,9 @@ from .middleware.jwt_auth import get_current_user
 router = APIRouter()
 
 _MAX_NAME_LENGTH = 100
+# Phase 6: per-owner project count cap.
+# Overridable via MAX_PROJECTS_PER_KEY env var. Default 20.
+MAX_PROJECTS_PER_KEY: int = int(os.getenv("MAX_PROJECTS_PER_KEY", "20"))
 
 
 def _assert_project_access(project: Project, user) -> None:
@@ -74,6 +78,23 @@ def _validate_project_request(request: ProjectRequest) -> None:
         )
 
 
+def _enforce_project_limit(manager: ProjectManager, user_id: str) -> None:
+    """Raise HTTP 429 if the owner already has MAX_PROJECTS_PER_KEY projects.
+
+    Counting key is user.id (JWT sub claim, or 'anonymous' when AUTH_ENABLED=false).
+    This keeps the limit per authenticated identity, consistent with owner_id on Project.
+    """
+    existing = manager.repository.list_by_owner(user_id)
+    if len(existing) >= MAX_PROJECTS_PER_KEY:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Project limit reached. Maximum {MAX_PROJECTS_PER_KEY} projects per user. "
+                f"Delete an existing project or set MAX_PROJECTS_PER_KEY to raise the limit."
+            ),
+        )
+
+
 @router.post("/projects", response_model=ProjectResponse, status_code=201)
 def create_project(
     request: ProjectRequest,
@@ -81,6 +102,7 @@ def create_project(
     user=Depends(get_current_user),
 ) -> ProjectResponse:
     _validate_project_request(request)
+    _enforce_project_limit(manager, user.id)
     return manager.create_project(request, user_id=user.id)
 
 
@@ -93,6 +115,7 @@ def create_and_run_project(
     user=Depends(get_current_user),
 ) -> dict:
     _validate_project_request(request)
+    _enforce_project_limit(manager, user.id)
     project_resp = manager.create_project(request, user_id=user.id)
     content = request.description or f"Initialize project {project_resp.project_id}"
     background_tasks.add_task(workflow_manager.run, project_resp.project_id, content)

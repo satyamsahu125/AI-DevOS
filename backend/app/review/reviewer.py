@@ -22,9 +22,24 @@ _REQUIRED_DESIGN_SYSTEM_KEYS = ("colors", "fonts", "spacing", "breakpoints")
 
 _CODE_SCHEMA_NAMES = ("WriteBackendFiles", "WriteFrontendFiles")
 _CODE_COVERAGE_FLAG_THRESHOLD = 0.5
+# If stub_paths / written_paths ratio exceeds this, escalate to ASK_HUMAN.
+_STUB_RATIO_ASK_HUMAN = 0.4
+
+# Common module-name suffixes that are not meaningful for file-path matching.
+# "AuthModule" → "auth", "UserService" → "user", etc.
+_MODULE_NAME_STRIP_SUFFIXES = re.compile(
+    r"(?:module|service|manager|controller|handler|repository|store|agent|layer|component)s?$",
+    re.IGNORECASE,
+)
+# Splits CamelCase or snake_case into words for normalisation.
+_CAMEL_SPLIT_RE = re.compile(r"[_\-\s]+|(?<=[a-z])(?=[A-Z])")
 
 # Minimum word count for non-empty text-only stages (StrategicReview, Retro, Security)
 _MIN_WORDS_TEXT_STAGE = 30
+
+# Depth thresholds for specific structured stages
+_MIN_SECURITY_THREATS = 2    # fewer → FLAG (shallow security analysis)
+_MIN_ARCHITECTURE_MODULES = 2  # fewer → FLAG (may be a stub architecture)
 
 # Boilerplate phrases common in LLM hallucinated/degenerate responses
 _BOILERPLATE_PATTERNS: list[re.Pattern] = [
@@ -116,13 +131,19 @@ class Reviewer:
     def review(
         self, artifact: StageArtifact, previous_content: str | None = None,
         architecture_endpoints: list[str] | None = None,
+        architecture_modules: list[dict] | None = None,
     ) -> ReviewResult:
         """Review artifact, optionally comparing against previous_content (the prior attempt's output).
 
-        architecture_endpoints is only consulted for Designer-stage artifacts
-        (schema_type == "WriteDesign"), to cross-check api_dependencies
-        against the real ArchitectureArtifact endpoints; omit it to skip
-        that specific cross-check.
+        architecture_endpoints is consulted for Designer-stage artifacts to cross-check
+        api_dependencies against the real ArchitectureArtifact endpoints.
+
+        architecture_modules is consulted for BackendDeveloper/FrontendDeveloper artifacts
+        to verify that every Architecture module has at least one written file — a
+        cross-stage consistency check that catches the case where the LLM skipped an
+        entire module without it appearing in skipped_paths.
+
+        Omit either argument to skip that specific cross-check.
         """
         content = (artifact.content or "").strip()
         content_valid = bool(content)
@@ -139,7 +160,7 @@ class Reviewer:
         if artifact.schema_type == _DESIGN_SCHEMA_NAME and artifact.structured_content:
             self._check_design_stage(artifact, architecture_endpoints, findings, auto_fixes_applied, human_questions, flags)
         if artifact.schema_type in _CODE_SCHEMA_NAMES and artifact.structured_content:
-            self._check_code_stage(artifact, findings, human_questions, flags)
+            self._check_code_stage(artifact, architecture_modules, findings, human_questions, flags)
 
         approved = content_valid and not human_questions
         overall_feedback = self._summarize(approved, findings)
@@ -251,6 +272,40 @@ class Reviewer:
                     tier=ReviewTier.FLAG,
                     description=f"Text-stage output is very short ({word_count} words, minimum {_MIN_WORDS_TEXT_STAGE})",
                     suggestion="The agent may have produced a stub response; check for completeness",
+                )
+                findings.append(finding)
+                flags.append(finding.description)
+
+        # Depth heuristics: catch shallow-but-not-empty structured outputs.
+        # These are always FLAG (advisory) — they signal the AI produced a minimal
+        # response without failing the schema check, not a hard pipeline blocker.
+        schema = artifact.schema_type or ""
+        structured = artifact.structured_content or {}
+
+        if schema == "WriteSecurityReport":
+            threats = structured.get("threats") or []
+            if threats and len(threats) < _MIN_SECURITY_THREATS:
+                finding = ReviewFinding(
+                    tier=ReviewTier.FLAG,
+                    description=(
+                        f"Security report lists only {len(threats)} threat(s) "
+                        f"(minimum {_MIN_SECURITY_THREATS} expected for a meaningful report)"
+                    ),
+                    suggestion="Re-run Security stage or manually add more threats before proceeding",
+                )
+                findings.append(finding)
+                flags.append(finding.description)
+
+        if schema == "WriteArchitecture":
+            modules = structured.get("modules") or []
+            if modules and len(modules) < _MIN_ARCHITECTURE_MODULES:
+                finding = ReviewFinding(
+                    tier=ReviewTier.FLAG,
+                    description=(
+                        f"Architecture defines only {len(modules)} module(s). "
+                        "This may be intentional for a simple project, but likely indicates a stub response."
+                    ),
+                    suggestion="Confirm the project is genuinely single-module, or retry for fuller coverage",
                 )
                 findings.append(finding)
                 flags.append(finding.description)
@@ -457,17 +512,41 @@ class Reviewer:
             findings.append(finding)
             flags.append(finding.description)
 
+    @staticmethod
+    def _normalise_module_name(name: str) -> str:
+        """Reduce a module name to its meaningful root token for file-path matching.
+
+        "AuthenticationModule" → "authentication"
+        "UserService"          → "user"
+        "payment_processor"    → "payment"
+        """
+        # Strip common suffix words first, then split on camel/snake boundary
+        stripped = _MODULE_NAME_STRIP_SUFFIXES.sub("", name).strip()
+        tokens = [t.lower() for t in _CAMEL_SPLIT_RE.split(stripped) if t]
+        # Return the first meaningful token (usually the domain noun)
+        return tokens[0] if tokens else name.lower()
+
     def _check_code_stage(
-        self, artifact: StageArtifact, findings: list[ReviewFinding], human_questions: list[str], flags: list[str],
+        self,
+        artifact: StageArtifact,
+        architecture_modules: list[dict] | None,
+        findings: list[ReviewFinding],
+        human_questions: list[str],
+        flags: list[str],
     ) -> None:
-        """BackendDeveloper/FrontendDeveloper-specific holistic check: does the written file set
-        match what the File Plan called for. Per-file plausibility is already enforced as each
-        file is written (see WriteProjectFilesAction._is_plausible); this only asks whether the
-        planned set was actually covered end to end."""
+        """BackendDeveloper/FrontendDeveloper-specific holistic checks.
+
+        Three concerns:
+        1. Coverage — were all planned files written?
+        2. Stubs — did the LLM scaffold files without implementing them?
+        3. Cross-stage consistency — does every Architecture module have ≥1 written file?
+           (architecture_modules must be supplied by the caller; omit to skip this check.)
+        """
         structured = artifact.structured_content
         planned = structured.get("planned_paths") or []
         written = structured.get("written_paths") or []
         skipped = structured.get("skipped_paths") or []
+        stub_paths = structured.get("stub_paths") or []
 
         if not planned:
             finding = ReviewFinding(
@@ -479,6 +558,7 @@ class Reviewer:
             human_questions.append(finding.description)
             return
 
+        # ── Coverage checks ──────────────────────────────────────────────────
         if skipped:
             finding = ReviewFinding(
                 tier=ReviewTier.ASK_HUMAN,
@@ -497,6 +577,74 @@ class Reviewer:
             )
             findings.append(finding)
             flags.append(finding.description)
+
+        # ── Stub-body detection ──────────────────────────────────────────────
+        # stub_paths are files where WriteProjectFilesAction detected ≥2
+        # function definitions whose body is only "pass". This means the LLM
+        # scaffolded the file but did not implement it.
+        if stub_paths:
+            written_count = len(written) or 1
+            stub_ratio = len(stub_paths) / written_count
+            tier = ReviewTier.ASK_HUMAN if stub_ratio >= _STUB_RATIO_ASK_HUMAN else ReviewTier.FLAG
+            description = (
+                f"{len(stub_paths)} file(s) contain unimplemented stub bodies "
+                f"(pass-only functions): {', '.join(stub_paths)}"
+            )
+            suggestion = (
+                "These files were scaffolded but not implemented. "
+                "Retry the stage with a stricter system prompt enforcing real logic."
+                if tier == ReviewTier.ASK_HUMAN
+                else "Review these files and confirm the stub bodies are intentional (e.g., abstract base classes)."
+            )
+            finding = ReviewFinding(tier=tier, description=description, suggestion=suggestion)
+            findings.append(finding)
+            if tier == ReviewTier.ASK_HUMAN:
+                human_questions.append(description)
+            else:
+                flags.append(description)
+            logger.info("reviewer: stub detection %s for stage=%s stubs=%s", tier.value, artifact.schema_type, stub_paths)
+
+        # ── Cross-stage consistency: Architecture modules → written files ─────
+        # For each module the Architect defined, check that at least one written
+        # file path contains the module's normalised name.  A module with zero
+        # coverage means the LLM silently omitted an entire domain area without
+        # it showing up in skipped_paths.
+        #
+        # This is always FLAG (never ASK_HUMAN) because:
+        #   • Multi-sprint projects legitimately write some modules later.
+        #   • Module-name ↔ file-path matching is heuristic and can miss aliases.
+        if architecture_modules and written:
+            written_lower = " ".join(written).lower()
+            uncovered: list[str] = []
+            for mod in architecture_modules:
+                mod_name = mod.get("name") or ""
+                if not mod_name:
+                    continue
+                # Also check explicit file paths the Architect declared for this module
+                declared_files: list[str] = mod.get("files") or []
+                if any(f.lower() in written_lower for f in declared_files if f):
+                    continue  # at least one declared file was written
+                token = self._normalise_module_name(mod_name)
+                if token and token not in written_lower:
+                    uncovered.append(mod_name)
+            if uncovered:
+                finding = ReviewFinding(
+                    tier=ReviewTier.FLAG,
+                    description=(
+                        f"{len(uncovered)} Architecture module(s) have no matching written file: "
+                        f"{', '.join(uncovered)}"
+                    ),
+                    suggestion=(
+                        "These modules may be planned for a later sprint, or the LLM silently "
+                        "omitted them. Verify coverage before the release phase."
+                    ),
+                )
+                findings.append(finding)
+                flags.append(finding.description)
+                logger.info(
+                    "reviewer: cross-stage gap stage=%s uncovered_modules=%s",
+                    artifact.schema_type, uncovered,
+                )
 
     def _compute_quality_score(self, artifact: StageArtifact, content: str, content_valid: bool) -> float:
         """Heuristic 0.0-1.0 quality score used by the FLAG check."""

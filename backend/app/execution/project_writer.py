@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -12,6 +13,45 @@ if TYPE_CHECKING:
     from ..intelligence.file_indexer import FileIndexer
 
 logger = logging.getLogger(__name__)
+
+# Regex: matches an opening code-fence line (```python, ```jsx, ``` etc.)
+# anchored at the very start of the content (possibly after whitespace).
+_FENCE_OPEN_RE = re.compile(r"^\s*```[a-zA-Z0-9]*\s*\n", re.MULTILINE)
+# Regex: matches a closing code-fence line (``` alone on a line).
+# Uses [ \t]* (not \s*) to avoid consuming the trailing newline that follows the fence.
+_FENCE_CLOSE_RE = re.compile(r"\n[ \t]*```[ \t]*$", re.MULTILINE)
+
+
+def _strip_code_fences(content: str, file_path: str) -> str:
+    """Strip LLM markdown code-fence wrappers from generated source files.
+
+    Some models (Qwen3, etc.) wrap their output in ```python ... ``` or
+    similar blocks despite system-prompt instructions not to.  Writing those
+    fences to disk causes SyntaxErrors for Python files and import failures
+    for JS/TS.
+
+    Only strips fences for source-code file types; leaves other files (Markdown,
+    YAML, etc.) untouched.
+    """
+    source_extensions = {
+        ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+        ".html", ".css", ".scss",
+    }
+    ext = Path(file_path).suffix.lower()
+    if ext not in source_extensions:
+        return content
+
+    stripped = content
+    # Strip a leading opening fence (e.g. "```python\n" at start of file)
+    stripped = _FENCE_OPEN_RE.sub("", stripped, count=1)
+    # Strip a trailing closing fence ("```" at very end of file)
+    stripped = _FENCE_CLOSE_RE.sub("", stripped)
+    if stripped != content:
+        logger.warning(
+            "ProjectWriter: stripped markdown code fences from %s (%d → %d bytes)",
+            file_path, len(content), len(stripped),
+        )
+    return stripped
 
 
 class WrittenFile(BaseModel):
@@ -55,6 +95,11 @@ class ProjectWriter:
 
         # Create parent directories
         full_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Strip LLM markdown code-fence wrappers before writing to disk.
+        # Prevents ```python ... ``` from leaking into source files and
+        # causing SyntaxErrors or import failures at runtime.
+        content = _strip_code_fences(content, file_path)
 
         # Write the file
         full_path.write_text(content, encoding="utf-8")

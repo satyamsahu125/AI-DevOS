@@ -37,46 +37,107 @@ class FileRegistry:
     def get(self, project_id: str, file_path: str) -> dict | None:
         """Return the registry entry for file_path, or None if not registered."""
         registry = self._load(project_id)
-        return registry.get(self._normalize(file_path))
+        entry = registry.get(self._normalize(file_path))
+        if entry is None:
+            return None
+        return dict(entry)
 
     def exists(self, project_id: str, file_path: str) -> bool:
         """Return True if file_path has been registered for project_id."""
         return self.get(project_id, file_path) is not None
 
-    def record(self, project_id: str, file_path: str, sprint_number: int) -> None:
-        """Record that file_path was written during sprint_number.
+    def register(
+        self,
+        project_id: str,
+        file_path: str,
+        sprint_number: int,
+        area: str = "",
+        operation: str = "create",
+    ) -> None:
+        """Register that file_path was written during sprint_number.
 
-        On first write: sets created_sprint and last_updated_sprint.
-        On subsequent writes: updates last_updated_sprint only.
+        On first write: sets area, created_sprint, last_updated_sprint, operation,
+        requirement_version_id, and sprint_history.
+        On subsequent writes: updates last_updated_sprint, operation,
+        requirement_version_id, and appends to sprint_history (preserving created_sprint).
         """
         try:
             registry = self._load(project_id)
             key = self._normalize(file_path)
+            req_version_id = self._get_current_requirement_version_id(project_id)
+            resolved_area = area.strip().lower() if area else self._infer_area(key)
+
             if key in registry:
-                registry[key]["last_updated_sprint"] = sprint_number
+                entry = registry[key]
+                entry["last_updated_sprint"] = sprint_number
+                entry["operation"] = operation
+                if resolved_area:
+                    entry["area"] = resolved_area
+                entry["requirement_version_id"] = req_version_id
+                sprints = entry.get("sprint_history", [])
+                if sprint_number not in sprints:
+                    sprints.append(sprint_number)
+                entry["sprint_history"] = sprints
             else:
                 registry[key] = {
                     "path": key,
+                    "area": resolved_area,
                     "created_sprint": sprint_number,
                     "last_updated_sprint": sprint_number,
+                    "operation": operation,
+                    "requirement_version_id": req_version_id,
+                    "sprint_history": [sprint_number],
                 }
             self._save(project_id, registry)
         except Exception as exc:
-            logger.warning("file_registry.record: failed for %s/%s sprint=%d: %s", project_id, file_path, sprint_number, exc)
+            logger.warning("file_registry.register: failed for %s/%s sprint=%d: %s", project_id, file_path, sprint_number, exc)
 
-    def record_many(self, project_id: str, file_paths: list[str], sprint_number: int) -> None:
-        """Batch version of record() — more efficient for writing many files at once."""
+    def record(
+        self,
+        project_id: str,
+        file_path: str,
+        sprint_number: int,
+        area: str = "",
+        operation: str = "create",
+    ) -> None:
+        """Backward compatible delegate for register()."""
+        self.register(project_id, file_path, sprint_number, area=area, operation=operation)
+
+    def record_many(
+        self,
+        project_id: str,
+        file_paths: list[str],
+        sprint_number: int,
+        area: str = "",
+        operation: str = "create",
+    ) -> None:
+        """Batch version of register() — more efficient for writing many files at once."""
         try:
             registry = self._load(project_id)
+            req_version_id = self._get_current_requirement_version_id(project_id)
             for file_path in file_paths:
                 key = self._normalize(file_path)
+                resolved_area = area.strip().lower() if area else self._infer_area(key)
                 if key in registry:
-                    registry[key]["last_updated_sprint"] = sprint_number
+                    entry = registry[key]
+                    entry["last_updated_sprint"] = sprint_number
+                    entry["operation"] = operation
+                    if resolved_area:
+                        entry["area"] = resolved_area
+                    entry["requirement_version_id"] = req_version_id
+                    sprints = entry.get("sprint_history", [])
+                    if sprint_number not in sprints:
+                        sprints.append(sprint_number)
+                    entry["sprint_history"] = sprints
                 else:
                     registry[key] = {
                         "path": key,
+                        "area": resolved_area,
                         "created_sprint": sprint_number,
                         "last_updated_sprint": sprint_number,
+                        "operation": operation,
+                        "requirement_version_id": req_version_id,
+                        "sprint_history": [sprint_number],
                     }
             self._save(project_id, registry)
         except Exception as exc:
@@ -85,10 +146,100 @@ class FileRegistry:
     def list_all(self, project_id: str) -> list[dict]:
         """Return all registered file entries for project_id."""
         try:
-            return list(self._load(project_id).values())
+            return [dict(e) for e in self._load(project_id).values()]
         except Exception as exc:
             logger.warning("file_registry.list_all: failed for %s: %s", project_id, exc)
             return []
+
+    def get_existing(self, project_id: str, area: str) -> list[dict]:
+        """Return existing files registered for project_id and area.
+
+        Requirements:
+          - Project isolation
+          - Area filtering (exact or inferred)
+          - Deterministic ordering by path
+          - No mutation of registry state
+        """
+        try:
+            target_area = area.strip().lower()
+            registry = self._load(project_id)
+            matched = []
+            for key, entry in sorted(registry.items(), key=lambda item: item[0]):
+                entry_area = (entry.get("area") or "").lower() or self._infer_area(key)
+                if entry_area == target_area:
+                    matched.append(dict(entry))
+            return matched
+        except Exception as exc:
+            logger.warning("file_registry.get_existing: failed for %s/%s: %s", project_id, area, exc)
+            return []
+
+    def get_sprint_files(self, project_id: str, sprint: int) -> list[dict]:
+        """Return files associated with project_id and sprint.
+
+        Requirements:
+          - Project isolation
+          - Exact sprint filtering (created or updated in sprint)
+          - Deterministic result ordering by path
+          - Includes enough information to determine create/update/patch status
+          - No mutation of registry state
+        """
+        try:
+            registry = self._load(project_id)
+            matched = []
+            for key, entry in sorted(registry.items(), key=lambda item: item[0]):
+                sprints = entry.get("sprint_history") or []
+                if sprint in sprints or entry.get("created_sprint") == sprint or entry.get("last_updated_sprint") == sprint:
+                    matched.append(dict(entry))
+            return matched
+        except Exception as exc:
+            logger.warning("file_registry.get_sprint_files: failed for %s/sprint %d: %s", project_id, sprint, exc)
+            return []
+
+    def was_written_in_sprint(self, project_id: str, area: str, path: str, sprint: int) -> bool:
+        """Return True only when the file was registered/written for exact project, area, normalized path, and sprint."""
+        try:
+            registry = self._load(project_id)
+            if not registry:
+                return False
+
+            norm_path = self._normalize(path)
+            target_area = area.strip().lower()
+
+            for key, entry in registry.items():
+                e_path = self._normalize(entry.get("path", key))
+                e_area = (entry.get("area") or "").lower() or self._infer_area(e_path)
+
+                # Path match (exact normalized path, or path prefixed/unprefixed by area)
+                path_matches = (
+                    e_path == norm_path
+                    or e_path == self._normalize(f"{target_area}/{norm_path}")
+                    or norm_path == self._normalize(f"{target_area}/{e_path}")
+                )
+                if not path_matches:
+                    continue
+
+                # Area match
+                area_matches = (e_area == target_area) or (not e_area and e_path.startswith(f"{target_area}/"))
+                if not area_matches:
+                    continue
+
+                # Sprint match
+                sprints = entry.get("sprint_history") or []
+                sprint_matches = (
+                    sprint in sprints
+                    or entry.get("created_sprint") == sprint
+                    or entry.get("last_updated_sprint") == sprint
+                )
+                if sprint_matches:
+                    return True
+
+            return False
+        except Exception as exc:
+            logger.warning(
+                "file_registry.was_written_in_sprint: failed for %s/%s/%s sprint %d: %s",
+                project_id, area, path, sprint, exc
+            )
+            return False
 
     def to_prompt_summary(self, project_id: str) -> str:
         """Render the registry as a compact text list for FileStructurePlanner's prompt.
@@ -112,6 +263,21 @@ class FileRegistry:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _get_current_requirement_version_id(self, project_id: str) -> str | None:
+        """Return current_requirement_version_id from project.json, or None.
+
+        Non-fatal: any failure returns None so file registration always
+        succeeds even when versioning is not yet active.
+        """
+        if not self._workspace:
+            return None
+        try:
+            pj = self._workspace.load_project_json(project_id) or {}
+            return pj.get("current_requirement_version_id") or None
+        except Exception as exc:
+            logger.debug("file_registry: could not read requirement version (non-fatal): %s", exc)
+            return None
 
     def _registry_path(self, project_id: str) -> Path | None:
         if not self._workspace:
@@ -145,3 +311,12 @@ class FileRegistry:
     @staticmethod
     def _normalize(file_path: str) -> str:
         return file_path.replace("\\", "/").lstrip("/")
+
+    @staticmethod
+    def _infer_area(file_path: str) -> str:
+        norm = file_path.replace("\\", "/").lstrip("/")
+        parts = norm.split("/")
+        if parts and parts[0] in ("backend", "frontend", "mobile"):
+            return parts[0]
+        return ""
+

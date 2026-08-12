@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from ..execution.safety_policy import OperationType, SafetyDecision, SafetyException, SafetyPolicy
 from .manager import WorkspaceManager
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -49,10 +53,37 @@ class ProjectFileManager:
         """Return project_id's real generated-project subdirectory for area (e.g. "backend", "frontend")."""
         return self.project_root(project_id) / area
 
-    def write_file(self, project_id: str, area: str, relative_path: str, content: str, *, attempt: int = 1) -> WrittenFile:
-        """Write content to project_id's real project/{area}/{relative_path}, after a SafetyPolicy check."""
+    def write_file(
+        self,
+        project_id: str,
+        area: str,
+        relative_path: str,
+        content: str,
+        *,
+        write_mode: Literal["create", "overwrite", "patch"] = "overwrite",
+        attempt: int = 1,
+    ) -> WrittenFile:
+        """Write content to project_id's real project/{area}/{relative_path}, after a SafetyPolicy check.
+
+        write_mode controls the guard applied before writing:
+          "create"    — skip if the target file already exists (safe no-op, returns bytes_written=0).
+                        Use this when PlannedFile.operation == "create" to prevent Sprint 2 from
+                        accidentally overwriting Sprint 1 files that were mis-labelled as creates.
+          "overwrite" — (default) replace any existing file, or create a new one.  Current behavior.
+          "patch"     — the caller has already merged the content; write it as-is (same as overwrite
+                        at this layer).  Patch/diff generation is NOT performed here.
+        """
         safe_relative_path = self._sanitize_relative_path(relative_path)
         target = self.area_dir(project_id, area) / safe_relative_path
+
+        # P8-2c: "create" guard — never overwrite an existing file when mode is "create".
+        if write_mode == "create" and target.is_file():
+            logger.warning(
+                "project_file_manager: file already exists, skipping create (write_mode=create): %s",
+                target,
+            )
+            return WrittenFile(path=safe_relative_path, absolute_path=target, bytes_written=0)
+
         decision = self.safety_policy.check(OperationType.FILE_OVERWRITE, str(target), attempt=attempt)
         if decision.decision == SafetyDecision.BLOCK:
             raise SafetyException(decision.reason)

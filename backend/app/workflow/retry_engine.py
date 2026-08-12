@@ -107,11 +107,13 @@ class IntelligentRetryEngine:
         # First attempt ASK_HUMAN or any AUTO_FIX → retry with targeted instruction
         strategy = "auto_fix" if rejection_type == _TIER_AUTO_FIX else "full_rewrite"
         instruction = self._build_instruction(rejection_type, review_result, attempt)
+        config = self._build_modified_config(rejection_type, attempt)
 
         return RetryPlan(
             should_retry=True,
             strategy=strategy,
             prompt_instruction=instruction,
+            modified_config=config,
             reason=f"Rejection type={rejection_type}; attempt {attempt} < {effective_max}; retrying",
             rejection_type=rejection_type,
             attempt=attempt,
@@ -170,6 +172,16 @@ class IntelligentRetryEngine:
             avg_retries = perf.get("avg_retries", 0.0)
             if score is None:
                 return self.max_retries
+            # Model-escalation flag: chronic quality issues that retrying with the
+            # same model won't fix.  Log a warning so the operator can act; actual
+            # model switching requires a ModelRouter integration (future task).
+            if perf.get("needs_model_escalation"):
+                logger.warning(
+                    "_effective_max_retries: stage %s flagged for model escalation "
+                    "(quality=needs_improvement, avg_retries=%.2f) — "
+                    "consider routing to a more capable model",
+                    stage, avg_retries,
+                )
             if score >= 0.85:
                 return min(self.max_retries + 1, 5)
             if score < 0.50 and avg_retries > 2:
@@ -177,6 +189,30 @@ class IntelligentRetryEngine:
         except Exception as exc:
             logger.debug("_effective_max_retries: scorer failed for %s: %s", stage, exc)
         return self.max_retries
+
+    def _build_modified_config(self, rejection_type: str, attempt: int) -> dict:
+        """Return LLM config overrides for the next attempt based on rejection type.
+
+        These are logged by StageRunner for observability. End-to-end application
+        (passing overrides to execute_stage) is a separate follow-up task.
+
+        Strategy map (mirrors DEV_PHASES.md spec):
+          schema_mismatch / auto_fix → temperature=0.05 (deterministic schema fix)
+          ask_human (first attempt)  → max_tokens=16384 (more complete output)
+          attempt ≥ 2               → max_tokens=16384 (token budget may be limiting)
+        Keys are merged so auto_fix at attempt ≥ 2 gets both overrides.
+        """
+        config: dict = {}
+        if rejection_type == _TIER_AUTO_FIX:
+            # Schema/structural issue — reduce temperature for deterministic output
+            config["temperature"] = 0.05
+        if rejection_type == _TIER_ASK_HUMAN:
+            # Human review needed — increase tokens so output is as complete as possible
+            config["max_tokens"] = 16384
+        if attempt >= 2:
+            # Late retry — token budget is the likely bottleneck regardless of type
+            config["max_tokens"] = 16384
+        return config
 
     def _build_instruction(self, rejection_type: str, review_result: Any | None, attempt: int) -> str:
         """Build a targeted prompt instruction for the next retry attempt."""

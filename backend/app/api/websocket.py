@@ -10,22 +10,25 @@ import os
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 
-# BUG-6 fix: valid API keys for WebSocket authentication.
-# Read from the same env var as APIKeyMiddleware (VALID_API_KEYS, comma-separated).
-def _get_valid_api_keys() -> set[str]:
+# Cache API keys once at module import time — same pattern as APIKeyMiddleware.
+# Reading the env var on every WebSocket connection caused HTTP and WebSocket
+# endpoints to diverge if os.environ was mutated between requests (test reload,
+# dynamic config).  A module-level constant keeps them consistent.
+def _load_api_keys() -> set[str]:
     raw = os.getenv("VALID_API_KEYS", "")
     if not raw:
         return set()  # empty = auth disabled (dev mode)
     return {k.strip() for k in raw.split(",") if k.strip()}
 
+_VALID_API_KEYS: set[str] = _load_api_keys()
+
 
 def _is_valid_token(token: str) -> bool:
     """Return True if token is valid, or if auth is disabled (no keys configured)."""
-    valid = _get_valid_api_keys()
-    if not valid:
+    if not _VALID_API_KEYS:
         return True  # dev mode — no keys configured
     import hmac
-    return any(hmac.compare_digest(token, k) for k in valid)
+    return any(hmac.compare_digest(token, k) for k in _VALID_API_KEYS)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

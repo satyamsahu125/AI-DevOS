@@ -11,7 +11,11 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path(os.getenv("MEMORY_DB_PATH", "backend/app/memory/memory.db"))
+# Phase 6 MIGRATE: anchored default — parents[2] from backend/app/llm/ = backend/.
+# Note: when wired via kernel/container.py, CostTracker receives an explicit absolute
+# path (data_dir / "costs.db"). This default is only used if constructed standalone.
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+_DEFAULT_DB_PATH = Path(os.getenv("MEMORY_DB_PATH", str(_DATA_DIR / "costs.db")))
 
 _shared_tracker: CostTracker | None = None
 
