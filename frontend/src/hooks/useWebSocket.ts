@@ -70,7 +70,7 @@ export function useWebSocket(
       setConnected(false)
       wsRef.current = null
       optsRef.current?.onDisconnect?.()   // notify caller immediately
-      timerRef.current = setTimeout(() => {
+      timerRef.current = window.setTimeout(() => {
         delayRef.current = Math.min(delayRef.current * 2, 8000)  // cap at 8 s
         connect()
       }, delayRef.current)

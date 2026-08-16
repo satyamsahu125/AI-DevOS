@@ -384,3 +384,30 @@ class TestStageRunnerFirstAttemptApproval:
         assert result.attempt_count == 1
         assert em.execute_stage.call_count == 1
         policy_mock.should_retry.assert_not_called()
+
+
+class TestStageRunnerDeterministicErrors:
+
+    def test_deterministic_dependency_exception_fails_immediately(self):
+        """DependencyException must stop the loop immediately on attempt 1 without 5 retries."""
+        from app.core.exceptions import DependencyException
+        em = MagicMock()
+        em.execute_stage.side_effect = DependencyException("agent sprintdelta is not registered")
+
+        rv_mock = MagicMock()
+        policy_mock = MagicMock()
+        policy_mock.should_retry.return_value = True
+
+        runner = _make_stage_runner(
+            execution_manager=em,
+            reviewer=rv_mock,
+            retry_policy=policy_mock,
+            retry_engine=None,
+        )
+        result = runner.run("proj-1", "SprintDelta", "context")
+
+        assert result.success is False
+        assert result.attempt_count == 1
+        assert em.execute_stage.call_count == 1
+        assert "DependencyException" in result.message
+

@@ -15,6 +15,7 @@ except ImportError:
 # ── End early .env load ────────────────────────────────────────────────────────
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
@@ -28,6 +29,7 @@ from .api.middleware.rate_limit import RateLimitMiddleware
 from .api.middleware.request_size import RequestSizeLimitMiddleware
 from .api.middleware.logging_context import LoggingContextMiddleware
 from .api.router import api_router
+from .core.startup_validator import StartupValidator
 from .events.broadcaster import broadcaster
 from .kernel.kernel import AIKernel
 from .observability.logging import configure_logging
@@ -40,11 +42,32 @@ configure_logging()
 # R10: configure distributed tracing (no-op when OTEL_ENDPOINT is not set)
 configure_tracing()
 
+_startup_logger = logging.getLogger(__name__)
+
 kernel = AIKernel()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ── Startup validation ───────────────────────────────────────────────────
+    errors = StartupValidator().validate()
+    if errors:
+        for err in errors:
+            _startup_logger.critical("[startup] %s", err)
+        raise RuntimeError(
+            f"Startup validation failed ({len(errors)} error(s)). "
+            "Fix the issues above and restart."
+        )
+
+    # ── Startup summary log ──────────────────────────────────────────────────
+    provider = _os.getenv("LLM_PROVIDER", "ollama")
+    model    = _os.getenv("LLM_MODEL", "<default>")
+    version  = "2.0.0"
+    _startup_logger.info(
+        "[startup] AI DevOS v%s ready — provider=%s model=%s",
+        version, provider, model,
+    )
+
     # FIX-B: Capture the uvicorn event loop so the broadcaster can schedule
     # WebSocket sends from FastAPI BackgroundTask threads (which have no loop).
     broadcaster.bind_loop(asyncio.get_running_loop())
@@ -120,18 +143,11 @@ def create_application() -> FastAPI:
     instrument_fastapi(app)
 
     # Phase 6: Prometheus /metrics endpoint.
-    # Disabled when PROMETHEUS_ENABLED=false (default); enable in production.
+    # Enabled by default (PROMETHEUS_ENABLED=true); set false to disable.
     instrument_prometheus(app)
 
     app.include_router(api_router)
     app.add_exception_handler(ApplicationException, application_exception_handler)
-
-    @app.get("/ready")
-    def top_ready(response: Response):
-        from .api.health import ready
-        from .api.dependencies import get_llm_manager, get_memory_manager, get_container
-        c = get_container()
-        return ready(response, llm_manager=c.llm_manager, memory_manager=c.memory_manager)
 
     return app
 

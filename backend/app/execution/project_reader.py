@@ -75,16 +75,38 @@ class ProjectReader:
                 logger.warning("Could not read %s: %s", file_path, e)
         return None
 
+    # Directories that are never useful to expose to agents — exclude them from
+    # both list_all_files() and any file-content scanning.
+    _SKIP_DIRS: frozenset[str] = frozenset({
+        "node_modules", "__pycache__", ".git", "venv", ".venv",
+        ".expo", ".gradle", ".idea", ".DS_Store", "build", "dist",
+        ".pytest_cache", ".ruff_cache", "coverage",
+    })
+
     def list_all_files(self, project_id: str) -> list[str]:
-        """List all files in project directory."""
+        """List source/config files in the project directory.
+
+        Excludes generated/dependency directories (node_modules, __pycache__,
+        .git, venv, build, dist, etc.) so that the returned list stays small
+        enough to embed in an LLM prompt without causing context-window overflow.
+        A React Native project's node_modules alone can hold 50 000+ files.
+        """
         project_dir = self.get_project_dir(project_id)
         if not project_dir.exists():
             return []
-        return [
-            str(p.relative_to(project_dir)).replace("\\", "/")
-            for p in sorted(project_dir.rglob("*"))
-            if p.is_file() and ".attempt-" not in p.name and "_attempt_" not in p.name
-        ]
+
+        results: list[str] = []
+        for p in sorted(project_dir.rglob("*")):
+            if not p.is_file():
+                continue
+            # Skip anything under a blocked directory name at any depth
+            if any(part in self._SKIP_DIRS for part in p.parts):
+                continue
+            name = p.name
+            if ".attempt-" in name or "_attempt_" in name:
+                continue
+            results.append(str(p.relative_to(project_dir)).replace("\\", "/"))
+        return results
 
     def get_api_routes(self, project_id: str) -> list[dict]:
         """Parse router files to extract API endpoints.

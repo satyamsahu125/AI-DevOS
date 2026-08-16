@@ -28,6 +28,7 @@ class LLMSettingsUpdate(BaseModel):
     gemini_api_key: str | None = None
 
 
+@router.get("/api/settings/llm")
 @router.get("/settings/llm")
 def get_llm_settings(manager: LLMManager = Depends(get_llm_manager)) -> dict:
     """Report the active provider/model. API keys are never echoed, only whether they are set."""
@@ -43,6 +44,7 @@ def get_llm_settings(manager: LLMManager = Depends(get_llm_manager)) -> dict:
     }
 
 
+@router.post("/api/settings/llm")
 @router.post("/settings/llm")
 def update_llm_settings(
     update: LLMSettingsUpdate,
@@ -64,6 +66,7 @@ def update_llm_settings(
     return get_llm_settings(manager)
 
 
+@router.get("/api/settings/providers")
 @router.get("/settings/providers")
 def list_providers(manager: LLMManager = Depends(get_llm_manager)) -> dict:
     """Catalog of selectable providers for the Settings UI."""

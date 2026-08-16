@@ -26,18 +26,18 @@ router = APIRouter(tags=["analytics"])
 
 def _get_learning_loop():
     """Lazy-resolve LearningLoop from DI container — avoids circular imports at module load."""
-    from ..kernel.container import container
+    from .dependencies import get_container
     try:
-        return container.resolve("learning_loop")
+        return get_container().resolve("learning_loop")
     except Exception:
         return None
 
 
 def _get_lesson_store():
     """Lazy-resolve LessonStore from DI container."""
-    from ..kernel.container import container
+    from .dependencies import get_container
     try:
-        return container.resolve("lesson_store")
+        return get_container().resolve("lesson_store")
     except Exception:
         return None
 

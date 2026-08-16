@@ -12,6 +12,26 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
+# Maximum characters allowed in the prompt sent to the LLM.
+# Bedrock Claude models have a 262 144-token context window; at ~3.5 chars/token
+# that is ~917 000 chars total.  Reserving ~4 096 output tokens (14 336 chars)
+# and a 20 % safety margin gives a safe input cap of ~720 000 chars.
+# We use 600 000 to leave headroom for the system prompt added by the provider.
+_MAX_CONTEXT_CHARS: int = 600_000
+
+# Substrings that identify a provider context-length rejection.
+# When the exception message contains any of these, the error is caused by an
+# oversized prompt — not by a logic bug in the agent — and can be mitigated
+# by trimming the context before the next attempt.
+_CONTEXT_OVERFLOW_MARKERS: tuple[str, ...] = (
+    "maximum context length",
+    "input tokens",
+    "context window",
+    "prompt is too long",
+    "reduce the length",
+    "exceeds the model's maximum",
+)
+
 
 @dataclass
 class StageRunResult:
@@ -152,17 +172,30 @@ class StageRunner:
                 else self._build_retry_context(context, reviewer_feedback, attempt)
             )
 
+            # ── Pre-flight context trim ───────────────────────────────
+            # Guard against context-window overflow: if the assembled prompt
+            # exceeds _MAX_CONTEXT_CHARS, trim it before hitting the LLM.
+            # This is the last line of defence after the ContextBudget
+            # enrichment limits have already been applied.
+            effective_context = self._trim_context_for_model(effective_context)
+
             # ── Execute ──────────────────────────────────────────────
             try:
                 exec_result = self.execution_manager.execute_stage(
                     project_id, stage_name, effective_context, attempt=attempt + 1,
                 )
                 artifact = exec_result.artifact
+                # Capture the PREVIOUS attempt's summary before overwriting it.
+                # previous_content is None on the first attempt (nothing to compare against)
+                # and the prior artifact summary on retries — this avoids the first-attempt
+                # false-positive where content == previous_content because both point at
+                # the same freshly-generated artifact.
+                prev_artifact_summary = last_artifact_summary if attempt > 0 else None
                 last_artifact_summary = (artifact.content or "")[:300]
                 arch_endpoints, arch_modules = self._load_architecture_context(project_id)
                 review_result = self.reviewer.review(
                     artifact,
-                    previous_content=last_artifact_summary or None,
+                    previous_content=prev_artifact_summary or None,
                     architecture_endpoints=arch_endpoints,
                     architecture_modules=arch_modules,
                 )
@@ -177,6 +210,34 @@ class StageRunner:
                 self.broadcaster.stage_retry(project_id, stage_name, attempt + 2, last_error)
                 failed_approaches.append(last_error)
                 attempt += 1
+
+                # Stop loop immediately on deterministic/unrecoverable errors
+                # (missing agent, config, missing file) or after max 5 attempts.
+                #
+                # Context-overflow errors (HTTP 400 "input tokens exceed …") are
+                # explicitly NOT deterministic — the pre-flight trim on the next
+                # attempt will reduce the prompt size so the call can succeed.
+                exc_type_name = type(exc).__name__
+                exc_message = str(exc).lower()
+                is_context_overflow = any(
+                    marker in exc_message
+                    for marker in _CONTEXT_OVERFLOW_MARKERS
+                )
+                is_deterministic = (
+                    not is_context_overflow  # overflow is always recoverable
+                    and (
+                        isinstance(exc, (FileNotFoundError, ImportError, AttributeError))
+                        or "DependencyException" in exc_type_name
+                        or "ProviderValidationException" in exc_type_name
+                        or "ConfigurationException" in exc_type_name
+                    )
+                )
+                if attempt >= 5 or is_deterministic:
+                    logger.error(
+                        "stage %s failed after %d attempt(s) (deterministic/unrecoverable error): %s",
+                        stage_name, attempt, exc,
+                    )
+                    break
                 continue
 
             # ── Attempt hook (trajectory recording etc.) ─────────────
@@ -345,6 +406,46 @@ class StageRunner:
                 line += f" -- Suggestion: {finding.suggestion}"
             lines.append(line)
         return "\n".join(lines)
+
+    @staticmethod
+    def _trim_context_for_model(
+        context: str, limit: int = _MAX_CONTEXT_CHARS
+    ) -> str:
+        """Trim *context* so it fits within the model's context window.
+
+        Strategy
+        --------
+        Keep the front 45 % (task description, requirements, architecture
+        decisions) and the tail 35 % (most-recent sprint output, reviewer
+        feedback) — 80 % total, leaving 20 % headroom beneath *limit*.
+        The discarded middle contains older intermediate sprint deltas that
+        are least relevant to the current attempt.
+
+        A clearly labelled sentinel is injected where the content was removed
+        so the model is aware that trimming occurred rather than encountering
+        a silent mid-document truncation.
+
+        Logs a WARNING when trimming occurs so ops can detect projects whose
+        accumulated context systematically exceeds the safe cap.
+        """
+        if len(context) <= limit:
+            return context
+
+        front_chars = int(limit * 0.45)
+        tail_chars = int(limit * 0.35)
+        removed = len(context) - front_chars - tail_chars
+
+        sentinel = (
+            f"\n\n...[CONTEXT TRIMMED: {removed:,} characters of intermediate "
+            f"sprint output removed to fit the model context window. "
+            f"Focus on the task requirements above and the most-recent output below.]\n\n"
+        )
+        trimmed = context[:front_chars] + sentinel + context[-tail_chars:]
+        logger.warning(
+            "context trimmed for model: original_chars=%d trimmed_chars=%d limit=%d",
+            len(context), len(trimmed), limit,
+        )
+        return trimmed
 
     def _load_architecture_context(
         self, project_id: str

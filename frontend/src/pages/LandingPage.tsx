@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react"
 import { useNavigate } from "react-router-dom"
+import { motion, useInView, useAnimation } from "framer-motion"
 import { useAuth } from "../lib/auth"
 
 // ── Agent data ──────────────────────────────────────────────────────────────
@@ -27,10 +28,72 @@ const PROMPTS = [
   "Build an e-commerce store with inventory management, Stripe checkout, and an admin panel.",
 ]
 
+const STATS = [
+  { value: "20", label: "Pipeline Stages" },
+  { value: "12", label: "AI Agents" },
+  { value: "65+", label: "API Endpoints" },
+  { value: "100%", label: "Autonomous" },
+  { value: "0", label: "Boilerplate" },
+  { value: "∞", label: "Scalability" },
+]
+
+// ── Animation variants ────────────────────────────────────────────────────────
+const fadeUp = {
+  hidden: { opacity: 0, y: 24 },
+  visible: (i = 0) => ({
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.5, ease: "easeOut", delay: i * 0.08 },
+  }),
+}
+
+const stagger = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.07 } },
+}
+
+const cardVariant = {
+  hidden: { opacity: 0, y: 20, scale: 0.96 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: { type: "spring" as const, stiffness: 260, damping: 22 },
+  },
+}
+
+// ── ScrollSection wrapper ─────────────────────────────────────────────────────
+function ScrollSection({ children, className, style }: {
+  children: React.ReactNode
+  className?: string
+  style?: React.CSSProperties
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const inView = useInView(ref, { once: true, margin: "-80px" })
+  return (
+    <motion.div
+      ref={ref}
+      variants={stagger}
+      initial="hidden"
+      animate={inView ? "visible" : "hidden"}
+      className={className}
+      style={style}
+    >
+      {children}
+    </motion.div>
+  )
+}
+
 function AgentCard({ agent, rtl }: { agent: (typeof AGENTS)[number]; rtl?: boolean }) {
   const lines = agent.name.split("\n")
   return (
-    <div className="agent-card" style={rtl ? { direction: "ltr" } : undefined}>
+    <motion.div
+      variants={cardVariant}
+      whileHover={{ scale: 1.04, y: -4 }}
+      transition={{ type: "spring", stiffness: 300, damping: 24 }}
+      className="agent-card"
+      style={rtl ? { direction: "ltr" } : undefined}
+    >
       <div className="agent-card-glow" />
       <div className="agent-n">{agent.n}</div>
       <span className="agent-ico">{agent.icon}</span>
@@ -38,7 +101,7 @@ function AgentCard({ agent, rtl }: { agent: (typeof AGENTS)[number]; rtl?: boole
         {lines[0]}{lines[1] ? <><br />{lines[1]}</> : null}
       </div>
       <div className="agent-sub">{agent.sub}</div>
-    </div>
+    </motion.div>
   )
 }
 
@@ -49,9 +112,9 @@ export function LandingPage() {
   const statusLabelRef = useRef<HTMLSpanElement>(null)
   const { user, loading } = useAuth()
 
-  // Redirect already-authenticated users straight to their projects
+  // Redirect already-authenticated users straight to their projects (only if not anonymous)
   useEffect(() => {
-    if (!loading && user) {
+    if (!loading && user && !user.anonymous) {
       navigate("/projects", { replace: true })
     }
   }, [user, loading, navigate])
@@ -63,17 +126,6 @@ export function LandingPage() {
     const onScroll = () => el.classList.toggle("stuck", window.scrollY > 12)
     window.addEventListener("scroll", onScroll, { passive: true })
     return () => window.removeEventListener("scroll", onScroll)
-  }, [])
-
-  // Scroll reveal
-  useEffect(() => {
-    const io = new IntersectionObserver(entries => {
-      entries.forEach(e => {
-        if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target) }
-      })
-    }, { threshold: 0.1 })
-    document.querySelectorAll(".fu").forEach(el => io.observe(el))
-    return () => io.disconnect()
   }, [])
 
   // Agent highlight cycle
@@ -145,25 +197,45 @@ export function LandingPage() {
         </div>
       </nav>
 
-      {/* Hero */}
+      {/* Hero — Framer Motion entrance */}
       <section className="land-hero">
         <div className="land-hero-grid" />
         <div className="land-hero-glow" />
 
-        <div className="land-badge">
+        <motion.div
+          className="land-badge"
+          initial={{ opacity: 0, y: -12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.1 }}
+        >
           <div className="land-badge-dot" />
           12 agents · Zero developers needed
-        </div>
+        </motion.div>
 
-        <h1 className="land-headline">
+        <motion.h1
+          className="land-headline"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.2, ease: "easeOut" }}
+        >
           Software<br />builds itself.
-        </h1>
+        </motion.h1>
 
-        <p className="land-sub">
+        <motion.p
+          className="land-sub"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.55, delay: 0.35, ease: "easeOut" }}
+        >
           Describe your project in plain English. A coordinated team of AI agents handles architecture, design, code, testing, and deployment — end to end.
-        </p>
+        </motion.p>
 
-        <div className="land-terminal">
+        <motion.div
+          className="land-terminal"
+          initial={{ opacity: 0, y: 24, scale: 0.97 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.6, delay: 0.5, ease: "easeOut" }}
+        >
           <div className="land-term-chrome">
             <div className="land-tchr-dot" style={{ background: "#ff5f57" }} />
             <div className="land-tchr-dot" style={{ background: "#febc2e" }} />
@@ -187,63 +259,125 @@ export function LandingPage() {
             </div>
             <span className="land-status-agent" ref={statusLabelRef}>Architect</span>
           </div>
-        </div>
+        </motion.div>
 
-        <button className="land-btn land-btn-lg" onClick={() => navigate("/projects")}>
+        <motion.button
+          className="land-btn land-btn-lg"
+          onClick={() => navigate("/projects")}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, delay: 0.7 }}
+          whileHover={{ scale: 1.04 }}
+          whileTap={{ scale: 0.97 }}
+        >
           Start Building <i className="arr">→</i>
-        </button>
+        </motion.button>
       </section>
 
-      <hr style={{ border: "none", borderTop: "1px solid var(--color-divider)" }} />
+      {/* Stats bar */}
+      <ScrollSection
+        style={{
+          borderTop: "1px solid var(--color-divider, rgba(255,255,255,0.07))",
+          borderBottom: "1px solid var(--color-divider, rgba(255,255,255,0.07))",
+          padding: "20px 0",
+          display: "flex",
+          justifyContent: "center",
+        }}
+      >
+        <div style={{
+          display: "flex",
+          gap: 0,
+          flexWrap: "wrap",
+          justifyContent: "center",
+          maxWidth: 900,
+          width: "100%",
+        }}>
+          {STATS.map((stat, i) => (
+            <motion.div
+              key={stat.label}
+              variants={fadeUp}
+              custom={i}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                padding: "8px 32px",
+                borderRight: i < STATS.length - 1 ? "1px solid rgba(255,255,255,0.07)" : "none",
+              }}
+            >
+              <span style={{
+                fontSize: 24,
+                fontWeight: 700,
+                background: "linear-gradient(135deg, #8B5CF6, #06B6D4)",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+                letterSpacing: "-0.03em",
+                fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
+              }}>
+                {stat.value}
+              </span>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2, whiteSpace: "nowrap" }}>
+                {stat.label}
+              </span>
+            </motion.div>
+          ))}
+        </div>
+      </ScrollSection>
 
       {/* Steps */}
       <div className="land-steps-band">
         <div className="land-wrap">
-          <div className="land-steps-head fu">
-            <div className="land-eyebrow">How it works</div>
-            <h2>Three steps. One finished product.</h2>
-          </div>
-          <div className="land-steps-grid">
-            <div className="land-step fu d1">
-              <div className="land-step-orb">
-                ✏️<span className="land-step-num">1</span>
-              </div>
-              <h3>Describe</h3>
-              <p>Write what you want to build in plain English. Be brief or exhaustive — the agents read everything and ask if they need more.</p>
+          <ScrollSection>
+            <motion.div className="land-steps-head" variants={fadeUp}>
+              <div className="land-eyebrow">How it works</div>
+              <h2>Three steps. One finished product.</h2>
+            </motion.div>
+          </ScrollSection>
+          <ScrollSection>
+            <div className="land-steps-grid">
+              <motion.div className="land-step" variants={fadeUp} custom={0}>
+                <div className="land-step-orb">
+                  ✏️<span className="land-step-num">1</span>
+                </div>
+                <h3>Describe</h3>
+                <p>Write what you want to build in plain English. Be brief or exhaustive — the agents read everything and ask if they need more.</p>
+              </motion.div>
+              <motion.div className="land-step-arrow" variants={fadeUp} custom={1}>→</motion.div>
+              <motion.div className="land-step" variants={fadeUp} custom={2}>
+                <div className="land-step-orb">
+                  👁<span className="land-step-num">2</span>
+                </div>
+                <h3>Watch</h3>
+                <p>A pipeline of 12 specialized agents kicks off in sequence — planning, designing, building, testing, and shipping, all autonomously.</p>
+              </motion.div>
+              <motion.div className="land-step-arrow" variants={fadeUp} custom={3}>→</motion.div>
+              <motion.div className="land-step" variants={fadeUp} custom={4}>
+                <div className="land-step-orb">
+                  📦<span className="land-step-num">3</span>
+                </div>
+                <h3>Download</h3>
+                <p>Receive a complete, production-ready project — documented, tested, and deployable. Built without you writing a single line of code.</p>
+              </motion.div>
             </div>
-            <div className="land-step-arrow fu">→</div>
-            <div className="land-step fu d2">
-              <div className="land-step-orb">
-                👁<span className="land-step-num">2</span>
-              </div>
-              <h3>Watch</h3>
-              <p>A pipeline of 12 specialized agents kicks off in sequence — planning, designing, building, testing, and shipping, all autonomously.</p>
-            </div>
-            <div className="land-step-arrow fu d1">→</div>
-            <div className="land-step fu d3">
-              <div className="land-step-orb">
-                📦<span className="land-step-num">3</span>
-              </div>
-              <h3>Download</h3>
-              <p>Receive a complete, production-ready project — documented, tested, and deployable. Built without you writing a single line of code.</p>
-            </div>
-          </div>
+          </ScrollSection>
         </div>
       </div>
 
       {/* Pipeline */}
       <section className="land-pipeline">
         <div className="land-wrap">
-          <div className="land-pipeline-head fu">
-            <div className="land-eyebrow">The team</div>
-            <h2>12 agents. One shared goal.</h2>
-            <p>Each agent owns a specific discipline and hands off to the next. Every stage is reviewed before the next begins.</p>
-          </div>
+          <ScrollSection>
+            <motion.div className="land-pipeline-head" variants={fadeUp}>
+              <div className="land-eyebrow">The team</div>
+              <h2>12 agents. One shared goal.</h2>
+              <p>Each agent owns a specific discipline and hands off to the next. Every stage is reviewed before the next begins.</p>
+            </motion.div>
+          </ScrollSection>
 
           <div>
-            <div className="land-agents-row fu">
+            <ScrollSection className="land-agents-row">
               {AGENTS.slice(0, 6).map(a => <AgentCard key={a.n} agent={a} />)}
-            </div>
+            </ScrollSection>
 
             <div className="land-row-bridge">
               <svg className="land-bridge-path" viewBox="0 0 100 48" preserveAspectRatio="none" fill="none">
@@ -253,9 +387,9 @@ export function LandingPage() {
               </svg>
             </div>
 
-            <div className="land-agents-row fu" style={{ direction: "rtl" }}>
+            <ScrollSection className="land-agents-row" style={{ direction: "rtl" }}>
               {AGENTS.slice(6).map(a => <AgentCard key={a.n} agent={a} rtl />)}
-            </div>
+            </ScrollSection>
           </div>
         </div>
       </section>
@@ -264,12 +398,21 @@ export function LandingPage() {
       <section className="land-cta">
         <div className="land-cta-glow" />
         <div className="land-wrap">
-          <div className="land-eyebrow fu">Ready when you are</div>
-          <h2 className="fu d1">Your next build starts<br />with one sentence.</h2>
-          <p className="land-cta-sub fu d2">No infrastructure. No hiring. No setup required.</p>
-          <button className="land-btn land-btn-lg fu d3" onClick={() => navigate("/projects")}>
-            Start Building <i className="arr">→</i>
-          </button>
+          <ScrollSection>
+            <motion.div className="land-eyebrow" variants={fadeUp}>Ready when you are</motion.div>
+            <motion.h2 variants={fadeUp} custom={1}>Your next build starts<br />with one sentence.</motion.h2>
+            <motion.p className="land-cta-sub" variants={fadeUp} custom={2}>No infrastructure. No hiring. No setup required.</motion.p>
+            <motion.button
+              className="land-btn land-btn-lg"
+              variants={fadeUp}
+              custom={3}
+              onClick={() => navigate("/projects")}
+              whileHover={{ scale: 1.04 }}
+              whileTap={{ scale: 0.97 }}
+            >
+              Start Building <i className="arr">→</i>
+            </motion.button>
+          </ScrollSection>
         </div>
       </section>
 

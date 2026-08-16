@@ -72,6 +72,24 @@ class LLMManager:
             api_key = getattr(llm, "claude_api_key", "") or llm.bedrock_api_key
         elif provider_name == "gemini":
             api_key = getattr(llm, "gemini_api_key", "") or llm.bedrock_api_key
+        elif provider_name == "bedrock":
+            api_key = getattr(llm, "bedrock_api_key", "")
+            has_boto3_creds = False
+            try:
+                import boto3
+                has_boto3_creds = bool(boto3.Session().get_credentials())
+            except Exception:
+                pass
+            if not api_key and not has_boto3_creds:
+                logger.warning(
+                    "[LLMManager] Bedrock provider selected but no credentials configured. "
+                    "Falling back to Ollama provider."
+                )
+                return self._factory.create_provider(
+                    "ollama",
+                    base_url=getattr(llm, "base_url", "http://localhost:11434"),
+                    timeout=getattr(llm, "timeout", 1200),
+                )
         else:
             api_key = ""
         return self._factory.create_provider(

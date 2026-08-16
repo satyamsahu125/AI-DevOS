@@ -67,7 +67,7 @@ class LLMFactory:
             return GeminiProvider(api_key=key, base_url=gemini_url, timeout=timeout)
 
         if name == "bedrock":
-            return BedrockProvider(api_key=bedrock_api_key, region=bedrock_region)
+            return BedrockProvider(api_key=bedrock_api_key or api_key, region=bedrock_region, timeout=timeout)
 
         raise ValueError(
             f"Unsupported provider: '{provider_name}'. "

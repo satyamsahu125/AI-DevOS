@@ -57,7 +57,7 @@ function renderLanding() {
   )
 }
 
-function setupAuth(user: Parameters<typeof vi.mocked<typeof useAuth>>[0] extends (...a: infer A) => infer R ? R : never) {
+function setupAuth(user: Parameters<typeof vi.mocked<typeof useAuth>>[0] extends (...a: infer _A) => infer R ? R : never) {
   vi.mocked(useAuth).mockReturnValue(user)
 }
 

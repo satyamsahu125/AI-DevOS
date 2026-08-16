@@ -64,7 +64,7 @@ def configure_tracing() -> None:
     _configured = True
 
     if not _OTEL_ENABLED:
-        logger.info(
+        logger.warning(
             "[tracing] OTEL_ENDPOINT not set — distributed tracing disabled. "
             "Set OTEL_ENDPOINT=http://otel-collector:4317 to enable."
         )

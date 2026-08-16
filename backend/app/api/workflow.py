@@ -263,7 +263,19 @@ def continue_workflow(
             "message": "Workflow is already running in background",
         }
 
-    launch_pipeline_background(manager, project_id, original_request)
+    curr_state = workspace_manager.get_state(project_id)
+    curr_state_str = (curr_state.value if hasattr(curr_state, "value") else str(curr_state)).lower()
+
+    if curr_state_str == "architecture_review_pending":
+        workspace_manager.update_state(project_id, ProjectState.ARCHITECTURE_READY)
+    elif curr_state_str == "design_review_pending":
+        workspace_manager.update_state(project_id, ProjectState.DESIGN_APPROVED)
+    elif curr_state_str == "sprint_plan_review_pending":
+        workspace_manager.update_state(project_id, ProjectState.SPRINT_PLAN_READY)
+
+    skip_qa = curr_state_str in ("empty", "clarifying", "qa_pending", "qa_in_progress")
+
+    launch_pipeline_background(manager, project_id, original_request, skip_qa=skip_qa)
     state = workspace_manager.get_state(project_id)
     return {
         "project_id": project_id,

@@ -9,31 +9,29 @@
  *   - Loading state → shows spinner (no redirect yet)
  *   - Unauthenticated at protected route → redirects to /login
  *   - Authenticated at protected route → renders the page
- *   - Unauthenticated at / → landing page shown
- *   - Wildcard route → redirects to /
+ *   - Wildcard route → redirects to /projects (or /login if unauthed)
  */
 
 import { render, screen, waitFor } from "@testing-library/react"
-import { App } from "./App"
+import App from "./App"
 import { useAuth } from "./lib/auth"
 
-// Mock every page so tests don't need their heavy deps (IntersectionObserver, api calls, etc.)
-vi.mock("./pages/LandingPage",  () => ({ LandingPage:  () => <div>landing-page</div>  }))
-vi.mock("./pages/LoginPage",    () => ({ LoginPage:    () => <div>login-page</div>    }))
-vi.mock("./pages/ProjectsPage", () => ({ ProjectsPage: () => <div>projects-page</div> }))
-vi.mock("./pages/WorkspacePage",() => ({ WorkspacePage:() => <div>workspace-page</div>}))
-vi.mock("./pages/SettingsPage", () => ({ SettingsPage: () => <div>settings-page</div> }))
-vi.mock("./pages/AnalyticsPage",() => ({ AnalyticsPage:() => <div>analytics-page</div>}))
-vi.mock("./pages/AdminPage",    () => ({ AdminPage:    () => <div>admin-page</div>    }))
+// Mock every page so tests don't need their heavy deps
+vi.mock("./pages/LoginPage",    () => ({ default: () => <div>login-page</div>    }))
+vi.mock("./pages/ProjectsPage", () => ({ default: () => <div>projects-page</div> }))
+vi.mock("./pages/WorkspacePage",() => ({ default: () => <div>workspace-page</div>}))
+vi.mock("./pages/SettingsPage", () => ({ default: () => <div>settings-page</div> }))
+vi.mock("./pages/AnalyticsPage",() => ({ default: () => <div>analytics-page</div>}))
+vi.mock("./pages/AdminPage",    () => ({ default: () => <div>admin-page</div>    }))
 
-// AppLayout must render Outlet so nested protected routes appear
-vi.mock("./components/layout/AppLayout", async () => {
+// AppShell must render Outlet so nested protected routes appear
+vi.mock("./components/layout/AppShell", async () => {
   const { Outlet } = await vi.importActual<typeof import("react-router-dom")>("react-router-dom")
-  return { AppLayout: () => <Outlet /> }
+  return { default: () => <Outlet /> }
 })
 
 // Shallow-mock auth — individual tests override via vi.mocked(useAuth).mockReturnValue
-vi.mock("./lib/auth", () => ({ useAuth: vi.fn() }))
+vi.mock("./lib/auth", () => ({ useAuth: vi.fn(), AuthProvider: ({ children }: any) => children }))
 
 // Stable mock-return builder
 const authenticated = () =>
@@ -58,7 +56,7 @@ const unauthenticated = () =>
     getToken: vi.fn(() => null),
   })
 
-const loading = () =>
+const loadingState = () =>
   vi.mocked(useAuth).mockReturnValue({
     user: null,
     loading: true,
@@ -78,7 +76,7 @@ afterEach(() => {
 
 describe("ProtectedRoute", () => {
   it("shows spinner while loading (no redirect yet)", async () => {
-    loading()
+    loadingState()
     window.history.pushState({}, "", "/projects")
     render(<App />)
 
@@ -121,23 +119,40 @@ describe("ProtectedRoute", () => {
 })
 
 describe("Public routes", () => {
-  it("renders landing page at /", () => {
-    unauthenticated()
-    render(<App />)
-    expect(screen.getByText("landing-page")).toBeInTheDocument()
-  })
-
-  it("renders login page at /login", () => {
+  it("renders login page at /login when unauthenticated", () => {
     unauthenticated()
     window.history.pushState({}, "", "/login")
     render(<App />)
     expect(screen.getByText("login-page")).toBeInTheDocument()
   })
 
-  it("redirects wildcard paths to / (landing)", () => {
+  it("redirects authenticated user from /login to /projects", async () => {
+    authenticated()
+    window.history.pushState({}, "", "/login")
+    render(<App />)
+
+    await waitFor(() =>
+      expect(screen.getByText("projects-page")).toBeInTheDocument(),
+    )
+  })
+
+  it("redirects wildcard paths to /projects when authenticated", async () => {
+    authenticated()
+    window.history.pushState({}, "", "/does-not-exist")
+    render(<App />)
+
+    await waitFor(() =>
+      expect(screen.getByText("projects-page")).toBeInTheDocument(),
+    )
+  })
+
+  it("redirects wildcard paths to /login when unauthenticated", async () => {
     unauthenticated()
     window.history.pushState({}, "", "/does-not-exist")
     render(<App />)
-    expect(screen.getByText("landing-page")).toBeInTheDocument()
+
+    await waitFor(() =>
+      expect(screen.getByText("login-page")).toBeInTheDocument(),
+    )
   })
 })

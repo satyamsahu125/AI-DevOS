@@ -132,8 +132,15 @@ class BedrockProvider(LLMProvider):
             },
             method="POST",
         )
-        with urlopen(req, timeout=self.timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
+        try:
+            with urlopen(req, timeout=self.timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            try:
+                err_body = exc.read().decode("utf-8")
+                raise ValueError(f"HTTP {exc.code} {exc.reason}: {err_body}") from exc
+            except Exception:
+                raise
 
     # ── Auth mode 2: SigV4 via boto3 ─────────────────────────────────────────
 

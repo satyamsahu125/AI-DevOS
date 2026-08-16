@@ -1,6 +1,6 @@
-// Central API client — all requests go through /api, proxied by Vite to localhost:8000
+// Central API client — all requests go through /api/v1, proxied by Vite to localhost:8000
 
-const BASE = "/api"
+const BASE = "/api/v1"
 
 export class ApiError extends Error {
   status: number
@@ -17,10 +17,11 @@ export function setTokenProvider(fn: () => string | null) { _getToken = fn }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = _getToken?.()
-  const authHeader = token ? { "Authorization": `Bearer ${token}` } : {}
+  const authHeader: Record<string, string> = token ? { "Authorization": `Bearer ${token}` } : {}
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...authHeader, ...(init?.headers as Record<string, string> ?? {}) }
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...authHeader, ...(init?.headers ?? {}) },
     ...init,
+    headers,
   })
   if (!res.ok) {
     let detail = res.statusText
@@ -344,7 +345,7 @@ export interface GateInfo {
 // ── API calls ──────────────────────────────────────────────────────────────
 
 export const api = {
-  // Health
+  // Health (available at both /health and /api/v1/health — use versioned path for consistency)
   health: () => request<{ status: string }>("/health"),
   ready:  () => request<ReadyStatus>("/ready"),
 

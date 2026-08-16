@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .builder import PromptBuilder
 from .context_extractor import SlimContextExtractor
+from ..shared.language_profile import LanguageProfile
 
 # Fields BackendDev needs from the accumulated context (Architect + FilePlanner artifacts).
 # Dropping frontend layers, design specs, and non-backend api_endpoints saves ~3-6K tokens.
@@ -125,16 +126,63 @@ class BackendPromptBuilder(PromptBuilder, SlimContextExtractor):
 
     Uses SlimContextExtractor to pull only backend-relevant fields, saving ~60%
     of context tokens vs passing the full accumulated artifact chain.
+
+    When a :class:`~app.shared.language_profile.LanguageProfile` is provided to
+    :meth:`build`, a concise technology hint is prepended to the context body.
+    This makes the exact language, framework, package manager, and toolchain
+    explicit to the LLM even when the slim-extracted context omits the full
+    tech_stack detail.
     """
 
     def __init__(self) -> None:
         super().__init__(role="Backend Developer")
 
-    def build(self, context: object | None = None) -> str:
+    def build(
+        self,
+        context: object | None = None,
+        language_profile: LanguageProfile | None = None,
+    ) -> str:
+        """Build the backend developer prompt.
+
+        Parameters
+        ----------
+        context:
+            The accumulated workflow context (Architect + FilePlanner artifacts).
+            Passed through :class:`~app.prompt.context_extractor.SlimContextExtractor`
+            to extract only backend-relevant fields.
+        language_profile:
+            Optional resolved :class:`~app.shared.language_profile.LanguageProfile`.
+            When provided, a structured technology hint block is prepended to the
+            context body so the LLM receives an unambiguous language/framework
+            declaration regardless of how slim the extracted context is.
+
+            When ``None``, behaviour is identical to the previous implementation
+            (fully backward compatible).
+        """
         raw_content = self.get_raw_content(context)
         slim = self.extract(raw_content, _BACKEND_KEYS)
         if slim:
             body = f"Backend Prompt:\nArchitecture + file plan context (backend-relevant fields):\n{slim}"
         else:
             body = f"Backend Prompt:\n{raw_content[:3000]}" if raw_content else "Backend Prompt"
+
+        if language_profile is not None:
+            profile_hint = (
+                "\n\n--- RESOLVED TECHNOLOGY PROFILE ---\n"
+                f"Language:        {language_profile.language}\n"
+                f"Framework:       {language_profile.framework}\n"
+                f"Package manager: {language_profile.package_manager}\n"
+                f"Test runner:     {language_profile.test_runner}\n"
+                f"Lint tool:       {language_profile.lint_tool}\n"
+                f"File extensions: {', '.join(language_profile.file_extensions)}\n"
+                f"Docker image:    {language_profile.docker_image}\n"
+                f"Test command:    {language_profile.test_command}\n"
+                f"Build command:   {language_profile.build_command}\n"
+                "--- END TECHNOLOGY PROFILE ---\n"
+                f"\nGenerate ALL backend code in {language_profile.language.upper()} "
+                f"using {language_profile.framework}. "
+                "Do NOT use Python or any other language unless explicitly listed above."
+            )
+            body = profile_hint + "\n\n" + body
+
         return f"{SYSTEM_PROMPT}\n\n{body}"

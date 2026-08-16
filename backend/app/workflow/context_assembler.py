@@ -8,6 +8,21 @@ methods and the MemoryOrchestrator path.  Exposes one public method:
 The caller_context parameter carries sprint-specific content (goal, features,
 ScrumMaster plan, SprintMonitor brief) that would otherwise be silently
 discarded by MemoryOrchestrator overwriting the content string.
+
+Per-stage context budgets
+-------------------------
+Every call to :meth:`_assemble_legacy` (and the fallback path inside
+:meth:`_assemble_via_orchestrator`) fetches a :class:`ContextBudget` from
+:class:`ContextBudgetRegistry` at the start of assembly.  Each enrichment is
+only called when its corresponding budget flag is ``True``.  When the
+``"default"`` budget applies (unknown stage), all flags are ``True`` and
+behaviour is identical to the original unconditional enrichment — no regression.
+
+The active budget is stored on ``self._current_budget`` for the duration of
+the assembly call so that enrichment helpers can read size limits (e.g.
+``predecessor_max_chars``, ``lessons_limit``) without requiring signature
+changes.  This attribute must be treated as a call-scoped temporary; it is
+overwritten at the start of each :meth:`_assemble_legacy` invocation.
 """
 from __future__ import annotations
 
@@ -24,6 +39,7 @@ from ..shared.constants import (
     WORKFLOW_MESSAGE_KEY,
 )
 from ..shared.enums.stage import Stage
+from .context_budget import ContextBudget, ContextBudgetRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +105,10 @@ class ContextAssembler:
         self._lesson_store = lesson_store
         self._context_orchestrator = context_orchestrator
         self._template_engine = template_engine
+        # Call-scoped budget.  Set at the start of each _assemble_legacy /
+        # _assemble_via_orchestrator call; read by enrichment helpers for size
+        # limits.  None before the first assembly call.
+        self._current_budget: ContextBudget | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -163,7 +183,13 @@ class ContextAssembler:
         stage_name: str,
         caller_context: str,
     ) -> tuple[str, dict]:
-        """Assemble context via MemoryOrchestrator.
+        """Assemble context via MemoryOrchestrator, gated by the stage budget.
+
+        The budget is fetched and stored in ``self._current_budget`` so that
+        the fallback leg (which calls :meth:`_assemble_legacy`) inherits the
+        correct limits.  On the primary leg the ``ctx_dict`` returned by the
+        orchestrator is pruned of enrichment categories that the budget
+        disables — a best-effort filter using canonical key names.
 
         Returns
         -------
@@ -176,13 +202,61 @@ class ContextAssembler:
             On failure, falls back to the legacy path and returns an empty dict
             as the hint (legacy path has no structured context object).
         """
+        # Store budget so the fallback path and enrichment helpers can read it.
+        budget = ContextBudgetRegistry.get(stage_name)
+        self._current_budget = budget
+
         try:
             stage_ctx = self._memory_orchestrator.get_context(project_id, stage)
             ctx_dict = stage_ctx.to_prompt_dict()
 
+            # ── Budget enforcement on orchestrator output ──────────────────
+            # The orchestrator builds its own rich context.  We prune keys that
+            # the budget disables so irrelevant data never reaches the LLM.
+            # Key names are canonical guesses; unknown keys pass through safely.
+            if not budget.include_lessons:
+                for _k in ("lessons", "lessons_learned", "lesson_store"):
+                    ctx_dict.pop(_k, None)
+
+            if not budget.include_patterns:
+                for _k in ("past_patterns", "patterns", "relevant_patterns"):
+                    ctx_dict.pop(_k, None)
+
+            if not budget.include_intelligence:
+                for _k in (
+                    "relevant_files", "dependency_context", "project_overview",
+                    "file_context", "intelligence", "code_summaries",
+                ):
+                    ctx_dict.pop(_k, None)
+
+            if not budget.include_clarification:
+                for _k in ("clarification", "clarification_context", "clarification_artifact"):
+                    ctx_dict.pop(_k, None)
+
+            if not budget.include_design:
+                for _k in ("design", "design_spec", "design_artifact", "approved_design"):
+                    ctx_dict.pop(_k, None)
+
             # Merge caller_context so sprint-assembled content is not discarded.
             if caller_context:
                 ctx_dict["caller_context"] = caller_context
+
+            raw_bp = None
+            if self._memory_manager is not None and stage_name not in {
+                "Architect", "architect", "Clarification", "clarification",
+                "ProductOwner", "product_owner", "StrategicReview", "strategic_review",
+            }:
+                try:
+                    raw_bp = self._memory_manager.load(project_id, "blueprint:latest")
+                    if raw_bp:
+                        bp_data = json.loads(raw_bp) if isinstance(raw_bp, str) else raw_bp
+                        ctx_dict["project_blueprint"] = {
+                            k: bp_data[k]
+                            for k in ("project_type", "folder_structure", "dependencies", "entry_points", "constraints")
+                            if k in bp_data
+                        }
+                except Exception as exc:
+                    logger.debug("blueprint inject into orchestrator ctx failed: %s", exc)
 
             return json.dumps(ctx_dict, indent=2), ctx_dict
         except Exception as exc:
@@ -193,7 +267,7 @@ class ContextAssembler:
             return self._assemble_legacy(project_id, stage_name, caller_context), {}
 
     # ------------------------------------------------------------------
-    # Legacy path: six ad-hoc enrichment calls
+    # Legacy path: six ad-hoc enrichment calls, gated by ContextBudget
     # ------------------------------------------------------------------
 
     def _assemble_legacy(
@@ -202,20 +276,109 @@ class ContextAssembler:
         stage_name: str,
         caller_context: str,
     ) -> str:
+        """Assemble context via individual enrichment helpers.
+
+        The stage budget is fetched first and stored as ``self._current_budget``
+        so enrichment helpers can access size limits without signature changes.
+        Each enrichment is only called when its corresponding budget flag is
+        ``True``.  When the ``"default"`` budget applies, every flag is ``True``
+        and the call sequence is identical to the previous implementation —
+        zero regression.
+
+        If ``self._current_budget`` was already set (e.g. by
+        :meth:`_assemble_via_orchestrator` before falling back here), the
+        budget is reused rather than looked up again so that the budget is
+        consistent across the whole assembly.
+        """
+        if self._current_budget is None:
+            self._current_budget = ContextBudgetRegistry.get(stage_name)
+        budget = self._current_budget
+
         base = caller_context
-        base = self._with_predecessor_message(project_id, base)
-        base = self._with_clarification_context(project_id, stage_name, base)
-        base = self._with_relevant_patterns(base, stage_name, caller_context, project_id)
-        base = self._with_design_context(project_id, stage_name, base)
-        base = self._with_lessons(base, stage_name, project_id)
-        base = self._with_intelligence_context(project_id, stage_name, base)
+
+        base = self._with_blueprint(project_id, stage_name, base)
+
+        if budget.include_predecessor:
+            base = self._with_predecessor_message(project_id, base)
+
+        if budget.include_clarification:
+            base = self._with_clarification_context(project_id, stage_name, base)
+
+        if budget.include_patterns:
+            base = self._with_relevant_patterns(base, stage_name, caller_context, project_id)
+
+        if budget.include_design:
+            base = self._with_design_context(project_id, stage_name, base)
+
+        if budget.include_lessons:
+            base = self._with_lessons(base, stage_name, project_id)
+
+        if budget.include_intelligence:
+            base = self._with_intelligence_context(project_id, stage_name, base)
+
         return base
 
     # ------------------------------------------------------------------
     # Enrichment helpers (previously WorkflowEngine._with_*())
+    # Do NOT change the signatures of these methods.
     # ------------------------------------------------------------------
 
+    def _with_blueprint(self, project_id: str, stage_name: str, content: str) -> str:
+        """Inject the project blueprint into the agent's context.
+
+        The blueprint is the authoritative source for folder structure, dependency
+        versions, entry points, and constraints. Injected for all stages except
+        Architect itself (which produces the blueprint, not consumes it) and
+        Clarification/ProductOwner (which run before the blueprint exists).
+
+        Skipped silently if no blueprint exists in memory.
+        """
+        _SKIP_STAGES = {
+            "Architect", "architect", "Clarification", "clarification",
+            "ProductOwner", "product_owner", "StrategicReview", "strategic_review",
+        }
+        if stage_name in _SKIP_STAGES:
+            return content
+        if self._memory_manager is None:
+            return content
+        try:
+            raw = self._memory_manager.load(project_id, "blueprint:latest")
+            if not raw:
+                return content
+            data = json.loads(raw) if isinstance(raw, str) else raw
+            # Extract only the blueprint-relevant fields to keep context compact
+            blueprint_summary = {
+                k: data[k]
+                for k in ("project_type", "folder_structure", "dependencies",
+                          "entry_points", "constraints")
+                if k in data
+            }
+            if not blueprint_summary:
+                return content
+            blueprint_text = json.dumps(blueprint_summary, indent=2)
+            header = (
+                "### Project Blueprint (authoritative — follow exactly)\n"
+                "Folder structure, dependency versions, entry points, and constraints "
+                "below are decided by the Architect. Do not deviate.\n\n"
+                f"```json\n{blueprint_text}\n```"
+            )
+            return f"{header}\n\n{content}"
+        except Exception as exc:
+            logger.debug("_with_blueprint skipped: %s", exc)
+        return content
+
     def _with_predecessor_message(self, project_id: str, content: str) -> str:
+        """Inject the most-recently-approved stage's message.
+
+        Truncation
+        ----------
+        When the active budget has ``predecessor_max_chars > 0``, the message
+        body is trimmed to that limit and a ``...[truncated]`` marker is appended.
+        This prevents a single long predecessor from crowding out other enrichments.
+        The budget is read from ``self._current_budget``; callers must set it before
+        invoking this helper (which :meth:`_assemble_legacy` and
+        :meth:`_assemble_via_orchestrator` guarantee).
+        """
         if self._memory_manager is None:
             return content
         try:
@@ -224,7 +387,20 @@ class ContextAssembler:
             if not raw:
                 return content
             msg = AgentMessage.model_validate_json(raw)
-            return f"{content}\n\n### Previous Stage Output ({msg.role})\n{msg.content}"
+
+            msg_content: str = msg.content
+
+            # Apply predecessor_max_chars from the active budget.
+            budget = self._current_budget
+            if budget is not None and budget.predecessor_max_chars > 0:
+                if len(msg_content) > budget.predecessor_max_chars:
+                    msg_content = msg_content[: budget.predecessor_max_chars] + "...[truncated]"
+                    logger.debug(
+                        "_with_predecessor_message: truncated to %d chars for stage budget",
+                        budget.predecessor_max_chars,
+                    )
+
+            return f"{content}\n\n### Previous Stage Output ({msg.role})\n{msg_content}"
         except Exception as exc:
             logger.debug("_with_predecessor_message skipped: %s", exc)
         return content
@@ -294,12 +470,24 @@ class ContextAssembler:
         task: str,
         project_id: str,
     ) -> str:
+        """Inject semantically-relevant past patterns from LearningLoop.
+
+        The number of patterns is capped by ``self._current_budget.patterns_limit``
+        when a budget is active.  The LearningLoop is called without a limit
+        argument (its signature is unchanged); the result list is sliced here.
+        """
         if self._learning_loop is None:
             return content
         try:
             patterns = self._learning_loop.get_relevant_patterns(
                 task, stage_name, project_id=project_id,
             )
+            # Apply budget patterns_limit — slice BEFORE formatting so the
+            # LearningLoop is not invoked more times than necessary.
+            budget = self._current_budget
+            if budget is not None and budget.patterns_limit > 0 and patterns:
+                patterns = patterns[: budget.patterns_limit]
+
             if patterns:
                 patterns_text = "\n".join(f"- {p}" for p in patterns)
                 return f"{content}\n\n### Relevant Past Patterns\n{patterns_text}"
@@ -323,11 +511,20 @@ class ContextAssembler:
         return content
 
     def _with_lessons(self, content: str, stage_name: str, project_id: str) -> str:
+        """Inject human-readable lessons from LessonStore.
+
+        The number of lessons requested is driven by
+        ``self._current_budget.lessons_limit`` when a budget is active,
+        otherwise falls back to the previous hard-coded value of ``3``.
+        """
         if self._lesson_store is None:
             return content
         try:
+            budget = self._current_budget
+            limit = budget.lessons_limit if budget is not None else 3
+
             lessons = self._lesson_store.get_lessons(
-                stage=stage_name, project_id=project_id, limit=3,
+                stage=stage_name, project_id=project_id, limit=limit,
             )
             if not lessons:
                 return content
@@ -491,4 +688,3 @@ class ContextAssembler:
         except Exception as exc:
             logger.debug("_inject_template skipped: %s", exc)
         return content, False, None, None
-

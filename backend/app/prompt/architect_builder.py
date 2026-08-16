@@ -191,6 +191,61 @@ GOOD: "tech_stack": {"backend": "Python/FastAPI",
 BAD:  "approach": "{ layers: [...] }"
 GOOD: "layers": ["presentation", "business", "data"]
       "approach": "Layered architecture with..."
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BLUEPRINT FIELDS — REQUIRED IN EVERY RESPONSE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+In addition to the existing architecture fields, your JSON output MUST include:
+
+"dependencies": [
+  {
+    "name": "<package name>",
+    "version": "<semver range — never 'latest'>",
+    "purpose": "<one-line reason>"
+  }
+]
+List every package the project needs. Reason about compatible versions — do not
+copy versions from memory without checking that they are compatible with each other.
+Never use "latest". Always use a semver range (e.g. "^6.1.18", "~51.0.0").
+If two packages must be the same major version (e.g. all @react-navigation/*
+packages), they MUST have the same major version in this list.
+
+"folder_structure": [
+  {
+    "path": "<relative path from project root, ending with />",
+    "purpose": "<what belongs here>",
+    "owner": "backend" | "frontend" | "shared" | "config"
+  }
+]
+Follow the chosen framework's conventions, not a generic template.
+For mobile_app with Expo: root-level App.tsx, app/screens/, app/components/,
+app/navigation/, app/store/, app/services/, assets/.
+For web_fullstack with FastAPI + React: backend/app/, backend/app/routers/,
+backend/app/models/, frontend/src/, frontend/src/components/, frontend/src/pages/.
+For cli_tool: src/, tests/, cmd/ (Go) or cli/ (Python).
+Do NOT invent paths. Follow the framework's documented conventions.
+
+"entry_points": [
+  {
+    "file": "<relative file path>",
+    "must_wire": ["<what it must import or connect>"],
+    "create_before_codegen": true | false
+  }
+]
+List every file that must exist for the project to boot.
+These are framework-required files, not application files.
+Examples: App.tsx for Expo, main.py for FastAPI, index.ts for NestJS.
+create_before_codegen: true means this file must be created before any sprint runs.
+
+"constraints": [
+  "<one rule per string — specific to this stack's known failure modes>"
+]
+Examples of the kind of specificity required:
+- "All @react-navigation/* packages must use the same major version"
+- "AsyncStorage must be imported from @react-native-async-storage/async-storage, not from react-native"
+- "metro.config.js must set watchFolders when source files are outside the Expo project root"
+- "Pydantic v2: use model_validator and field_validator — not @validator"
+Do NOT write generic advice. Every constraint must be specific to the stack you chose.
 """
 
 

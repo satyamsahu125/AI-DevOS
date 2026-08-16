@@ -13,10 +13,16 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     volumes:
       # Persist generated projects and SQLite databases across container restarts
       - ./temp-workspace:/app/temp-workspace
       - ./data:/app/data
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/ready"]
       interval: 30s
@@ -36,6 +42,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     volumes:
       - ./temp-workspace:/app/temp-workspace
       - ./data:/app/data
@@ -50,6 +58,26 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-aidevos}
+      - POSTGRES_USER=${POSTGRES_USER:-aidevos}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-aidevos}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aidevos} -d ${POSTGRES_DB:-aidevos}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   # ── R10: Optional OpenTelemetry Collector ─────────────────────────────────
@@ -79,3 +107,6 @@ services:
       - "16686:16686"   # Jaeger UI
       - "14317:4317"    # OTLP gRPC (Jaeger's own receiver, not the collector's)
     restart: unless-stopped
+
+volumes:
+  postgres_data:

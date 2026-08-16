@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import sqlite3
 import threading
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -83,6 +84,7 @@ class KnowledgeMemory:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._index_path.parent.mkdir(parents=True, exist_ok=True)
         self._max_elements = max_elements
+        self._closed = False
 
         self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         self._ensure_schema()
@@ -269,3 +271,287 @@ class KnowledgeMemory:
         except RuntimeError:
             pass  # label was never added to the index (shouldn't happen, but non-fatal)
         logger.info("deleted knowledge entry: key=%s id=%s", key, entry_id)
+
+    def close(self) -> None:
+        """Close the SQLite connection and mark this instance as closed.
+
+        Called by KnowledgeMemoryFactory.cleanup_project() before evicting an
+        instance from the cache.  Safe to call multiple times.
+        """
+        with self._lock:
+            if not self._closed:
+                try:
+                    self._conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                self._closed = True
+                logger.debug("knowledge memory closed: db=%s", self._db_path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KnowledgeMemoryFactory — per-project isolation
+# ─────────────────────────────────────────────────────────────────────────────
+
+class KnowledgeMemoryFactory:
+    """Factory that owns one KnowledgeMemory instance per project_id.
+
+    All projects share the same embedding model and the same process-level
+    ``_shared_model`` singleton (expensive to load; harmless to share).
+    Each project gets its own HNSW index and SQLite database, so a cosine
+    search on project A's memory never returns entries stored for project B.
+
+    Additive design
+    ---------------
+    The pre-existing global ``KnowledgeMemory()`` instantiation in the
+    Container/DI layer continues to work unchanged.  The factory is purely
+    additive — callers that want per-project isolation call
+    ``KnowledgeMemoryFactory.get_or_create(project_id)``; callers that don't
+    care continue using the global instance.
+
+    Thread safety
+    -------------
+    ``_instances`` and ``_lock`` are class-level, so a single cache is shared
+    across all threads in the process.  Every mutation is protected by
+    ``_lock`` (a re-entrant lock so get_or_create → close chains work).
+
+    Directory layout
+    ----------------
+    Active project data lives under::
+
+        <DATA_DIR>/projects/<project_id>/knowledge.sqlite
+        <DATA_DIR>/projects/<project_id>/knowledge.hnsw
+
+    Directories are created lazily on first use.  Archived project data is
+    moved (not deleted) to::
+
+        <DATA_DIR>/archive/<project_id>/
+    """
+
+    #: project_id → KnowledgeMemory instance (per-project isolated store)
+    _instances: dict[str, KnowledgeMemory] = {}
+    _lock: threading.RLock = threading.RLock()
+
+    @classmethod
+    def get_or_create(cls, project_id: str) -> KnowledgeMemory:
+        """Return the KnowledgeMemory for project_id, creating it on first call.
+
+        The returned instance is cached: calling ``get_or_create`` twice with
+        the same ``project_id`` returns the *same* object.
+
+        Parameters
+        ----------
+        project_id:
+            Unique project identifier (UUID string or any non-empty str).
+
+        Returns
+        -------
+        KnowledgeMemory
+            Isolated per-project knowledge store.
+        """
+        with cls._lock:
+            if project_id not in cls._instances:
+                db_path = _DATA_DIR / "projects" / project_id / "knowledge.sqlite"
+                index_path = _DATA_DIR / "projects" / project_id / "knowledge.hnsw"
+                logger.info(
+                    "[KnowledgeMemoryFactory] creating instance: project_id=%s db=%s",
+                    project_id, db_path,
+                )
+                cls._instances[project_id] = KnowledgeMemory(
+                    db_path=db_path,
+                    index_path=index_path,
+                )
+            return cls._instances[project_id]
+
+    @classmethod
+    def cleanup_project(cls, project_id: str) -> None:
+        """Evict the project's instance from the cache and release its resources.
+
+        Behaviour
+        ---------
+        * Removes the instance from ``_instances``.
+        * Closes the SQLite connection (safe to call if already closed).
+        * **Deletes on-disk files only when the project has zero entries** —
+          an empty project has no data worth keeping.  A project with entries
+          is evicted from the cache (so a future ``get_or_create`` creates a
+          fresh connection) but its files are left on disk untouched.
+
+        This means ``cleanup_project`` on a non-empty project is equivalent
+        to "disconnect" rather than "delete".  Use ``archive_inactive`` to
+        move non-empty projects off the hot path.
+
+        Parameters
+        ----------
+        project_id:
+            Project to clean up.  No-op if the project is not in the cache.
+        """
+        with cls._lock:
+            instance = cls._instances.pop(project_id, None)
+            if instance is None:
+                logger.debug(
+                    "[KnowledgeMemoryFactory] cleanup_project: not in cache, project_id=%s",
+                    project_id,
+                )
+                return
+
+            entry_count = 0
+            try:
+                entry_count = instance.count_all()
+            except Exception:  # noqa: BLE001
+                pass  # already partially closed; treat as zero
+            finally:
+                instance.close()
+
+            if entry_count == 0:
+                # Safe to delete — no data has ever been written to this project.
+                project_dir = _DATA_DIR / "projects" / project_id
+                try:
+                    if project_dir.exists():
+                        shutil.rmtree(project_dir)
+                        logger.info(
+                            "[KnowledgeMemoryFactory] deleted empty project dir: %s",
+                            project_dir,
+                        )
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "[KnowledgeMemoryFactory] could not delete empty project dir: %s",
+                        project_dir,
+                        exc_info=True,
+                    )
+            else:
+                logger.info(
+                    "[KnowledgeMemoryFactory] evicted (non-empty) project from cache: "
+                    "project_id=%s entries=%d",
+                    project_id, entry_count,
+                )
+
+    @classmethod
+    def archive_inactive(cls, days: int = 30) -> list[str]:
+        """Move project directories not modified in the last ``days`` days to archive.
+
+        The move is atomic at the directory level (``shutil.move``) and is
+        done OUTSIDE the factory lock so it does not stall concurrent
+        ``get_or_create`` calls.  The project is evicted from ``_instances``
+        (inside the lock) before its directory is moved.
+
+        Safety guarantee
+        ----------------
+        Data is **never deleted** — it is moved to
+        ``<DATA_DIR>/archive/<project_id>/``.  Restoring a project is a
+        manual ``shutil.move`` back to ``projects/``.
+
+        Parameters
+        ----------
+        days:
+            Projects whose directory ``mtime`` is older than this many days
+            are considered inactive.
+
+        Returns
+        -------
+        list[str]
+            Project IDs that were archived (empty list if none qualify).
+        """
+        projects_root = _DATA_DIR / "projects"
+        archive_root = _DATA_DIR / "archive"
+
+        if not projects_root.exists():
+            logger.debug("[KnowledgeMemoryFactory] archive_inactive: no projects dir yet")
+            return []
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        archived: list[str] = []
+
+        for project_dir in projects_root.iterdir():
+            if not project_dir.is_dir():
+                continue
+
+            project_id = project_dir.name
+            try:
+                dir_mtime = datetime.fromtimestamp(
+                    project_dir.stat().st_mtime, tz=timezone.utc
+                )
+            except OSError:
+                continue  # can't stat — skip
+
+            if dir_mtime >= cutoff:
+                continue  # still active
+
+            # --- Evict from cache first (holds lock briefly) ---
+            with cls._lock:
+                instance = cls._instances.pop(project_id, None)
+                if instance is not None:
+                    try:
+                        instance.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+
+            # --- Move to archive (outside lock to avoid stalling callers) ---
+            dest = archive_root / project_id
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(project_dir), str(dest))
+                archived.append(project_id)
+                logger.info(
+                    "[KnowledgeMemoryFactory] archived inactive project: "
+                    "project_id=%s last_modified=%s dest=%s",
+                    project_id, dir_mtime.isoformat(), dest,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "[KnowledgeMemoryFactory] failed to archive project: project_id=%s",
+                    project_id,
+                    exc_info=True,
+                )
+                # Re-add to cache if move failed so callers can still use it.
+                if instance is not None:
+                    with cls._lock:
+                        cls._instances.setdefault(project_id, instance)
+
+        logger.info(
+            "[KnowledgeMemoryFactory] archive_inactive: days=%d archived=%d project(s)",
+            days, len(archived),
+        )
+        return archived
+
+    @classmethod
+    def stats(cls) -> dict:
+        """Return a snapshot of factory state for the /api/memory/stats endpoint.
+
+        Returns
+        -------
+        dict with keys:
+            total_projects_in_memory : int
+            total_entries : int
+            largest_project : dict | None  ({"project_id": str, "entries": int})
+            inactive_project_count : int  (dirs under projects/ not in cache)
+        """
+        with cls._lock:
+            snapshot = dict(cls._instances)
+
+        total_entries = 0
+        largest_project: dict | None = None
+        largest_count = 0
+
+        for pid, instance in snapshot.items():
+            try:
+                count = instance.count_all()
+            except Exception:  # noqa: BLE001
+                count = 0
+            total_entries += count
+            if count > largest_count:
+                largest_count = count
+                largest_project = {"project_id": pid, "entries": count}
+
+        # Count project dirs that are NOT currently in cache (inactive on disk).
+        projects_root = _DATA_DIR / "projects"
+        inactive_count = 0
+        if projects_root.exists():
+            for d in projects_root.iterdir():
+                if d.is_dir() and d.name not in snapshot:
+                    inactive_count += 1
+
+        return {
+            "total_projects_in_memory": len(snapshot),
+            "total_entries": total_entries,
+            "largest_project": largest_project,
+            "inactive_project_count": inactive_count,
+        }

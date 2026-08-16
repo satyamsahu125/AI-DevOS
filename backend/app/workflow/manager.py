@@ -251,6 +251,8 @@ class WorkflowManager:
                 return self._qa_orchestrator.handle_clarifying(project_id, request, skip_qa)
 
             if state in (ProjectState.QA_PENDING, ProjectState.QA_IN_PROGRESS):
+                if skip_qa:
+                    return self._qa_orchestrator._skip_qa_path(project_id, request)
                 return self._qa_orchestrator.handle_qa_flow(project_id, request)
 
             if state == ProjectState.ARCHITECTURE_REVIEW_PENDING:
@@ -372,20 +374,44 @@ class WorkflowManager:
         stage_order: list[Any],
         current_state: str = "",
     ) -> list[str]:
-        """Return a contiguous prefix of stage_order that appears in stages_completed."""
+        """Return a sanitized stages_completed list.
+
+        Top-level stages (those in stage_order / DependencyGraph.STAGE_ORDER) are
+        gap-sanitized: the longest contiguous prefix of stage_order that appears in
+        stages_completed is kept.  Any gap (a stage in stage_order that is absent from
+        stages_completed) stops the prefix — preventing orphaned later stages from
+        persisting through a crash-recovery.
+
+        Sprint-internal stages (ScrumMaster, SprintDelta, FileStructurePlanner,
+        BackendDeveloper, FrontendDeveloper, SprintDeploy, SprintReview) are NOT in
+        stage_order — they are managed by SprintExecutor via DependencyGraph.SPRINT_STAGE_ORDER.
+        These stages are appended after the sanitized top-level prefix, preserving them
+        so that PipelineSupervisor and SprintExecutor can resume correctly from
+        SPRINT_BLOCKED state without re-running already-completed agent stages.
+        """
         implied = _STATE_IMPLIED_STAGES.get(current_state, ())
         merged = list(stages_completed)
         for s in implied:
             if s not in merged:
                 merged.append(s)
+
         order = [s.value for s in stage_order]
+        order_set = set(order)
+        merged_set = set(merged)
+
+        # Sanitize top-level stages: longest contiguous prefix of stage_order
         clean = []
         for stage in order:
-            if stage in merged:
+            if stage in merged_set:
                 clean.append(stage)
             else:
                 break
-        return clean
+
+        # Preserve sprint-internal stages (not in top-level stage_order) in their
+        # original order from stages_completed.  These must not be gap-sanitized
+        # because they live in a separate ordered graph (SPRINT_STAGE_ORDER).
+        extras = [s for s in stages_completed if s not in order_set]
+        return clean + extras
 
     # ------------------------------------------------------------------
     # Backward-compat shim (used by tests and container)

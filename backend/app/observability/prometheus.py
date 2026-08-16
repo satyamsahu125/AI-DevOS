@@ -1,12 +1,12 @@
 """Phase 6 — Prometheus metrics for FastAPI.
 
-Exposes a /metrics endpoint using prometheus-fastapi-instrumentator when
-PROMETHEUS_ENABLED=true.  Disabled by default so existing dev environments
-are unaffected; enable in production by setting PROMETHEUS_ENABLED=true.
+Exposes a /metrics endpoint using prometheus-fastapi-instrumentator.
+Enabled by default (PROMETHEUS_ENABLED=true); set PROMETHEUS_ENABLED=false
+to disable in environments where Prometheus scraping is not configured.
 
 Follows the same guard pattern as observability/tracing.py:
   - Safe to call regardless of whether the package is installed.
-  - No-op with an INFO log when disabled or the package is missing.
+  - No-op with a WARNING log when disabled or the package is missing.
 
 Usage (main.py):
     from .observability.prometheus import instrument_prometheus
@@ -22,7 +22,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _PROMETHEUS_ENABLED: bool = (
-    os.getenv("PROMETHEUS_ENABLED", "false").lower() in ("true", "1", "yes")
+    os.getenv("PROMETHEUS_ENABLED", "true").lower() in ("true", "1", "yes")
 )
 
 
@@ -34,7 +34,7 @@ def instrument_prometheus(app: Any) -> None:
     key middleware automatically — scrapers do not carry user credentials.
 
     No-op when:
-      - PROMETHEUS_ENABLED is not true (default)
+      - PROMETHEUS_ENABLED=false (opt-out)
       - ``prometheus-fastapi-instrumentator`` is not installed
 
     Parameters
@@ -45,8 +45,7 @@ def instrument_prometheus(app: Any) -> None:
     """
     if not _PROMETHEUS_ENABLED:
         logger.info(
-            "[prometheus] PROMETHEUS_ENABLED not set — Prometheus metrics disabled. "
-            "Set PROMETHEUS_ENABLED=true to expose /metrics."
+            "[prometheus] PROMETHEUS_ENABLED=false — Prometheus metrics disabled."
         )
         return
 

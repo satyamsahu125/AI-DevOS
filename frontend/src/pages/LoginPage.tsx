@@ -1,34 +1,56 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
+import { motion, AnimatePresence } from "framer-motion"
 import { useAuth } from "../lib/auth"
 
-export function LoginPage() {
-  const { login, register } = useAuth()
+type Tab = "signin" | "register"
+
+// ── Animation variants ────────────────────────────────────────────────────────
+const formVariant = {
+  hidden: { opacity: 0, x: 18 },
+  visible: { opacity: 1, x: 0, transition: { duration: 0.28, ease: "easeOut" } },
+  exit:   { opacity: 0, x: -18, transition: { duration: 0.2 } },
+}
+
+const shakeVariant = {
+  shake: {
+    x: [0, -10, 10, -8, 8, -4, 4, 0],
+    transition: { duration: 0.45, ease: "easeInOut" },
+  },
+}
+
+export default function LoginPage({ initialTab = "signin" }: { initialTab?: Tab }) {
+  const { login, register, authEnabled } = useAuth()
   const navigate = useNavigate()
-  const [mode, setMode] = useState<"login" | "register">("login")
+  const [tab, setTab] = useState<Tab>(initialTab)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirm, setConfirm] = useState("")
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [shakeKey, setShakeKey] = useState(0)
 
-  async function submit(e: React.FormEvent) {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (mode === "register" && password !== confirm) {
-      setError("Passwords don't match")
+    setError(null)
+
+    if (tab === "register" && password !== confirm) {
+      setError("Passwords do not match.")
+      setShakeKey(k => k + 1)
       return
     }
+
     setLoading(true)
-    setError("")
     try {
-      if (mode === "login") {
-        await login(email.trim(), password)
+      if (tab === "signin") {
+        await login(email, password)
       } else {
-        await register(email.trim(), password)
+        await register(email, password)
       }
-      navigate("/projects", { replace: true })
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Authentication failed")
+      navigate("/projects")
+    } catch (err: any) {
+      setError(err.message ?? "Authentication failed")
+      setShakeKey(k => k + 1)
     } finally {
       setLoading(false)
     }
@@ -36,189 +58,272 @@ export function LoginPage() {
 
   return (
     <div style={{
-      minHeight: "100dvh", display: "flex", alignItems: "center", justifyContent: "center",
-      background: "var(--color-bg)", padding: 24, position: "relative", overflow: "hidden",
+      minHeight: "100vh",
+      display: "flex",
+      background: "var(--bg)",
     }}>
-      {/* Grid background */}
-      <div style={{
-        position: "absolute", inset: 0,
-        backgroundImage: "radial-gradient(rgba(233,233,237,.07) 1px, transparent 1px)",
-        backgroundSize: "26px 26px",
-        WebkitMaskImage: "radial-gradient(ellipse 80% 80% at 50% 50%, black 10%, transparent 75%)",
-        maskImage: "radial-gradient(ellipse 80% 80% at 50% 50%, black 10%, transparent 75%)",
-        pointerEvents: "none",
-      }} />
-      {/* Glow */}
-      <div style={{
-        position: "absolute", top: "45%", left: "50%", width: 600, height: 400,
-        transform: "translate(-50%, -50%)",
-        background: "radial-gradient(ellipse at center, rgba(145,132,217,.18) 0%, transparent 70%)",
-        pointerEvents: "none",
-      }} />
+      {/* Left panel — branding + aurora */}
+      <motion.div
+        initial={{ opacity: 0, x: -40 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
+        style={{
+          flex: "0 0 42%",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          padding: "48px 56px",
+          background: "rgba(10, 10, 20, 0.95)",
+          borderRight: "1px solid rgba(255,255,255,0.07)",
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        {/* Aurora glow backdrop */}
+        <div style={{
+          position: "absolute",
+          inset: 0,
+          background: "radial-gradient(ellipse at 30% 40%, rgba(124,58,237,0.18) 0%, transparent 60%), radial-gradient(ellipse at 70% 70%, rgba(6,182,212,0.10) 0%, transparent 50%)",
+          pointerEvents: "none",
+        }} />
 
-      <div style={{ position: "relative", width: "100%", maxWidth: 400 }}>
         {/* Logo */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 32, gap: 10 }}>
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2, duration: 0.5 }}
+          style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 48, position: "relative" }}
+        >
           <div style={{
-            width: 44, height: 44, borderRadius: 12, background: "var(--color-accent)",
+            width: 36, height: 36, borderRadius: 10,
+            background: "linear-gradient(135deg, #7C3AED, #06B6D4)",
             display: "grid", placeItems: "center",
           }}>
-            <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="#fff" strokeWidth={2.2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M8 1L14.928 5V11L8 15L1.072 11V5L8 1Z" fill="white" fillOpacity=".9" />
             </svg>
           </div>
-          <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-.03em", color: "var(--color-text)" }}>
-            AI DevOS
-          </span>
-          <span style={{ fontSize: 13, color: "var(--color-muted)" }}>
-            {mode === "login" ? "Sign in to your workspace" : "Create your account"}
-          </span>
-        </div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#f0f0f2" }}>AI DevOS</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>AI Development Operating System</div>
+          </div>
+        </motion.div>
 
-        {/* Card */}
-        <div style={{
-          background: "var(--color-surface)", border: "1px solid var(--color-divider)",
-          borderRadius: 16, padding: 32, boxShadow: "0 24px 64px rgba(0,0,0,.4)",
-        }}>
-          {/* Mode toggle */}
-          <div style={{
-            display: "flex", gap: 4, background: "var(--color-bg)",
-            borderRadius: 8, padding: 4, marginBottom: 24,
+        {/* Tagline */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35, duration: 0.55 }}
+          style={{ position: "relative" }}
+        >
+          <h2 style={{
+            fontSize: 32,
+            fontWeight: 700,
+            lineHeight: 1.2,
+            color: "#f0f0f2",
+            marginBottom: 16,
+            letterSpacing: "-0.03em",
           }}>
-            {(["login", "register"] as const).map(m => (
-              <button
-                key={m}
-                onClick={() => { setMode(m); setError("") }}
+            Software that<br />
+            <span style={{
+              background: "linear-gradient(135deg, #8B5CF6, #06B6D4)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+            }}>
+              builds itself.
+            </span>
+          </h2>
+          <p style={{ fontSize: 14, color: "rgba(255,255,255,0.45)", lineHeight: 1.65, maxWidth: 300 }}>
+            Describe your project in plain English. A pipeline of AI agents handles everything — architecture, code, tests, and deployment.
+          </p>
+        </motion.div>
+
+        {/* Pipeline stage dots */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.6, duration: 0.5 }}
+          style={{ display: "flex", gap: 6, marginTop: 40, flexWrap: "wrap", maxWidth: 280, position: "relative" }}
+        >
+          {["Research", "Plan", "Design", "Build", "Test", "Deploy"].map((stage, i) => (
+            <div key={stage} style={{
+              fontSize: 10,
+              padding: "3px 8px",
+              borderRadius: 4,
+              background: i < 4 ? "rgba(124,58,237,0.2)" : "rgba(255,255,255,0.06)",
+              border: i < 4 ? "1px solid rgba(124,58,237,0.35)" : "1px solid rgba(255,255,255,0.08)",
+              color: i < 4 ? "#a78bfa" : "rgba(255,255,255,0.3)",
+              fontFamily: "monospace",
+            }}>
+              {stage}
+            </div>
+          ))}
+        </motion.div>
+      </motion.div>
+
+      {/* Right panel — form */}
+      <div style={{
+        flex: 1,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "24px",
+      }}>
+        <motion.div
+          initial={{ opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.15, ease: "easeOut" }}
+          style={{ width: "100%", maxWidth: 380 }}
+        >
+
+          {/* Tab switcher */}
+          <div style={{
+            display: "flex",
+            gap: 0,
+            marginBottom: 28,
+            background: "var(--surface-2)",
+            borderRadius: "var(--radius-md)",
+            padding: 3,
+          }}>
+            {(["signin", "register"] as Tab[]).map(t => (
+              <motion.button
+                key={t}
+                className="btn"
+                onClick={() => { setTab(t); setError(null) }}
+                layoutId="active-tab"
                 style={{
-                  flex: 1, padding: "7px 0", borderRadius: 6, border: "none",
-                  background: mode === m ? "var(--color-accent-dim)" : "transparent",
-                  color: mode === m ? "var(--color-accent)" : "var(--color-muted)",
-                  fontSize: 13, fontWeight: mode === m ? 600 : 400,
-                  cursor: "pointer", fontFamily: "var(--font-sans)",
-                  transition: "background .12s, color .12s",
-                  borderLeft: mode === m ? "1px solid var(--color-accent-border)" : "1px solid transparent",
+                  flex: 1,
+                  justifyContent: "center",
+                  fontSize: 13,
+                  padding: "7px",
+                  borderRadius: "var(--radius-sm)",
+                  background: tab === t ? "var(--surface-1)" : "transparent",
+                  color: tab === t ? "var(--text)" : "var(--text-muted)",
+                  border: tab === t ? "1px solid var(--border-md)" : "1px solid transparent",
+                  boxShadow: tab === t ? "0 1px 3px rgba(0,0,0,0.2)" : "none",
+                  transition: "background 150ms, color 150ms, border-color 150ms",
                 }}
               >
-                {m === "login" ? "Sign In" : "Register"}
-              </button>
+                {t === "signin" ? "Sign In" : "Register"}
+              </motion.button>
             ))}
           </div>
 
-          <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {/* Email */}
-            <div>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--color-muted)", marginBottom: 6, letterSpacing: ".04em", textTransform: "uppercase" }}>
-                Email
-              </label>
-              <input
-                autoFocus
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                required
-                style={{
-                  width: "100%", padding: "10px 12px", borderRadius: 8,
-                  border: "1px solid var(--color-divider)", background: "var(--color-bg)",
-                  color: "var(--color-text)", fontSize: 14, fontFamily: "var(--font-sans)",
-                  outline: "none", boxSizing: "border-box",
-                  transition: "border-color .12s",
-                }}
-                onFocus={e => e.target.style.borderColor = "var(--color-accent)"}
-                onBlur={e => e.target.style.borderColor = "var(--color-divider)"}
-              />
+          {/* Form */}
+          <div className="surface" style={{ padding: "28px 28px 24px" }}>
+            <AnimatePresence mode="wait">
+              <motion.form
+                key={tab}
+                variants={formVariant}
+                initial="hidden"
+                animate="visible"
+                exit="exit"
+                onSubmit={handleSubmit}
+                style={{ display: "flex", flexDirection: "column", gap: 14 }}
+              >
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: "var(--text-muted)", display: "block", marginBottom: 5 }}>
+                    Email
+                  </label>
+                  <input
+                    id="login-email"
+                    className="input"
+                    type="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    required
+                    placeholder="you@example.com"
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: "var(--text-muted)", display: "block", marginBottom: 5 }}>
+                    Password
+                  </label>
+                  <input
+                    id="login-password"
+                    className="input"
+                    type="password"
+                    autoComplete={tab === "signin" ? "current-password" : "new-password"}
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    required
+                    placeholder="••••••••"
+                  />
+                </div>
+
+                <AnimatePresence>
+                  {tab === "register" && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.22 }}
+                      style={{ overflow: "hidden" }}
+                    >
+                      <label style={{ fontSize: 12, fontWeight: 500, color: "var(--text-muted)", display: "block", marginBottom: 5 }}>
+                        Confirm Password
+                      </label>
+                      <input
+                        id="login-confirm"
+                        className="input"
+                        type="password"
+                        autoComplete="new-password"
+                        value={confirm}
+                        onChange={e => setConfirm(e.target.value)}
+                        required
+                        placeholder="••••••••"
+                      />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                  {error && (
+                    <motion.div
+                      key={shakeKey}
+                      className="error-banner"
+                      initial={{ opacity: 0, y: -6 }}
+                      animate={{ opacity: 1, y: 0, ...shakeVariant.shake }}
+                      exit={{ opacity: 0, y: -4 }}
+                      transition={{ duration: 0.25 }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="8" cy="8" r="7"/><path d="M8 5v3M8 11v0"/></svg>
+                      {error}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <motion.button
+                  id="login-submit"
+                  className="btn btn-primary btn-lg"
+                  type="submit"
+                  disabled={loading}
+                  whileHover={{ scale: loading ? 1 : 1.02 }}
+                  whileTap={{ scale: loading ? 1 : 0.98 }}
+                  style={{ justifyContent: "center", marginTop: 4 }}
+                >
+                  {loading && <div className="spinner spinner-sm" style={{ borderTopColor: "#fff" }} />}
+                  {tab === "signin" ? "Sign In" : "Create Account"}
+                </motion.button>
+              </motion.form>
+            </AnimatePresence>
+          </div>
+
+          {/* Hints */}
+          {!authEnabled && (
+            <div style={{ marginTop: 14, fontSize: 11, color: "var(--text-dim)", textAlign: "center" }}>
+              Auth is disabled — set <span style={{ fontFamily: "monospace", color: "var(--text-muted)" }}>AUTH_ENABLED=true</span> to enable login.
             </div>
+          )}
 
-            {/* Password */}
-            <div>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--color-muted)", marginBottom: 6, letterSpacing: ".04em", textTransform: "uppercase" }}>
-                Password
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-                minLength={8}
-                style={{
-                  width: "100%", padding: "10px 12px", borderRadius: 8,
-                  border: "1px solid var(--color-divider)", background: "var(--color-bg)",
-                  color: "var(--color-text)", fontSize: 14, fontFamily: "var(--font-sans)",
-                  outline: "none", boxSizing: "border-box",
-                  transition: "border-color .12s",
-                }}
-                onFocus={e => e.target.style.borderColor = "var(--color-accent)"}
-                onBlur={e => e.target.style.borderColor = "var(--color-divider)"}
-              />
+          {tab === "signin" && (
+            <div style={{ marginTop: 12, fontSize: 11, color: "var(--text-dim)", textAlign: "center" }}>
+              Default: <span style={{ fontFamily: "monospace", color: "var(--text-muted)" }}>admin@devos.local</span>
             </div>
-
-            {/* Confirm password (register only) */}
-            {mode === "register" && (
-              <div>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--color-muted)", marginBottom: 6, letterSpacing: ".04em", textTransform: "uppercase" }}>
-                  Confirm Password
-                </label>
-                <input
-                  type="password"
-                  value={confirm}
-                  onChange={e => setConfirm(e.target.value)}
-                  placeholder="••••••••"
-                  required
-                  style={{
-                    width: "100%", padding: "10px 12px", borderRadius: 8,
-                    border: `1px solid ${confirm && confirm !== password ? "var(--color-error)" : "var(--color-divider)"}`,
-                    background: "var(--color-bg)", color: "var(--color-text)",
-                    fontSize: 14, fontFamily: "var(--font-sans)", outline: "none", boxSizing: "border-box",
-                  }}
-                  onFocus={e => e.target.style.borderColor = "var(--color-accent)"}
-                  onBlur={e => e.target.style.borderColor = confirm && confirm !== password ? "var(--color-error)" : "var(--color-divider)"}
-                />
-              </div>
-            )}
-
-            {/* Error */}
-            {error && (
-              <div style={{
-                padding: "10px 12px", borderRadius: 8,
-                background: "rgba(244,63,94,.08)", border: "1px solid rgba(244,63,94,.25)",
-                color: "var(--color-error)", fontSize: 13,
-              }}>
-                {error}
-              </div>
-            )}
-
-            {/* Submit */}
-            <button
-              type="submit"
-              disabled={loading || !email || !password}
-              style={{
-                width: "100%", padding: "11px 0", borderRadius: 8,
-                background: "var(--color-accent)", border: "none",
-                color: "#fff", fontSize: 14, fontWeight: 600,
-                fontFamily: "var(--font-sans)", cursor: loading ? "not-allowed" : "pointer",
-                opacity: loading || !email || !password ? .5 : 1,
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                transition: "opacity .12s",
-                marginTop: 4,
-              }}
-            >
-              {loading && (
-                <span style={{
-                  width: 14, height: 14, borderRadius: "50%",
-                  border: "2px solid rgba(255,255,255,.3)", borderTopColor: "#fff",
-                  animation: "spin .8s linear infinite", display: "inline-block",
-                }} />
-              )}
-              {mode === "login" ? "Sign In" : "Create Account"}
-            </button>
-          </form>
-        </div>
-
-        {/* Footer note */}
-        <p style={{ textAlign: "center", fontSize: 12, color: "var(--color-muted)", marginTop: 20, opacity: .6 }}>
-          Default admin: <code style={{ fontFamily: "var(--font-mono)", color: "var(--color-accent)" }}>admin@devos.local</code>
-        </p>
+          )}
+        </motion.div>
       </div>
     </div>
   )

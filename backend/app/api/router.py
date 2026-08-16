@@ -20,24 +20,35 @@ from .settings import router as settings_router
 from .websocket import router as ws_router
 from .workflow import router as workflow_router
 
+# ── /api/v1 — all business routes ────────────────────────────────────────────
+# health_router is also included here so /api/v1/health and /api/v1/ready work
+# from the versioned client BASE ("/api/v1").  The root-level registrations
+# below keep the bare /health and /ready paths alive for infrastructure tooling
+# (load balancers, Docker healthchecks, etc.) that do not use the /api prefix.
+v1_router = APIRouter(prefix="/api/v1")
+v1_router.include_router(analytics_router)
+v1_router.include_router(auth_router)
+v1_router.include_router(admin_router)
+v1_router.include_router(health_router)
+v1_router.include_router(project_router)
+v1_router.include_router(workflow_router)
+v1_router.include_router(gates_router)
+v1_router.include_router(ws_router)
+v1_router.include_router(chat_router)
+v1_router.include_router(artifacts_router)
+v1_router.include_router(agents_router)
+v1_router.include_router(memory_router)
+v1_router.include_router(learning_router)
+v1_router.include_router(files_router)
+v1_router.include_router(logs_router)
+v1_router.include_router(settings_router)
+v1_router.include_router(intelligence_router)
+v1_router.include_router(git_router)
+v1_router.include_router(integrations_router)
+v1_router.include_router(preview_router)
+
+# ── Root router — combines root-level infra endpoints with versioned routes ───
 api_router = APIRouter()
-api_router.include_router(analytics_router)
-api_router.include_router(auth_router)
-api_router.include_router(admin_router)
-api_router.include_router(health_router)
-api_router.include_router(project_router)
-api_router.include_router(workflow_router)
-api_router.include_router(gates_router)
-api_router.include_router(ws_router)
-api_router.include_router(chat_router)
-api_router.include_router(artifacts_router)
-api_router.include_router(agents_router)
-api_router.include_router(memory_router)
-api_router.include_router(learning_router)
-api_router.include_router(files_router)
-api_router.include_router(logs_router)
-api_router.include_router(settings_router)
-api_router.include_router(intelligence_router)
-api_router.include_router(git_router)
-api_router.include_router(integrations_router)
-api_router.include_router(preview_router)
+api_router.include_router(health_router)  # /health, /ready (infra / Docker healthcheck)
+api_router.include_router(ws_router)      # /ws, /api/ws (infra / direct WebSocket clients)
+api_router.include_router(v1_router)      # /api/v1/... (all business routes + /api/v1/health)

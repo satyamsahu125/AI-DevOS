@@ -157,6 +157,7 @@ class PipelineSupervisor:
         preview_manager=None,
         change_manager=None,
         memory_manager=None,
+        blueprint_store=None,
     ) -> None:
         self.workspace = workspace
         self.engine = engine
@@ -170,6 +171,7 @@ class PipelineSupervisor:
         self._preview_manager = preview_manager      # R5: live app preview
         self._change_manager = change_manager        # BugAnalyst spec/arch rollback
         self._memory_manager = memory_manager        # sandbox result storage
+        self._blueprint_store = blueprint_store      # BlueprintStore — blueprint persistence
 
     def _get_project_mode(self, project_id: str) -> str:
         """Read project mode from project.json. Returns 'full' if not set."""
@@ -434,6 +436,29 @@ class PipelineSupervisor:
                     completed_stages=list(data.get("stages_completed", [])),
                 )
 
+            if stage_key == "architect" and result.success:
+                # Extract the structured blueprint from the Architect artifact and persist it.
+                if self._blueprint_store is not None:
+                    try:
+                        artifact = getattr(result, "artifact", None)
+                        structured = (
+                            artifact.structured_content
+                            if artifact and hasattr(artifact, "structured_content")
+                            else {}
+                        )
+                        if structured:
+                            self._blueprint_store.save(project_id, structured)
+                        else:
+                            logger.warning(
+                                "[PipelineSupervisor] Architect produced no structured output — "
+                                "blueprint not stored: project=%s", project_id,
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            "[PipelineSupervisor] blueprint save failed (non-fatal): project=%s error=%s",
+                            project_id, exc,
+                        )
+
             # Phase 4: After Architect — pause for architecture review gate.
             # R9: skip gate in quick mode (auto-approve).
             if stage_key == "architect" and not quick_mode:
@@ -557,6 +582,21 @@ class PipelineSupervisor:
             )
             sprints_to_run = sprints_to_run[:_QUICK_BUILD_MAX_SPRINTS]
 
+        # SPRINT_BLOCKED: the sprint agent pipeline (ScrumMaster → FrontendDeveloper)
+        # already completed for this sprint; only the sandbox verification
+        # (install → build → test) failed.  Retry only the sandbox instead of
+        # re-running all LLM-agent stages from scratch.
+        if state == ProjectState.SPRINT_BLOCKED:
+            sandbox_retry_result = self._retry_sandbox_for_blocked_sprint(
+                project_id, sprints_to_run, completed_sprints,
+            )
+            if not sandbox_retry_result.success:
+                return sandbox_retry_result
+            # Sandbox passed (or a fallback was triggered) — refresh completed_sprints
+            # so the regular loop below skips the now-complete blocked sprint.
+            data = self.workspace.load_project_json(project_id) or {}
+            completed_sprints = set(data.get("completed_sprints", []))
+
         for sprint in sprints_to_run:
             n = sprint.sprint_number
             if n in completed_sprints:
@@ -646,6 +686,195 @@ class PipelineSupervisor:
             completed_stages=list(data.get("stages_completed", [])),
         )
 
+    def _retry_sandbox_for_blocked_sprint(
+        self,
+        project_id: str,
+        sprints_to_run: list,
+        completed_sprints: set,
+    ) -> PipelineResult:
+        """Re-run only sandbox verification for the sprint that caused SPRINT_BLOCKED.
+
+        Called by _run_sprints() when the pipeline resumes from SPRINT_BLOCKED state.
+        The sprint agent pipeline (ScrumMaster → SprintDelta → FileStructurePlanner
+        → BackendDeveloper → FrontendDeveloper) already completed successfully for this
+        sprint; only the sandbox verification (install → build → test) failed.  Retrying
+        all agent stages is wasteful and unnecessary.
+
+        Fallback paths:
+        - No sandbox wired → transition to SPRINT_IN_PROGRESS (full re-run by caller).
+        - current_sprint_number unknown / invalid → same fallback.
+        - blocked sprint not found in plan → same fallback.
+        All fallback paths return success=True so _run_sprints() continues normally.
+
+        On sandbox retry success: marks the sprint complete and runs post-sprint steps
+        (intelligence indexing, dependency pinning, sandbox memory write, git commit,
+        preview start) — mirroring the successful-sprint path in _run_sprints().
+
+        On sandbox retry failure: returns success=False with SPRINT_BLOCKED state so
+        the pipeline surfaces the error without having wasted LLM-agent tokens.
+        """
+        data = self.workspace.load_project_json(project_id) or {}
+
+        # ── Graceful fallback: no sandbox wired ──────────────────────────────
+        if self._code_sandbox is None:
+            logger.info(
+                "[PipelineSupervisor] SPRINT_BLOCKED resume: sandbox not wired — "
+                "falling back to full sprint re-run: project=%s", project_id,
+            )
+            self.workspace.update_state(project_id, ProjectState.SPRINT_IN_PROGRESS)
+            return PipelineResult(
+                project_id=project_id,
+                state=ProjectState.SPRINT_IN_PROGRESS,
+                success=True,
+                message="SPRINT_BLOCKED fallback: no sandbox wired",
+                completed_stages=list(data.get("stages_completed", [])),
+            )
+
+        # ── Determine which sprint is blocked ────────────────────────────────
+        raw_num = data.get("current_sprint_number")
+        if not raw_num:
+            logger.warning(
+                "[PipelineSupervisor] SPRINT_BLOCKED resume: current_sprint_number not "
+                "set in project data — falling back to full sprint re-run: project=%s",
+                project_id,
+            )
+            self.workspace.update_state(project_id, ProjectState.SPRINT_IN_PROGRESS)
+            return PipelineResult(
+                project_id=project_id,
+                state=ProjectState.SPRINT_IN_PROGRESS,
+                success=True,
+                message="SPRINT_BLOCKED fallback: current_sprint_number unknown",
+                completed_stages=list(data.get("stages_completed", [])),
+            )
+
+        try:
+            blocked_num = int(raw_num)
+        except (TypeError, ValueError):
+            logger.warning(
+                "[PipelineSupervisor] SPRINT_BLOCKED resume: invalid "
+                "current_sprint_number=%r — falling back to full sprint re-run: project=%s",
+                raw_num, project_id,
+            )
+            self.workspace.update_state(project_id, ProjectState.SPRINT_IN_PROGRESS)
+            return PipelineResult(
+                project_id=project_id,
+                state=ProjectState.SPRINT_IN_PROGRESS,
+                success=True,
+                message="SPRINT_BLOCKED fallback: invalid current_sprint_number",
+                completed_stages=list(data.get("stages_completed", [])),
+            )
+
+        # ── Stale SPRINT_BLOCKED: sprint already in completed_sprints ────────
+        if blocked_num in completed_sprints:
+            logger.info(
+                "[PipelineSupervisor] SPRINT_BLOCKED resume: sprint %d already "
+                "in completed_sprints — transitioning to SPRINT_IN_PROGRESS: project=%s",
+                blocked_num, project_id,
+            )
+            self.workspace.update_state(project_id, ProjectState.SPRINT_IN_PROGRESS)
+            return PipelineResult(
+                project_id=project_id,
+                state=ProjectState.SPRINT_IN_PROGRESS,
+                success=True,
+                message=f"Sprint {blocked_num} already completed (stale SPRINT_BLOCKED)",
+                completed_stages=list(data.get("stages_completed", [])),
+            )
+
+        blocked_sprint = next(
+            (s for s in sprints_to_run if s.sprint_number == blocked_num),
+            None,
+        )
+        if blocked_sprint is None:
+            logger.warning(
+                "[PipelineSupervisor] SPRINT_BLOCKED resume: sprint %d not found "
+                "in sprint plan — falling back to full sprint re-run: project=%s",
+                blocked_num, project_id,
+            )
+            self.workspace.update_state(project_id, ProjectState.SPRINT_IN_PROGRESS)
+            return PipelineResult(
+                project_id=project_id,
+                state=ProjectState.SPRINT_IN_PROGRESS,
+                success=True,
+                message="SPRINT_BLOCKED fallback: blocked sprint not found in plan",
+                completed_stages=list(data.get("stages_completed", [])),
+            )
+
+        # ── Retry sandbox only ───────────────────────────────────────────────
+        logger.info(
+            "[PipelineSupervisor] SPRINT_BLOCKED resume: retrying only sandbox "
+            "verification for sprint %d — skipping agent re-run: project=%s",
+            blocked_num, project_id,
+        )
+
+        try:
+            sandbox_result = self._code_sandbox.run(
+                project_id,
+                sprint=blocked_num,
+                require_execution=True,
+            )
+        except Exception as exc:
+            logger.error(
+                "[PipelineSupervisor] SPRINT_BLOCKED resume: sandbox raised: "
+                "project=%s sprint=%d error=%s",
+                project_id, blocked_num, exc,
+                exc_info=True,
+            )
+            self.workspace.update_state(project_id, ProjectState.SPRINT_BLOCKED)
+            data = self.workspace.load_project_json(project_id) or {}
+            return PipelineResult(
+                project_id=project_id,
+                state=ProjectState.SPRINT_BLOCKED,
+                success=False,
+                message=f"Sprint {blocked_num} sandbox retry raised: {exc}",
+                current_sprint=blocked_num,
+                completed_stages=list(data.get("stages_completed", [])),
+            )
+
+        if not sandbox_result.build.success:
+            errors = "; ".join(sandbox_result.build.errors[:3]) or "build failed"
+            logger.error(
+                "[PipelineSupervisor] SPRINT_BLOCKED resume: sandbox still failing "
+                "for sprint %d: %s — project=%s",
+                blocked_num, errors, project_id,
+            )
+            self.workspace.update_state(project_id, ProjectState.SPRINT_BLOCKED)
+            self.workspace.update_project_json(
+                project_id,
+                {f"sprint_{blocked_num}_failure_reason": f"sandbox retry failed: {errors}"},
+            )
+            data = self.workspace.load_project_json(project_id) or {}
+            return PipelineResult(
+                project_id=project_id,
+                state=ProjectState.SPRINT_BLOCKED,
+                success=False,
+                message=f"Sprint {blocked_num} sandbox retry failed: {errors}",
+                current_sprint=blocked_num,
+                completed_stages=list(data.get("stages_completed", [])),
+            )
+
+        # ── Sandbox passed — mark sprint complete and run post-sprint steps ──
+        logger.info(
+            "[PipelineSupervisor] SPRINT_BLOCKED resume: sandbox retry passed for "
+            "sprint %d — marking sprint complete: project=%s",
+            blocked_num, project_id,
+        )
+        self.workspace.mark_sprint_complete(project_id, blocked_num)
+        self.workspace.update_state(project_id, ProjectState.SPRINT_IN_PROGRESS)
+        # Mirror the post-sprint steps from the successful path in _run_sprints().
+        self._trigger_intelligence_index(project_id, sprint_number=blocked_num)
+        self._pin_dependencies(project_id, sprint_number=blocked_num)
+        self._run_sandbox(project_id, sprint_number=blocked_num)
+        self._commit_sprint_to_git(project_id, blocked_num, blocked_sprint)
+        self._start_preview(project_id, sprint_number=blocked_num)
+        data = self.workspace.load_project_json(project_id) or {}
+        return PipelineResult(
+            project_id=project_id,
+            state=ProjectState.SPRINT_IN_PROGRESS,
+            success=True,
+            message=f"Sprint {blocked_num} sandbox retry passed — sprint marked complete",
+            completed_stages=list(data.get("stages_completed", [])),
+        )
+
     # Maximum number of BugAnalyst-triggered code fixes before accepting the
     # result and advancing to DEPLOYABLE.  Prevents infinite fix loops when
     # the LLM oscillates or when tests are structurally incompatible with the
@@ -707,6 +936,17 @@ class PipelineSupervisor:
 
                 logger.debug("[PipelineSupervisor] running release stage: %s", stage_key)
                 result = self._run_stage_safe(project_id, stage_key, request)
+
+                if stage_key == "qa" and self._blueprint_store is not None:
+                    try:
+                        outcome = "success" if result.success else "failed"
+                        failure_reason = result.message if not result.success else None
+                        self._blueprint_store.record_outcome(project_id, outcome, failure_reason)
+                    except Exception as exc:
+                        logger.warning(
+                            "[PipelineSupervisor] blueprint outcome record failed (non-fatal): %s", exc,
+                        )
+
                 if not result.success:
                     logger.warning(
                         "[PipelineSupervisor] release stage %s failed (non-fatal): %s",

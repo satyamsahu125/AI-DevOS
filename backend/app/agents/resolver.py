@@ -34,6 +34,8 @@ class AgentResolver:
             "sprint_planning": "sprint_planner",
             "scrummaster": "scrum_master",
             "scrum_master": "scrum_master",
+            "sprintdelta": "sprint_delta",
+            "sprint_delta": "sprint_delta",
             # Sprint-internal agents — called directly by WorkflowManager, not
             # via engine.run_stage(), but listed here so factory.create() works
             # for tests and future tooling.

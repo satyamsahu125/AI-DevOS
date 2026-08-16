@@ -109,6 +109,8 @@ ws_manager = ConnectionManager()
 
 @router.websocket("/ws/{project_id}")
 @router.websocket("/api/ws/{project_id}")
+@router.websocket("/api/v1/ws/{project_id}")
+@router.websocket("/v1/ws/{project_id}")
 async def project_websocket(
     websocket: WebSocket,
     project_id: str,

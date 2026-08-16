@@ -98,6 +98,19 @@ class WriteArchitectureAction(LLMAction):
         api_endpoints = (result.structured or {}).get("api_endpoints") or []
         modules = (result.structured or {}).get("modules") or []
         if api_endpoints or len(modules) >= 3:
+            # Validate technology & platform compatibility before approving result
+            from ..shared.validators.technology_compatibility import TechnologyCompatibilityValidator
+            val_res = TechnologyCompatibilityValidator().validate(
+                (result.structured or {}).get("project_type", ""),
+                str(getattr(context, "content", "")),
+                (result.structured or {}).get("tech_stack", {}),
+            )
+            if not val_res.valid:
+                logger.warning("[WriteArchitectureAction] %s Decs: %s", val_res.reason, val_res.required_decisions)
+                if isinstance(result.structured, dict):
+                    result.structured["anything_unclear"] = (
+                        f"{val_res.reason} Required decisions: {'; '.join(val_res.required_decisions)}"
+                    )
             # Good enough — primary response was usable
             return result
 

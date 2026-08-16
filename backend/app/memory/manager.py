@@ -140,6 +140,26 @@ class MemoryManager:
             self.repository.delete(record.memory_id)
         return len(records)
 
+    def get_knowledge_memory(self, project_id: str):
+        """Return the per-project KnowledgeMemory instance for project_id.
+
+        Delegates to KnowledgeMemoryFactory.get_or_create() so that each
+        project gets its own isolated HNSW index and SQLite database.
+        The factory caches the returned instance — calling this method
+        multiple times with the same project_id returns the same object.
+
+        This method exists as a convenience on MemoryManager so callers
+        that already hold a MemoryManager reference don't need to import
+        KnowledgeMemoryFactory directly.
+
+        Returns
+        -------
+        KnowledgeMemory
+            Per-project isolated semantic knowledge store.
+        """
+        from .knowledge_memory import KnowledgeMemoryFactory
+        return KnowledgeMemoryFactory.get_or_create(project_id)
+
     def _find_record(self, key: str) -> MemoryRecord | None:
         memory_id = self._key_to_id(key)
         if self.repository.exists(memory_id):

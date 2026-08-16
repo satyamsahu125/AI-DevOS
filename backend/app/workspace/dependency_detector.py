@@ -209,8 +209,19 @@ _ENTRY_CANDIDATES = ("index.js", "server.js", "app.js", "main.js", "src/index.js
 
 
 def _node_package_name(module_path: str) -> str | None:
-    """Return the installable npm package name for an import path, or None for relative/local imports."""
+    """Return the installable npm package name for an import path, or None for relative/local imports.
+
+    Filters out:
+    - Relative paths ("./foo", "../bar", "/abs")
+    - TypeScript path aliases: "@/" prefix is a tsconfig alias convention, NOT a scoped
+      npm package. Real scoped packages look like "@scope/name" where scope starts with
+      a letter (e.g. "@reduxjs/toolkit"), never with a slash ("@/api").
+    """
     if module_path.startswith(".") or module_path.startswith("/"):
+        return None
+    # TypeScript path alias: @/ means "project root alias", not a scoped npm package.
+    # Real npm scopes are @<letter...>/<name>; reject anything starting with "@/".
+    if module_path.startswith("@/"):
         return None
     parts = module_path.split("/")
     if module_path.startswith("@") and len(parts) >= 2:

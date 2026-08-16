@@ -233,6 +233,11 @@ class WriteProjectFilesAction(BaseAction):
             "skipped_paths": skipped,
             "stub_paths": stub_paths,              # files with pass-only stubs
             "syntax_fix_paths": syntax_fix_paths,  # files that required syntax re-prompt
+            # Total files across ALL stages in the file plan (including frontend/devops).
+            # Reviewer uses this to distinguish "valid no-op" (plan has files but none
+            # for this stage — e.g. mobile-only project with no backend files) from
+            # "plan missing" (file plan was not loaded or is empty).
+            "total_planned_in_file_plan": len(plan.files),
         }
         return ActionOutput(content=manifest, structured=structured, tokens_used=total_tokens, latency_ms=total_latency)
 

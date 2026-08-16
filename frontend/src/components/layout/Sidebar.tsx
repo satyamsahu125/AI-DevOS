@@ -1,4 +1,5 @@
 import { useNavigate, useLocation, useParams, useSearchParams } from "react-router-dom"
+import { motion, AnimatePresence } from "framer-motion"
 import { useAuth } from "../../lib/auth"
 
 interface NavItem {
@@ -38,6 +39,10 @@ const ICONS = {
   logout:       "M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4 M16 17l5-5-5-5 M21 12H9",
 }
 
+// ── Sidebar widths ────────────────────────────────────────────────────────────
+const SB_EXPANDED = 220
+const SB_COLLAPSED = 52
+
 interface SidebarProps {
   collapsed: boolean
   setCollapsed: (v: boolean) => void
@@ -53,23 +58,26 @@ export function Sidebar({ collapsed, setCollapsed, projectName, projectStatus }:
   const activeTab = searchParams.get("tab") ?? "activity"
   const { user, authEnabled, logout } = useAuth()
 
-  // Pathname matches project workspace
   const onProjectPage = projectId
     ? (location.pathname === `/projects/${projectId}` || location.pathname.startsWith(`/projects/${projectId}/`))
     : false
 
   const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(path + "/")
 
-  const statusColor = projectStatus === "running" ? "var(--color-accent)"
-    : projectStatus === "complete" ? "var(--color-success)"
-    : projectStatus === "failed"   ? "var(--color-error)"
-    : projectStatus === "paused"   ? "var(--color-warning)"
+  const statusColor = projectStatus === "running" ? "#7C3AED"
+    : projectStatus === "complete" ? "#10B981"
+    : projectStatus === "failed"   ? "#F43F5E"
+    : projectStatus === "paused"   ? "#F59E0B"
     : "rgba(233,233,237,.25)"
 
   function NavBtn({ icon, label, to, active, onClick }: NavItem) {
     const handleClick = () => { if (to) navigate(to); else onClick?.() }
     return (
-      <button onClick={handleClick} title={collapsed ? label : undefined}
+      <motion.button
+        onClick={handleClick}
+        title={collapsed ? label : undefined}
+        whileHover={{ backgroundColor: active ? undefined : "rgba(233,233,237,.05)" }}
+        whileTap={{ scale: 0.97 }}
         style={{
           width: "100%", display: "flex", alignItems: "center", gap: 10,
           padding: collapsed ? "9px 0" : "8px 10px",
@@ -80,20 +88,44 @@ export function Sidebar({ collapsed, setCollapsed, projectName, projectStatus }:
           borderRadius: active ? "0 var(--radius-md) var(--radius-md) 0" : "0 var(--radius-md) var(--radius-md) 0",
           color: active ? "var(--color-accent)" : "rgba(233,233,237,.6)",
           cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 13, fontWeight: active ? 500 : 400,
-          transition: "background .12s, color .12s", whiteSpace: "nowrap", overflow: "hidden",
+          whiteSpace: "nowrap", overflow: "hidden",
           marginLeft: collapsed ? 0 : -2,
+          transition: "color 0.12s",
         }}
-        onMouseEnter={e => { if (!active) e.currentTarget.style.background = "rgba(233,233,237,.05)"; e.currentTarget.style.color = "var(--color-text)" }}
-        onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = active ? "var(--color-accent)" : "rgba(233,233,237,.6)" }}>
+      >
         <span style={{ flexShrink: 0, display: "flex" }}>{icon}</span>
-        {!collapsed && <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>}
-      </button>
+        <AnimatePresence>
+          {!collapsed && (
+            <motion.span
+              initial={{ opacity: 0, x: -6 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -6 }}
+              transition={{ duration: 0.18 }}
+              style={{ overflow: "hidden", textOverflow: "ellipsis" }}
+            >
+              {label}
+            </motion.span>
+          )}
+        </AnimatePresence>
+      </motion.button>
     )
   }
 
   function SectionLabel({ label }: { label: string }) {
     if (collapsed) return <div style={{ height: 1, background: "var(--color-divider)", margin: "8px 10px" }} />
-    return <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "rgba(233,233,237,.3)", padding: "12px 12px 4px" }}>{label}</div>
+    return (
+      <AnimatePresence>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.18 }}
+          style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "rgba(233,233,237,.3)", padding: "12px 12px 4px" }}
+        >
+          {label}
+        </motion.div>
+      </AnimatePresence>
+    )
   }
 
   async function handleLogout() {
@@ -104,15 +136,16 @@ export function Sidebar({ collapsed, setCollapsed, projectName, projectStatus }:
   const showUserSection = authEnabled && user && !user.anonymous
 
   return (
-    <aside style={{
-      position: "relative", display: "flex", flexDirection: "column",
-      width: collapsed ? "var(--sb-col)" : "var(--sb-w)",
-      minWidth: collapsed ? "var(--sb-col)" : "var(--sb-w)",
-      background: "var(--color-surface)",
-      borderRight: "1px solid var(--color-divider)",
-      transition: `width var(--sb-dur) var(--sb-ease), min-width var(--sb-dur) var(--sb-ease)`,
-      overflow: "hidden", zIndex: 10, flexShrink: 0,
-    }}>
+    <motion.aside
+      animate={{ width: collapsed ? SB_COLLAPSED : SB_EXPANDED, minWidth: collapsed ? SB_COLLAPSED : SB_EXPANDED }}
+      transition={{ type: "spring", stiffness: 320, damping: 34 }}
+      style={{
+        position: "relative", display: "flex", flexDirection: "column",
+        background: "var(--color-surface)",
+        borderRight: "1px solid var(--color-divider)",
+        overflow: "hidden", zIndex: 10, flexShrink: 0,
+      }}
+    >
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "space-between", padding: collapsed ? "0" : "0 8px", height: 56, borderBottom: "1px solid var(--color-divider)", flexShrink: 0, gap: 4, overflow: "hidden" }}>
@@ -121,7 +154,14 @@ export function Sidebar({ collapsed, setCollapsed, projectName, projectStatus }:
             <span style={{ width: 28, height: 28, borderRadius: 7, background: "var(--color-accent)", display: "grid", placeItems: "center", flexShrink: 0 }}>
               <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="#fff" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
             </span>
-            <span style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: "-.025em", whiteSpace: "nowrap", overflow: "hidden" }}>AI DevOS</span>
+            <motion.span
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.05 }}
+              style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: "-.025em", whiteSpace: "nowrap", overflow: "hidden" }}
+            >
+              AI DevOS
+            </motion.span>
           </a>
         )}
         {collapsed && (
@@ -130,20 +170,24 @@ export function Sidebar({ collapsed, setCollapsed, projectName, projectStatus }:
           </a>
         )}
         {!collapsed && (
-          <button onClick={() => setCollapsed(true)} title="Collapse sidebar"
+          <motion.button
+            onClick={() => setCollapsed(true)}
+            title="Collapse sidebar"
+            whileHover={{ backgroundColor: "var(--color-accent-dim)", borderColor: "var(--color-accent-border)", color: "var(--color-accent)" }}
             style={{ width: 28, height: 28, borderRadius: 7, border: "1px solid var(--color-divider)", background: "transparent", cursor: "pointer", display: "grid", placeItems: "center", color: "rgba(233,233,237,.4)", flexShrink: 0, transition: "background .12s, border-color .12s, color .12s" }}
-            onMouseEnter={e => { e.currentTarget.style.background = "var(--color-accent-dim)"; e.currentTarget.style.borderColor = "var(--color-accent-border)"; e.currentTarget.style.color = "var(--color-accent)" }}
-            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = "var(--color-divider)"; e.currentTarget.style.color = "rgba(233,233,237,.4)" }}>
+          >
             <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round"><path d="M15 18l-6-6 6-6" /></svg>
-          </button>
+          </motion.button>
         )}
         {collapsed && (
-          <button onClick={() => setCollapsed(false)} title="Expand sidebar"
+          <motion.button
+            onClick={() => setCollapsed(false)}
+            title="Expand sidebar"
+            whileHover={{ color: "var(--color-accent)" }}
             style={{ position: "absolute", bottom: -1, right: -12, width: 20, height: 20, borderRadius: "0 6px 6px 0", border: "1px solid var(--color-divider)", borderLeft: "none", background: "var(--color-surface)", cursor: "pointer", display: "grid", placeItems: "center", color: "rgba(233,233,237,.4)", transition: "color .12s" }}
-            onMouseEnter={e => { e.currentTarget.style.color = "var(--color-accent)" }}
-            onMouseLeave={e => { e.currentTarget.style.color = "rgba(233,233,237,.4)" }}>
+          >
             <svg width="10" height="10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"><path d="M9 18l6-6-6-6" /></svg>
-          </button>
+          </motion.button>
         )}
       </div>
 
@@ -180,10 +224,24 @@ export function Sidebar({ collapsed, setCollapsed, projectName, projectStatus }:
       {/* Footer — project status */}
       {projectId && projectName && (
         <div style={{ borderTop: "1px solid var(--color-divider)", padding: collapsed ? "12px 0" : "10px 12px", display: "flex", alignItems: "center", gap: 8, justifyContent: collapsed ? "center" : "flex-start", flexShrink: 0, overflow: "hidden" }}>
-          <span style={{ width: 7, height: 7, borderRadius: "50%", background: statusColor, flexShrink: 0, ...(projectStatus === "running" ? { animation: "pulse-o 1.4s ease-in-out infinite" } : {}) }} />
-          {!collapsed && (
-            <span style={{ fontSize: 12, color: "var(--color-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{projectName}</span>
-          )}
+          <motion.span
+            animate={{ opacity: [0.6, 1, 0.6] }}
+            transition={projectStatus === "running" ? { duration: 1.4, repeat: Infinity, ease: "easeInOut" } : {}}
+            style={{ width: 7, height: 7, borderRadius: "50%", background: statusColor, flexShrink: 0 }}
+          />
+          <AnimatePresence>
+            {!collapsed && (
+              <motion.span
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -8 }}
+                transition={{ duration: 0.18 }}
+                style={{ fontSize: 12, color: "var(--color-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              >
+                {projectName}
+              </motion.span>
+            )}
+          </AnimatePresence>
         </div>
       )}
 
@@ -195,34 +253,43 @@ export function Sidebar({ collapsed, setCollapsed, projectName, projectStatus }:
           flexShrink: 0, overflow: "hidden",
           display: "flex", flexDirection: "column", gap: 6,
         }}>
-          {!collapsed && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-              <div style={{
-                width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
-                background: "var(--color-accent-dim)", border: "1px solid var(--color-accent-border)",
-                display: "grid", placeItems: "center",
-                fontSize: 11, fontWeight: 700, color: "var(--color-accent)",
-              }}>
-                {user.email.charAt(0).toUpperCase()}
-              </div>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 11, color: "var(--color-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {user.email}
-                </div>
-                <span style={{
-                  fontSize: 9, padding: "1px 5px", borderRadius: 3,
-                  background: user.role === "admin" ? "rgba(145,132,217,.18)" : "rgba(233,233,237,.08)",
-                  color: user.role === "admin" ? "var(--color-accent)" : "var(--color-muted)",
-                  fontWeight: 600, textTransform: "uppercase", letterSpacing: ".04em",
+          <AnimatePresence>
+            {!collapsed && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.2 }}
+                style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}
+              >
+                <div style={{
+                  width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
+                  background: "var(--color-accent-dim)", border: "1px solid var(--color-accent-border)",
+                  display: "grid", placeItems: "center",
+                  fontSize: 11, fontWeight: 700, color: "var(--color-accent)",
                 }}>
-                  {user.role}
-                </span>
-              </div>
-            </div>
-          )}
-          <button
+                  {user.email.charAt(0).toUpperCase()}
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 11, color: "var(--color-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {user.email}
+                  </div>
+                  <span style={{
+                    fontSize: 9, padding: "1px 5px", borderRadius: 3,
+                    background: user.role === "admin" ? "rgba(145,132,217,.18)" : "rgba(233,233,237,.08)",
+                    color: user.role === "admin" ? "var(--color-accent)" : "var(--color-muted)",
+                    fontWeight: 600, textTransform: "uppercase", letterSpacing: ".04em",
+                  }}>
+                    {user.role}
+                  </span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <motion.button
             onClick={handleLogout}
             title={collapsed ? "Log out" : undefined}
+            whileHover={{ backgroundColor: "rgba(239,68,68,.08)", color: "#f87171" }}
             style={{
               width: "100%", display: "flex", alignItems: "center",
               gap: 8, padding: collapsed ? "6px 0" : "6px 8px",
@@ -233,14 +300,23 @@ export function Sidebar({ collapsed, setCollapsed, projectName, projectStatus }:
               fontFamily: "var(--font-sans)", fontSize: 12,
               transition: "background .12s, color .12s",
             }}
-            onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,.08)"; e.currentTarget.style.color = "#f87171" }}
-            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "rgba(233,233,237,.4)" }}
           >
             <span style={{ flexShrink: 0, display: "flex" }}><Icon d={ICONS.logout} /></span>
-            {!collapsed && <span>Log out</span>}
-          </button>
+            <AnimatePresence>
+              {!collapsed && (
+                <motion.span
+                  initial={{ opacity: 0, x: -6 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -6 }}
+                  transition={{ duration: 0.15 }}
+                >
+                  Log out
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </motion.button>
         </div>
       )}
-    </aside>
+    </motion.aside>
   )
 }

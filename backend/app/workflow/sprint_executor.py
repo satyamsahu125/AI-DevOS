@@ -17,11 +17,23 @@ Responsibilities:
 Does NOT own: sprint retry logic, post-sprint indexing, git commits,
 sandbox runs, dependency pinning, preview management.  Those stay in
 PipelineSupervisor which calls this executor once per sprint.
+
+Concurrent agent execution
+--------------------------
+When ``SPRINT_PARALLEL_AGENTS >= 2``, BackendDeveloper and FrontendDeveloper
+are dispatched concurrently via :class:`~concurrent.futures.ThreadPoolExecutor`
+(steps 4 and 5).  They write to disjoint directories (``backend/`` vs
+``frontend/``) so no file-path conflicts are possible.
+
+When ``SPRINT_PARALLEL_AGENTS`` is 1 (default) or unset, the two agents run
+sequentially — identical to the original behaviour; no regression.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -116,11 +128,12 @@ class SprintExecutor:
             tech_stack = getattr(file_plan, "tech_stack", {}) or {}
             self._project_writer.initialize_project(project_id, tech_stack)
 
-        # ── Step 3: BackendDeveloper ─────────────────────────────────
-        backend_result = self._run_engine_stage(project_id, "BackendDeveloper", plan_context)
-
-        # ── Step 4: FrontendDeveloper ────────────────────────────────
-        frontend_result = self._run_engine_stage(project_id, "FrontendDeveloper", plan_context)
+        # ── Steps 3+4: BackendDeveloper & FrontendDeveloper ─────────
+        # These agents write to disjoint directories (backend/ vs frontend/)
+        # so they can run concurrently when SPRINT_PARALLEL_AGENTS >= 2.
+        backend_result, frontend_result = self._run_developer_agents(
+            project_id, plan_context,
+        )
 
         all_success = backend_result.success and frontend_result.success
 
@@ -157,6 +170,60 @@ class SprintExecutor:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _run_developer_agents(
+        self, project_id: str, plan_context: str,
+    ) -> tuple[Any, Any]:
+        """Run BackendDeveloper and FrontendDeveloper, optionally concurrently.
+
+        When ``SPRINT_PARALLEL_AGENTS >= 2`` (set via the environment variable),
+        both agents are submitted to a :class:`~concurrent.futures.ThreadPoolExecutor`
+        and run simultaneously.  Because they write exclusively to ``backend/`` and
+        ``frontend/`` directories respectively, there are no shared output paths and
+        no risk of file-level conflicts.
+
+        When ``SPRINT_PARALLEL_AGENTS`` is 1 (default) or unset, the agents run
+        sequentially in the original order (backend first, then frontend) — identical
+        to the pre-parallel implementation.
+
+        Returns
+        -------
+        (backend_result, frontend_result)
+            Both are WorkflowResult objects returned by :meth:`_run_engine_stage`.
+        """
+        parallel_agents = int(os.getenv("SPRINT_PARALLEL_AGENTS", "1"))
+
+        if parallel_agents >= 2:
+            logger.info(
+                "SprintExecutor: running BackendDeveloper + FrontendDeveloper concurrently "
+                "(SPRINT_PARALLEL_AGENTS=%d)",
+                parallel_agents,
+            )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                backend_future = executor.submit(
+                    self._run_engine_stage,
+                    project_id, "BackendDeveloper", plan_context,
+                )
+                frontend_future = executor.submit(
+                    self._run_engine_stage,
+                    project_id, "FrontendDeveloper", plan_context,
+                )
+                # Both futures are awaited before returning.  Exceptions from
+                # either agent surface here as the future's exception, which is
+                # then re-raised.  The executor __exit__ also waits for all
+                # submitted futures before the context manager exits.
+                backend_result = backend_future.result()
+                frontend_result = frontend_future.result()
+        else:
+            # ── Sequential path — identical to original behaviour ─────────────
+            backend_result = self._run_engine_stage(
+                project_id, "BackendDeveloper", plan_context,
+            )
+            frontend_result = self._run_engine_stage(
+                project_id, "FrontendDeveloper", plan_context,
+            )
+
+        return backend_result, frontend_result
 
     def _run_engine_stage(
         self, project_id: str, stage_name: str, context: str,

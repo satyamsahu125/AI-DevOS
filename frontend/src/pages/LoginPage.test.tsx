@@ -18,7 +18,7 @@
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
-import { LoginPage } from "./LoginPage"
+import LoginPage from "./LoginPage"
 import { useAuth } from "../lib/auth"
 
 // ─── Module mocks ──────────────────────────────────────────────────────────────

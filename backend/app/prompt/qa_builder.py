@@ -215,20 +215,47 @@ class QAPromptBuilder(PromptBuilder):
             return self._build_cli_prompt(project_id, files)
         return self._build_web_prompt(project_id, files)
 
+    # Per-builder char budgets — keeps total prompt comfortably below the
+    # 600 000-char pre-flight trim in StageRunner and the 262 144-token Bedrock
+    # limit.  Actual limits:
+    #   file-list  : 8 000 chars  (~200 source-file paths, well above typical)
+    #   code-ctx   : 40 000 chars (~11 000 tokens — plenty for QA context)
+    #   per-file   : 3 000 chars  (read_all_backend_files already truncates at
+    #                               2 000, so this is a belt-and-suspenders cap)
+    _MAX_FILE_LIST_CHARS: int = 8_000
+    _MAX_CODE_CTX_CHARS: int = 40_000
+    _MAX_PER_FILE_CHARS: int = 3_000
+
     def _build_mobile_prompt(self, project_id: str, files: list[str]) -> str:
         """Jest + @testing-library/react-native for React Native / Expo projects."""
         source_files = self.project_reader.read_all_backend_files(project_id) if project_id else {}
 
+        # Cap total code context to avoid context-window overflow.
+        # list_all_files() already excludes node_modules, but the source files
+        # themselves can still be large for multi-sprint projects.
         code_context = ""
         for file_path, content in source_files.items():
-            if any(k in file_path for k in ("calculator", "math", "parser", "memory", "utils", "hooks", "screen")):
-                code_context += f"\n\n// === {file_path} ===\n{content}"
+            if not any(k in file_path for k in ("calculator", "math", "parser", "memory", "utils", "hooks", "screen", "service", "api", "store")):
+                continue
+            snippet = content[:self._MAX_PER_FILE_CHARS]
+            if len(content) > self._MAX_PER_FILE_CHARS:
+                snippet += "\n// ... [truncated for context]"
+            addition = f"\n\n// === {file_path} ===\n{snippet}"
+            if len(code_context) + len(addition) > self._MAX_CODE_CTX_CHARS:
+                break
+            code_context += addition
+
+        # Likewise cap the file list so a project with hundreds of config /
+        # lock files does not bloat the prompt.
+        files_text = chr(10).join(files)
+        if len(files_text) > self._MAX_FILE_LIST_CHARS:
+            files_text = files_text[:self._MAX_FILE_LIST_CHARS] + "\n  ... [list truncated]"
 
         user_prompt = f"""
 Write complete Jest test files for this React Native / Expo mobile app.
 
 PROJECT FILES:
-  {chr(10).join(files)}
+  {files_text}
 
 SOURCE CODE (read carefully — only test what actually exists):
 {code_context or "  No source files found — write tests based on the project structure above."}
@@ -320,14 +347,25 @@ Output format:
         source_files = self.project_reader.read_all_backend_files(project_id) if project_id else {}
         code_ctx = ""
         for fp, content in source_files.items():
-            if any(k in fp for k in ("model", "dataset", "train", "config", "utils")):
-                code_ctx += f"\n\n# === {fp} ===\n{content}"
+            if not any(k in fp for k in ("model", "dataset", "train", "config", "utils")):
+                continue
+            snippet = content[:self._MAX_PER_FILE_CHARS]
+            if len(content) > self._MAX_PER_FILE_CHARS:
+                snippet += "\n# ... [truncated]"
+            addition = f"\n\n# === {fp} ===\n{snippet}"
+            if len(code_ctx) + len(addition) > self._MAX_CODE_CTX_CHARS:
+                break
+            code_ctx += addition
+
+        files_text = chr(10).join(files)
+        if len(files_text) > self._MAX_FILE_LIST_CHARS:
+            files_text = files_text[:self._MAX_FILE_LIST_CHARS] + "\n  ... [list truncated]"
 
         user_prompt = f"""
 Write complete pytest test files for this ML pipeline.
 
 PROJECT FILES:
-  {chr(10).join(files)}
+  {files_text}
 
 SOURCE CODE (read imports and class/function signatures carefully):
 {code_ctx or "  Source files not found — write tests based on project structure above."}
@@ -374,16 +412,25 @@ Output format:
 ===END===
 """
         source_files = self.project_reader.read_all_backend_files(project_id) if project_id else {}
-        code_ctx = "".join(
-            f"\n\n# === {fp} ===\n{c}"
-            for fp, c in source_files.items()
-            if any(k in fp for k in ("cli", "command", "main"))
-        )
+        code_ctx = ""
+        for fp, c in source_files.items():
+            if not any(k in fp for k in ("cli", "command", "main")):
+                continue
+            snippet = c[:self._MAX_PER_FILE_CHARS]
+            addition = f"\n\n# === {fp} ===\n{snippet}"
+            if len(code_ctx) + len(addition) > self._MAX_CODE_CTX_CHARS:
+                break
+            code_ctx += addition
+
+        files_text = chr(10).join(files)
+        if len(files_text) > self._MAX_FILE_LIST_CHARS:
+            files_text = files_text[:self._MAX_FILE_LIST_CHARS] + "\n  ... [list truncated]"
+
         user_prompt = f"""
 Write complete pytest test files for this CLI tool.
 
 PROJECT FILES:
-  {chr(10).join(files)}
+  {files_text}
 
 SOURCE CODE:
 {code_ctx or "  Source files not found — write tests based on project structure above."}
@@ -415,17 +462,25 @@ REQUIREMENTS:
         ]
         for file_path in priority_files:
             content = backend_files.get(file_path)
-            if content:
-                code_context += f"\n\n# === {file_path} ===\n{content}"
+            if content and len(code_context) < self._MAX_CODE_CTX_CHARS:
+                snippet = content[:self._MAX_PER_FILE_CHARS]
+                code_context += f"\n\n# === {file_path} ===\n{snippet}"
         for file_path, content in backend_files.items():
             if "router" in file_path and file_path not in priority_files:
-                code_context += f"\n\n# === {file_path} ===\n{content}"
+                if len(code_context) >= self._MAX_CODE_CTX_CHARS:
+                    break
+                snippet = content[:self._MAX_PER_FILE_CHARS]
+                code_context += f"\n\n# === {file_path} ===\n{snippet}"
+
+        files_text = chr(10).join(files)
+        if len(files_text) > self._MAX_FILE_LIST_CHARS:
+            files_text = files_text[:self._MAX_FILE_LIST_CHARS] + "\n  ... [list truncated]"
 
         user_prompt = f"""
 Write complete pytest test files for this web project.
 
 PROJECT STRUCTURE:
-  All files: {chr(10).join(files)}
+  All files: {files_text}
 
 API ROUTES DETECTED:
 {routes_summary}
