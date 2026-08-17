@@ -16,8 +16,8 @@ _FILE_CONTEXT_STAGES = frozenset({"backend", "frontend", "qa", "BackendDeveloper
 _STAGE_NEEDS: dict[str, list[str]] = {
     "backend":          ["architect", "security", "file_planner"],
     "BackendDeveloper": ["architect", "security", "file_planner"],
-    "frontend":         ["designer", "architect", "file_planner"],
-    "FrontendDeveloper":["designer", "architect", "file_planner"],
+    "frontend":         ["designer", "architect", "file_planner", "backend"],
+    "FrontendDeveloper":["designer", "architect", "file_planner", "backend"],
     "qa":               ["product_owner"],
     "QA":               ["product_owner"],
     "devops":           ["architect", "security"],
@@ -345,8 +345,10 @@ class ContextOrchestrator:
                     )
                     continue
                 content = art.content
-                if len(content) > 2000:
-                    content = content[:2000] + "\n...[truncated]"
+                # Architect artifact needs more context (typically 5,000–10,000 chars)
+                max_chars = 8000 if stage_name.lower() == "architect" else 2000
+                if len(content) > max_chars:
+                    content = content[:max_chars] + "\n...[truncated]"
                 result[stage_name] = content
             except Exception as exc:
                 logger.debug("Artifact load skipped for %s: %s", stage_name, exc)

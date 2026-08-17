@@ -1,7 +1,7 @@
 """ProgressTracker — single responsibility: compute pipeline progress percentage.
-
+ 
 Extracted from WorkflowEngine._compute_progress_percent.  Reads project state
-from workspace and returns an integer 0–100.
+from EventStore (preferred) or workspace (fallback) and returns an integer 0–100.
 """
 from __future__ import annotations
 
@@ -37,21 +37,21 @@ _TOTAL_STAGES: int = 20
 
 
 class ProgressTracker:
-    """Computes 0–100 progress for a project by inspecting its workspace state.
+    """Computes 0–100 progress for a project by inspecting its workflow state.
 
     Parameters
     ----------
-    workspace_manager:
-        Provides load_project_json(project_id) → dict | None.
+    workflow_engine:
+        Provides get_workflow_state(project_id) → dict.
     """
 
-    def __init__(self, workspace_manager: Any) -> None:
-        self._workspace = workspace_manager
+    def __init__(self, workflow_engine: Any) -> None:
+        self._engine = workflow_engine
 
     def compute(self, project_id: str) -> int:
         """Return progress percentage (0–100) for project_id."""
         try:
-            data = self._workspace.load_project_json(project_id) or {}
+            data = self._engine.get_workflow_state(project_id)
             state_str = data.get("state", "")
             completed: list[str] = list(data.get("stages_completed", []))
 

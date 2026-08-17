@@ -177,6 +177,7 @@ class WorkflowManager:
                 run_stage_fn=self.run_stage,
                 transition_fn=self._transition,
                 domain_researcher=domain_researcher,
+                engine=self.engine,
             )
 
         # Expose for backward-compat (e.g. project_writer, sprint_monitor).

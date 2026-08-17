@@ -19,8 +19,8 @@ FILE 1: tests/conftest.py
   Required fixtures:
     @pytest.fixture(scope="session")
     def app():
-        from backend.main import create_app
-        return create_app()
+        from {app_module} import {app_factory}
+        return {app_factory}()
 
     @pytest.fixture(scope="session")
     def client(app):
@@ -35,17 +35,17 @@ FILE 1: tests/conftest.py
     @pytest.fixture
     def test_user(client):
         # Register a test user, return user data + token
-        response = client.post("/api/v1/auth/register", json={
+        response = client.post("{auth_endpoint}", json={{
             "email": "test@devos.ai",
             "password": "TestPass123!",
             "name": "Test User"
-        })
-        return response.json() if response.status_code == 200 else {}
+        }})
+        return response.json() if response.status_code == 200 else {{}}
 
     @pytest.fixture
     def auth_headers(test_user):
         token = test_user.get("access_token", "")
-        return {"Authorization": f"Bearer {token}"}
+        return {{"Authorization": f"Bearer {{token}}"}}
 
 FILE 2: tests/test_auth.py (if auth routes exist)
   Test every auth endpoint:
@@ -111,59 +111,49 @@ YOUR ONLY OUTPUT: Complete, runnable TypeScript/Jest test files.
 No explanations. No markdown prose. Pure TypeScript inside file blocks.
 Do NOT write Python or pytest — this is a mobile app with no backend server.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 TESTING FRAMEWORK: Jest + @testing-library/react-native
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-FILE 1: __tests__/calculator.test.ts
-  Unit tests for the expression parser / calculation engine:
-    - Basic arithmetic: 5 + 3 = 8, 10 / 2 = 5, 3 * 4 = 12, 10 - 6 = 4
-    - Scientific: sin(30) ≈ 0.5, cos(0) = 1, sqrt(9) = 3, log(10) = 1
-    - Error cases: division by zero, sqrt of negative, log(0), invalid syntax
-    - Edge cases: empty input, chained operations, floating point precision
+FILE 1: __tests__/[ServiceName].test.ts
+  Unit tests for the core business logic / services:
+    - Core functions: test happy path, edge cases, error handling
+    - Pure utility functions: test all exported functions
+    - State management: test actions, reducers, selectors
 
-FILE 2: __tests__/memory.test.ts
-  Unit tests for memory functions:
-    - M+: adds current value to memory
-    - M-: subtracts from memory
-    - MR: recalls stored value, returns 0 when empty
-    - MC: clears memory, indicator disappears
-
-FILE 3: __tests__/CalculatorScreen.test.tsx
+FILE 2: __tests__/[ScreenName].test.tsx
   Component integration test using @testing-library/react-native:
-    - Renders keypad buttons correctly
-    - Button press updates display
-    - Equals button evaluates expression
-    - Clear button resets display
-    - Error state shows correct message
+    - Renders UI elements correctly
+    - User interactions update state/display
+    - Error states show correct messages
+    - Navigation works as expected
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PATTERNS TO USE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Unit test (logic):
-  import { evaluate } from '../src/utils/calculator';
-  describe('evaluate', () => {
-    it('adds two numbers', () => {
-      expect(evaluate('5 + 3')).toBe(8);
+  import { yourFunction } from '../src/services/yourService';
+  describe('yourFunction', () => {
+    it('handles normal input', () => {
+      expect(yourFunction(validInput)).toBe(expectedOutput);
     });
-    it('throws on division by zero', () => {
-      expect(() => evaluate('5 / 0')).toThrow('Division by Zero');
+    it('throws on invalid input', () => {
+      expect(() => yourFunction(invalidInput)).toThrow('Expected error');
     });
   });
 
 Component test:
   import { render, fireEvent } from '@testing-library/react-native';
-  import CalculatorScreen from '../src/screens/CalculatorScreen';
-  it('pressing 5 shows 5 on display', () => {
-    const { getByText, getByTestId } = render(<CalculatorScreen />);
-    fireEvent.press(getByText('5'));
-    expect(getByTestId('display').props.children).toBe('5');
+  import YourScreen from '../src/screens/YourScreen';
+  it('renders correctly', () => {
+    const { getByText, getByTestId } = render(<YourScreen />);
+    expect(getByText('Expected Text')).toBeTruthy();
   });
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. ONLY write tests for features that ACTUALLY EXIST in the source code files
 2. Import from the exact file paths found in the project
 3. Never import FastAPI, pytest, httpx, or any Python library
@@ -172,15 +162,11 @@ RULES
 6. AsyncStorage mock: jest.mock('@react-native-async-storage/async-storage', ...)
 
 Output format:
-===FILE: __tests__/calculator.test.ts===
+===FILE: __tests__/[ServiceName].test.ts===
 [complete file content]
 ===END===
 
-===FILE: __tests__/memory.test.ts===
-[complete file content]
-===END===
-
-===FILE: __tests__/CalculatorScreen.test.tsx===
+===FILE: __tests__/[ScreenName].test.tsx===
 [complete file content]
 ===END===
 """
@@ -233,9 +219,12 @@ class QAPromptBuilder(PromptBuilder):
         # Cap total code context to avoid context-window overflow.
         # list_all_files() already excludes node_modules, but the source files
         # themselves can still be large for multi-sprint projects.
+        # Include all relevant source files (screens, services, hooks, utils, etc.)
+        # without hardcoded calculator/math keywords.
         code_context = ""
+        relevant_keywords = ("parser", "memory", "utils", "hooks", "screen", "service", "api", "store", "component", "navigation", "context", "provider")
         for file_path, content in source_files.items():
-            if not any(k in file_path for k in ("calculator", "math", "parser", "memory", "utils", "hooks", "screen", "service", "api", "store")):
+            if not any(k in file_path.lower() for k in relevant_keywords):
                 continue
             snippet = content[:self._MAX_PER_FILE_CHARS]
             if len(content) > self._MAX_PER_FILE_CHARS:
@@ -262,26 +251,23 @@ SOURCE CODE (read carefully — only test what actually exists):
 
 REQUIREMENTS:
   - Write TypeScript test files using Jest + @testing-library/react-native
-  - Test the expression parser / calculator logic with unit tests
-  - Test memory functions (M+, M-, MR, MC)
-  - Write at least one component integration test
+  - Test core business logic / services with unit tests
+  - Test UI components / screens with integration tests
   - Import from exact file paths found in the project
   - Do NOT write Python, pytest, conftest.py, or any FastAPI code
 
 Output format:
-  ===FILE: __tests__/calculator.test.ts===
+  ===FILE: __tests__/[ServiceName].test.ts===
   [complete file content]
   ===END===
 
-  ===FILE: __tests__/memory.test.ts===
-  [complete file content]
-  ===END===
-
-  ===FILE: __tests__/CalculatorScreen.test.tsx===
+  ===FILE: __tests__/[ScreenName].test.tsx===
   [complete file content]
   ===END===
 """
-        return f"{_MOBILE_SYSTEM_PROMPT}\n\n{user_prompt}"
+        # Return only the user prompt; the system prompt (_MOBILE_SYSTEM_PROMPT)
+        # should be passed separately to generate_text() by the caller.
+        return user_prompt
 
     def _build_ml_prompt(self, project_id: str, files: list[str]) -> str:
         """pytest tests for ML pipeline projects — tests math, not HTTP endpoints."""

@@ -173,12 +173,12 @@ class ContextBudgetRegistry:
         # ── BackendDeveloper ─────────────────────────────────────────
         # Needs the approved design spec plus file-level intelligence
         # (existing files to avoid duplication, dependency graph for imports).
-        # Predecessor is kept short — the full architecture spec comes via
-        # the design context; a long predecessor would be mostly duplicate.
+        # Predecessor increased to 6000 to accommodate Architect artifact
+        # (typically 5,000–10,000 chars) without truncation.
         "backend": ContextBudget(
             max_total_tokens=12_000,
             include_predecessor=True,
-            predecessor_max_chars=1_000,
+            predecessor_max_chars=6_000,
             include_lessons=True,
             lessons_limit=2,
             include_patterns=True,
@@ -194,7 +194,7 @@ class ContextBudgetRegistry:
         "frontend": ContextBudget(
             max_total_tokens=12_000,
             include_predecessor=True,
-            predecessor_max_chars=1_000,
+            predecessor_max_chars=6_000,
             include_lessons=True,
             lessons_limit=2,
             include_patterns=True,

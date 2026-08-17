@@ -55,7 +55,7 @@ function AppRoutes() {
           <Route path="/settings" element={<PageTransition><SettingsPage /></PageTransition>} />
           <Route path="/admin" element={<PageTransition><AdminPage /></PageTransition>} />
         </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to={isRealUser ? "/projects" : "/login"} replace />} />
       </Routes>
     </AnimatePresence>
   )

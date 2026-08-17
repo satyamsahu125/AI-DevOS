@@ -172,6 +172,22 @@ class PipelineSupervisor:
         self._change_manager = change_manager        # BugAnalyst spec/arch rollback
         self._memory_manager = memory_manager        # sandbox result storage
         self._blueprint_store = blueprint_store      # BlueprintStore — blueprint persistence
+        
+        # Event store for event sourcing (dual-write)
+        from ..memory.memory_repository import MemoryRepository
+        from ..memory.manager import MemoryManager
+        if memory_manager:
+            if isinstance(memory_manager, MemoryRepository):
+                storage_adapter = memory_manager.storage
+            elif isinstance(memory_manager, MemoryManager):
+                storage_adapter = memory_manager.repository.storage
+            else:
+                # Test mock or other - try to get storage adapter
+                storage_adapter = getattr(memory_manager, 'storage', None) or getattr(getattr(memory_manager, 'repository', None), 'storage', None)
+            from ..workflow.event_store import EventStore
+            self._events = EventStore(storage_adapter) if storage_adapter else None
+        else:
+            self._events = None
 
     def _get_project_mode(self, project_id: str) -> str:
         """Read project mode from project.json. Returns 'full' if not set."""
@@ -180,6 +196,205 @@ class PipelineSupervisor:
             return data.get("mode", "full") or "full"
         except Exception:
             return "full"
+
+    def _get_project_type(self, project_id: str) -> str | None:
+        """Read project_type from blueprint or project.json."""
+        try:
+            # Try blueprint first
+            if self._blueprint_store is not None:
+                bp = self._blueprint_store.get(project_id)
+                if bp and bp.get("project_type"):
+                    return bp["project_type"]
+            # Fallback to project.json
+            data = self.workspace.load_project_json(project_id) or {}
+            return data.get("project_type")
+        except Exception:
+            return None
+
+    def _create_react_native_scaffold(self, project_id: str) -> None:
+        """Create mandatory React Native entry-point files if they don't exist.
+
+        Creates: App.tsx, babel.config.js, tsconfig.json, metro.config.js
+        Only runs for project_type == "react_native" or "mobile_app".
+        Uses the project_writer mechanism to write files.
+        """
+        project_type = self._get_project_type(project_id)
+        if not project_type:
+            return
+        pt = project_type.lower().strip()
+        if pt not in ("react_native", "mobile_app", "mobile", "expo"):
+            return
+
+        try:
+            from ..execution.project_writer import ProjectWriter
+            writer = ProjectWriter(self.workspace)
+
+            # App.tsx - Expo entry point
+            app_tsx = '''import { StatusBar } from "expo-status-bar";
+import { StyleSheet, Text, View } from "react-native";
+import { NavigationContainer } from "@react-navigation/native";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import * as Font from "expo-font";
+import * as SplashScreen from "expo-splash-screen";
+import { useColorScheme } from "react-native";
+import { useEffect, useState } from "react";
+
+const Stack = createNativeStackNavigator();
+
+function App() {
+  const [fontsLoaded, setFontsLoaded] = useState(false);
+  const colorScheme = useColorScheme();
+
+  useEffect(() => {
+    async function prepare() {
+      try {
+        await SplashScreen.preventAutoHideAsync();
+        await Font.loadAsync({
+          "Inter-Regular": require("./assets/fonts/Inter-Regular.ttf"),
+        });
+        setFontsLoaded(true);
+      } catch (e) {
+        console.warn(e);
+        setFontsLoaded(true);
+      }
+    }
+    prepare();
+  }, []);
+
+  if (!fontsLoaded) {
+    return null;
+  }
+
+  return (
+    <NavigationContainer>
+      <Stack.Navigator
+        screenOptions={{
+          headerStyle: { backgroundColor: colorScheme === "dark" ? "#1a1a2e" : "#fff" },
+          headerTintColor: colorScheme === "dark" ? "#fff" : "#000",
+        }}
+      >
+        <Stack.Screen name="Home" component={HomeScreen} options={{ title: "Welcome" }} />
+      </Stack.Navigator>
+      <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
+    </NavigationContainer>
+  );
+}
+
+function HomeScreen({ navigation }: any) {
+  return (
+    <View style={styles.container}>
+      <Text style={[styles.text, { color: colorScheme === "dark" ? "#fff" : "#000" }]}>
+        Welcome to your React Native App!
+      </Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+  },
+  text: {
+    fontSize: 18,
+    textAlign: "center",
+  },
+});
+
+export default App;
+'''
+
+            # babel.config.js
+            babel_config = '''module.exports = function(api) {
+  api.cache(true);
+  return {
+    presets: ["babel-preset-expo"],
+    plugins: [
+      "nativewind/babel",
+      ["module-resolver", { root: ["./src"] }],
+    ],
+  };
+};
+'''
+
+            # tsconfig.json
+            tsconfig = '''{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "types": ["react", "react-native", "jest", "@testing-library/jest-native"]
+  },
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.d.ts", "expo-env.d.ts"],
+  "exclude": ["node_modules", "dist", ".expo"]
+}
+'''
+
+            # metro.config.js
+            metro_config = '''const { getDefaultConfig } = require("expo/metro-config");
+const { withNativeWind } = require("nativewind/metro");
+
+const config = getDefaultConfig(__dirname);
+
+config.transformer = {
+  ...config.transformer,
+  babelTransformerPath: require.resolve("react-native-svg-transformer"),
+};
+config.resolver = {
+  ...config.resolver,
+  assetExts: config.resolver.assetExts.filter((ext: string) => ext !== "svg"),
+  sourceExts: [...config.resolver.sourceExts, "svg"],
+};
+
+module.exports = withNativeWind(config, { input: "./global.css" });
+'''
+
+            # Write files only if they don't exist
+            project_dir = self.workspace.get_workspace_path(project_id) / "project"
+            project_dir.mkdir(parents=True, exist_ok=True)
+
+            scaffold_files = {
+                "App.tsx": app_tsx,
+                "babel.config.js": babel_config,
+                "tsconfig.json": tsconfig,
+                "metro.config.js": metro_config,
+            }
+
+            for filename, content in scaffold_files.items():
+                file_path = project_dir / filename
+                if not file_path.exists():
+                    writer.write_file(
+                        project_id=project_id,
+                        file_path=filename,
+                        content=content,
+                        attempt=1,
+                    )
+                    logger.info(
+                        "[PipelineSupervisor] Created React Native scaffold file: %s",
+                        filename,
+                    )
+
+        except Exception as exc:
+            logger.warning(
+                "[PipelineSupervisor] Failed to create React Native scaffold (non-fatal): %s",
+                exc,
+            )
 
     def run(
         self,
@@ -330,6 +545,18 @@ class PipelineSupervisor:
                         "resuming from Release phase: project=%s",
                         project_id,
                     )
+                    # Clear release stages from stages_completed so they re-run.
+                    # stages_completed is keyed by stage name string (e.g., "QA", "DevOps").
+                    _release_stage_keys = set(get_release_stages())
+                    _current_completed = set(_data.get("stages_completed", []))
+                    _to_clear = _current_completed & _release_stage_keys
+                    if _to_clear:
+                        _new_completed = list(_current_completed - _to_clear)
+                        self.workspace.update_project_json(project_id, {"stages_completed": _new_completed})
+                        logger.info(
+                            "[PipelineSupervisor] REPLANNING: cleared release stages from stages_completed: %s",
+                            sorted(_to_clear),
+                        )
                     self.workspace.update_state(project_id, ProjectState.ALL_SPRINTS_COMPLETE)
                     state = ProjectState.ALL_SPRINTS_COMPLETE
             # Fall through — the existing phase routing below picks up the
@@ -377,6 +604,17 @@ class PipelineSupervisor:
 
         # Terminal states
         data = self.workspace.load_project_json(project_id) or {}
+        
+        # Append WORKFLOW_FAILED event if pipeline failed
+        if state not in [ProjectState.DEPLOYABLE, ProjectState.DONE] and self._events:
+            self._events.append(
+                workflow_id=project_id,
+                event_type="workflow.failed",
+                actor="engine",
+                trace_id=None,
+                payload={"error": f"Pipeline ended in state: {state.value if hasattr(state, 'value') else state}"},
+            )
+        
         return PipelineResult(
             project_id=project_id,
             state=state,
@@ -462,54 +700,57 @@ class PipelineSupervisor:
             # Phase 4: After Architect — pause for architecture review gate.
             # R9: skip gate in quick mode (auto-approve).
             if stage_key == "architect" and not quick_mode:
-                logger.info("[PipelineSupervisor] architecture ready, pausing for human review gate")
-                self.workspace.update_state(project_id, ProjectState.ARCHITECTURE_REVIEW_PENDING)
-                data = self.workspace.load_project_json(project_id) or {}
-                return PipelineResult(
-                    project_id=project_id,
-                    state=ProjectState.ARCHITECTURE_REVIEW_PENDING,
-                    success=True,
-                    message="Architecture ready for review",
-                    requires_user_action=True,
-                    action_needed="review_architecture",
-                    completed_stages=list(data.get("stages_completed", [])),
-                )
+                if self.engine.requires_human_review(stage_key):
+                    logger.info("[PipelineSupervisor] architecture ready, pausing for human review gate")
+                    self.workspace.update_state(project_id, ProjectState.ARCHITECTURE_REVIEW_PENDING)
+                    data = self.workspace.load_project_json(project_id) or {}
+                    return PipelineResult(
+                        project_id=project_id,
+                        state=ProjectState.ARCHITECTURE_REVIEW_PENDING,
+                        success=True,
+                        message="Architecture ready for review",
+                        requires_user_action=True,
+                        action_needed="review_architecture",
+                        completed_stages=list(data.get("stages_completed", [])),
+                    )
             if stage_key == "architect" and quick_mode:
                 logger.info("[PipelineSupervisor] quick mode: auto-approving architecture gate")
 
             # After Designer: pause for design review before continuing to Security
             # R9: skip gate in quick mode (auto-approve).
             if stage_key == "designer" and not quick_mode:
-                logger.info("[PipelineSupervisor] design ready, pausing for review")
-                self.workspace.update_state(project_id, ProjectState.DESIGN_REVIEW_PENDING)
-                data = self.workspace.load_project_json(project_id) or {}
-                return PipelineResult(
-                    project_id=project_id,
-                    state=ProjectState.DESIGN_REVIEW_PENDING,
-                    success=True,
-                    message="Design ready for review",
-                    requires_user_action=True,
-                    action_needed="review_design",
-                    completed_stages=list(data.get("stages_completed", [])),
-                )
+                if self.engine.requires_human_review(stage_key):
+                    logger.info("[PipelineSupervisor] design ready, pausing for review")
+                    self.workspace.update_state(project_id, ProjectState.DESIGN_REVIEW_PENDING)
+                    data = self.workspace.load_project_json(project_id) or {}
+                    return PipelineResult(
+                        project_id=project_id,
+                        state=ProjectState.DESIGN_REVIEW_PENDING,
+                        success=True,
+                        message="Design ready for review",
+                        requires_user_action=True,
+                        action_needed="review_design",
+                        completed_stages=list(data.get("stages_completed", [])),
+                    )
             if stage_key == "designer" and quick_mode:
                 logger.info("[PipelineSupervisor] quick mode: auto-approving design gate")
 
             # Phase 4: After SprintPlanner — pause for sprint plan review before sprint execution.
             # R9: skip gate in quick mode (auto-approve).
             if stage_key == "sprint_planner" and not quick_mode:
-                logger.info("[PipelineSupervisor] sprint plan ready, pausing for human review gate")
-                self.workspace.update_state(project_id, ProjectState.SPRINT_PLAN_REVIEW_PENDING)
-                data = self.workspace.load_project_json(project_id) or {}
-                return PipelineResult(
-                    project_id=project_id,
-                    state=ProjectState.SPRINT_PLAN_REVIEW_PENDING,
-                    success=True,
-                    message="Sprint plan ready for review",
-                    requires_user_action=True,
-                    action_needed="review_sprint_plan",
-                    completed_stages=list(data.get("stages_completed", [])),
-                )
+                if self.engine.requires_human_review(stage_key):
+                    logger.info("[PipelineSupervisor] sprint plan ready, pausing for human review gate")
+                    self.workspace.update_state(project_id, ProjectState.SPRINT_PLAN_REVIEW_PENDING)
+                    data = self.workspace.load_project_json(project_id) or {}
+                    return PipelineResult(
+                        project_id=project_id,
+                        state=ProjectState.SPRINT_PLAN_REVIEW_PENDING,
+                        success=True,
+                        message="Sprint plan ready for review",
+                        requires_user_action=True,
+                        action_needed="review_sprint_plan",
+                        completed_stages=list(data.get("stages_completed", [])),
+                    )
             if stage_key == "sprint_planner" and quick_mode:
                 logger.info("[PipelineSupervisor] quick mode: auto-approving sprint plan gate")
 
@@ -659,6 +900,13 @@ class PipelineSupervisor:
             # Calling it again here would cause a read-modify-write race on project.json
             # if any concurrent write occurs between the two calls.
             logger.info("[PipelineSupervisor] sprint %d complete", n)
+
+            # Create React Native scaffold files on first sprint for mobile projects.
+            # These entry-point files (App.tsx, babel.config.js, tsconfig.json, metro.config.js)
+            # are required for React Native/Expo projects and must exist before code generation.
+            if n == 1:
+                self._create_react_native_scaffold(project_id)
+
             # Phase 3: trigger intelligence layer to index the newly written files.
             # Non-blocking — failures are logged but never stop the pipeline.
             self._trigger_intelligence_index(project_id, sprint_number=n)
@@ -955,6 +1203,11 @@ class PipelineSupervisor:
                 else:
                     logger.info("[PipelineSupervisor] release stage %s complete", stage_key)
 
+                    # Run sandbox after QA stage to execute newly generated test files.
+                    if stage_key == "qa" and self._code_sandbox is not None:
+                        logger.info("[PipelineSupervisor] Running sandbox with QA-generated test files: project=%s", project_id)
+                        self._run_sandbox(project_id, sprint_number=0)
+
                     # R3: verify Dockerfile after DevOps stage
                     if stage_key in ("devops", "devops_developer") and self._code_sandbox is not None:
                         dockerfile_errors = self._code_sandbox.verify_dockerfile(project_id)
@@ -1001,12 +1254,10 @@ class PipelineSupervisor:
                                         confirmed=True,
                                     )
                                 else:
-                                    logger.warning(
-                                        "[PipelineSupervisor] BugAnalyst %s rollback skipped — "
-                                        "no change_manager wired: project=%s",
-                                        bug_type, project_id,
+                                    raise RuntimeError(
+                                        "ChangeManager not injected — cannot perform rollback. "
+                                        "Wire ChangeManager in PipelineSupervisor."
                                     )
-                                    self.workspace.update_state(project_id, ProjectState.RESUMING_FROM_CHANGE)
                                 return PipelineResult(
                                     project_id=project_id,
                                     state=ProjectState.RESUMING_FROM_CHANGE,
@@ -1131,6 +1382,16 @@ class PipelineSupervisor:
 
         logger.info("[PipelineSupervisor] Release phase complete, marking DEPLOYABLE")
         self.workspace.update_state(project_id, ProjectState.DEPLOYABLE)
+        
+        # Append WORKFLOW_COMPLETED event (dual-write)
+        if self._events:
+            self._events.append(
+                workflow_id=project_id,
+                event_type="workflow.completed",
+                actor="engine",
+                trace_id=None,
+            )
+        
         data = self.workspace.load_project_json(project_id) or {}
         return PipelineResult(
             project_id=project_id,

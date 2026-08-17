@@ -34,7 +34,7 @@ from ..shared.dto.sandbox_result import BuildResult, LintResult, SandboxResult, 
 
 logger = logging.getLogger(__name__)
 
-_SANDBOX_ENABLED = os.getenv("SANDBOX_ENABLED", "false").lower() in ("true", "1", "yes")
+_SANDBOX_ENABLED = os.getenv("SANDBOX_ENABLED", "true").lower() in ("true", "1", "yes")
 _SANDBOX_TIMEOUT = int(os.getenv("SANDBOX_TIMEOUT", "60"))
 _DOCKER_PYTHON = os.getenv("SANDBOX_DOCKER_PYTHON", "python:3.12-slim")
 _DOCKER_NODE = os.getenv("SANDBOX_DOCKER_NODE", "node:20-slim")
@@ -436,21 +436,40 @@ class CodeSandbox:
         )
 
     def _build_python(self, project_dir: Path, started: float) -> BuildResult:
-        """Try to import the generated app entry point as a syntax check."""
-        # Look for main.py, app.py, or any Python file with 'main' in the name
-        entry = self._find_python_entry(project_dir)
-        if entry is None:
-            return BuildResult(success=True, duration_ms=0)  # nothing to check
+        """Try to import ALL generated Python files as a syntax check.
 
-        cmd = ["python", "-m", "py_compile", str(entry)]
-        proc = self._run_subprocess(cmd, cwd=project_dir)
+        Compiles every .py file in the project directory (excluding venv, cache dirs).
+        This catches syntax errors in all modules, not just the entry point.
+        Falls back to single-file check if globbing fails.
+        """
+        try:
+            py_files = list(project_dir.rglob("*.py"))
+            # Filter out virtual env and cache directories
+            py_files = [
+                f for f in py_files
+                if not any(part in {".venv", "venv", "__pycache__", ".tox", "node_modules"} for part in f.parts)
+            ]
+        except Exception:
+            # Fallback to single entry point check
+            entry = self._find_python_entry(project_dir)
+            if entry is None:
+                return BuildResult(success=True, duration_ms=0)
+            py_files = [entry]
+
+        all_errors: list[str] = []
+        for py_file in py_files:
+            cmd = ["python", "-m", "py_compile", str(py_file)]
+            proc = self._run_subprocess(cmd, cwd=project_dir)
+            if proc.returncode != 0:
+                errors = [line for line in (proc.stderr or proc.stdout or "").splitlines() if line.strip()]
+                all_errors.extend([f"{py_file}: {e}" for e in errors])
+
         ms = int((time.time() - started) * 1000)
 
-        if proc.returncode == 0:
-            return BuildResult(success=True, duration_ms=ms, stdout=proc.stdout or "")
+        if not all_errors:
+            return BuildResult(success=True, duration_ms=ms, stdout="All Python files compiled successfully")
 
-        errors = [line for line in (proc.stderr or proc.stdout or "").splitlines() if line.strip()]
-        return BuildResult(success=False, errors=errors, duration_ms=ms, stderr=proc.stderr or "")
+        return BuildResult(success=False, errors=all_errors, duration_ms=ms, stderr="\n".join(all_errors))
 
     def _test_python(self, project_dir: Path, started: float) -> TestResult:
         """Run pytest with JSON output."""

@@ -28,6 +28,8 @@ from ..shared.enums.workflow_state import WorkflowState
 from ..shared.models.workflow import Workflow
 from ..shared.schemas.message import AgentMessage
 from .context_assembler import AssembleResult, ContextAssembler
+from .event_store import EventStore
+from .gate_config import GateConfigLoader
 from .middleware import CheckpointMiddleware, GitMiddleware, LearningMiddleware
 from .progress_tracker import ProgressTracker
 from .retry_engine import IntelligentRetryEngine
@@ -159,7 +161,7 @@ class WorkflowEngine:
         self._git = git_middleware or GitMiddleware(workspace_manager=_workspace)
 
         # ── ProgressTracker ────────────────────────────────────────────
-        self._progress = progress_tracker or ProgressTracker(workspace_manager=_workspace)
+        self._progress = progress_tracker or ProgressTracker(workflow_engine=self)
 
         # Report any incomplete sessions from prior crash.
         self._checkpoint.report_incomplete()
@@ -167,6 +169,50 @@ class WorkflowEngine:
         # Session manager kept for session lifecycle tracking.
         from ..session.manager import SessionManager
         self.session_manager = SessionManager()
+        
+        # Gate configuration loader for review type decisions
+        self._gates = GateConfigLoader()
+        
+        # Event store for event sourcing (dual-write)
+        from ..memory.memory_repository import MemoryRepository
+        if isinstance(self.memory_manager, MemoryRepository):
+            storage_adapter = self.memory_manager.storage
+        else:
+            storage_adapter = self.memory_manager.repository.storage
+        self._events = EventStore(storage_adapter)
+
+    def get_gate_config(self, stage_name: str) -> Any:
+        """Get the gate configuration for a stage."""
+        return self._gates.get(stage_name)
+
+    def requires_human_review(self, stage_name: str) -> bool:
+        """Check if a stage requires human review (review_type is 'human' or 'both')."""
+        gate = self._gates.get(stage_name)
+        return gate.review_type in ("human", "both")
+
+    def requires_ai_review(self, stage_name: str) -> bool:
+        """Check if a stage requires AI review (review_type is 'ai' or 'both')."""
+        gate = self._gates.get(stage_name)
+        return gate.review_type in ("ai", "both")
+
+    def get_workflow_state(self, project_id: str) -> dict:
+        """Get workflow state from EventStore with fallback to workflow.json.
+        
+        Reads state from the event store (EventStore.replay_state) first.
+        Falls back to reading workflow.json if EventStore returns empty state.
+        Logs a warning when fallback is used.
+        """
+        # Try to get state from EventStore first
+        event_state = self._events.replay_state(project_id)
+        if event_state:
+            return event_state
+        
+        # Fallback to workflow.json with warning
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning("workflow_id %s not in event store, falling back to workflow.json", project_id)
+        existing = self.workspace_manager.load_project_json(project_id) or {}
+        return existing
 
     # ------------------------------------------------------------------
     # Public API
@@ -188,6 +234,19 @@ class WorkflowEngine:
         logger.info("engine.run: project=%s stage=%s", project_id, stage_name)
         stage = Stage(stage_name)
         session = self.session_manager.create_session(stage_name)
+        
+        # Generate trace_id for this workflow run (distributed tracing)
+        trace_id = str(uuid4())
+        logger.info("workflow started", extra={"workflow_id": project_id, "trace_id": trace_id})
+        
+        # Append WORKFLOW_STARTED event (dual-write)
+        self._events.append(
+            workflow_id=project_id,
+            event_type="workflow.started",
+            actor="system",
+            trace_id=trace_id,
+        )
+        
         workflow = Workflow(
             id="", project_id=project_id, current_stage=stage,
             state=WorkflowState.Created,
@@ -202,6 +261,17 @@ class WorkflowEngine:
             and self.execution_manager.llm_manager
         ):
             self.execution_manager.llm_manager.set_context(project_id, stage_name)
+
+        # ── Track per-stage tokens ──────────────────────────────────────
+        # Record project total tokens before stage execution to compute
+        # the tokens used by this stage (across all retries).
+        _stage_start_tokens = 0
+        try:
+            from ..llm.cost_tracker import get_shared_cost_tracker
+            _tracker = get_shared_cost_tracker()
+            _stage_start_tokens = _tracker.get_project_cost(project_id).total_tokens
+        except Exception:
+            pass
 
         # ── Assemble prompt context ────────────────────────────────────
         # assemble() returns AssembleResult(context, template_injected).
@@ -230,10 +300,40 @@ class WorkflowEngine:
             )
 
 
+        # Append STAGE_STARTED event (dual-write)
+        self._events.append(
+            workflow_id=project_id,
+            event_type="stage.started",
+            actor=stage_name,
+            stage=stage_name,
+            trace_id=trace_id,
+        )
+        
         result = self._stage_runner.run(
             project_id, stage_name, context, on_attempt=_on_attempt,
         )
 
+        # ── Compute tokens used by this stage ───────────────────────────
+        _stage_tokens = 0
+        try:
+            from ..llm.cost_tracker import get_shared_cost_tracker
+            _tracker = get_shared_cost_tracker()
+            _stage_end_tokens = _tracker.get_project_cost(project_id).total_tokens
+            _stage_tokens = max(0, _stage_end_tokens - _stage_start_tokens)
+        except Exception:
+            pass
+
+        # Compute tokens and append stage completion/failed event
+        self._events.append(
+            workflow_id=project_id,
+            event_type="stage.completed" if result.success else "stage.failed",
+            actor=stage_name,
+            stage=stage_name,
+            trace_id=trace_id,
+            artifact_id=result.artifact.artifact_id if result.success and result.artifact else None,
+            payload={"error": str(result.message)} if not result.success else None,
+        )
+        
         # ── Post-run cleanup ───────────────────────────────────────────
         self._checkpoint.delete(session_id)
         self.session_manager.close_session(session)
@@ -247,6 +347,15 @@ class WorkflowEngine:
         if result.success and result.artifact is not None:
             artifact = result.artifact
             workflow.state = WorkflowState.Approved
+
+            # Append APPROVAL_GRANTED event (dual-write)
+            self._events.append(
+                workflow_id=project_id,
+                event_type="approval.granted",
+                actor="ai_reviewer",  # reviewer identity not available here
+                stage=stage_name,
+                trace_id=trace_id,
+            )
 
             # ── Post-approval side effects ─────────────────────────────
             self._record_message(project_id, stage, artifact)
@@ -270,7 +379,8 @@ class WorkflowEngine:
                 project_id, stage_name, result.attempt_count, result.duration_sec,
                 progress_percent=self._progress.compute(project_id),
             )
-            self._check_context_window(project_id)
+            # Pass per-stage tokens to context window check
+            self._check_context_window(project_id, stage_tokens=_stage_tokens)
 
             return WorkflowResult(
                 workflow=workflow, success=True, message="workflow completed", artifact=artifact,
@@ -278,6 +388,18 @@ class WorkflowEngine:
 
         # ── Failure ────────────────────────────────────────────────────
         workflow.state = WorkflowState.Failed
+
+        # Append APPROVAL_DENIED if failure was due to review rejection
+        if result.review_result is not None and not getattr(result.review_result, "approved", True):
+            self._events.append(
+                workflow_id=project_id,
+                event_type="approval.denied",
+                actor="ai_reviewer",
+                stage=stage_name,
+                trace_id=trace_id,
+                payload={"error": result.message},
+            )
+
         self._update_project_failure(project_id, stage)
         return WorkflowResult(workflow=workflow, success=False, message=result.message)
 
@@ -296,6 +418,12 @@ class WorkflowEngine:
                 cause_by=getattr(artifact, "schema_type", "") or stage.value,
                 sent_at=datetime.now(timezone.utc),
             )
+            # Write to stage-specific key to avoid overwriting previous stages
+            stage_key = f"{WORKFLOW_MESSAGE_KEY}:{stage.value}"
+            self.memory_manager.store(
+                project_id, stage_key, message.model_dump_json(),
+            )
+            # Also write to constant key for backward compatibility
             self.memory_manager.store(
                 project_id, WORKFLOW_MESSAGE_KEY, message.model_dump_json(),
             )
@@ -397,12 +525,12 @@ class WorkflowEngine:
     }
     _CONTEXT_WARNING_THRESHOLD = 0.75
 
-    def _check_context_window(self, project_id: str) -> None:
+    def _check_context_window(self, project_id: str, stage_tokens: int = 0) -> None:
         try:
             from ..llm.cost_tracker import get_shared_cost_tracker
             tracker = get_shared_cost_tracker()
-            cost = tracker.get_project_cost(project_id)
-            used_tokens = cost.total_tokens
+            # Use per-stage tokens if available, fall back to project total
+            used_tokens = stage_tokens if stage_tokens > 0 else tracker.get_project_cost(project_id).total_tokens
             if used_tokens == 0:
                 return
             provider = (self._llm_provider or "").lower().strip()

@@ -37,6 +37,7 @@ from ..memory.lesson_store import LessonStore
 from ..memory.manager import MemoryManager
 from ..memory.memory_manager import MemoryOrchestrator  # low-level storage coordinator
 from ..memory.orchestrator import MemoryOrchestrator as MemoryContextOrchestrator  # high-level context assembler
+from ..memory.memory_store import build_memory_store
 from ..memory.project_event_log import ProjectEventLog
 from ..project.initializer import ProjectInitializer
 from ..project.manager import ProjectManager
@@ -44,7 +45,7 @@ from ..review.manager import ReviewManager
 from ..session.manager import SessionManager
 from ..shared.interfaces.agent_interface import AgentInterface
 from ..workflow.engine import WorkflowEngine
-from ..workflow.execution_state import ExecutionStateRegistry
+from ..workflow.execution_state import ExecutionStateRegistry, build_execution_state_registry
 from ..workflow.manager import WorkflowManager
 from ..workflow.retry_engine import IntelligentRetryEngine
 from ..execution.preview_manager import PreviewManager
@@ -94,13 +95,13 @@ class Container:
 
         self._dependencies.register_singleton("configuration_manager", lambda: self._configuration)
         self._dependencies.register_singleton("workspace_manager", WorkspaceManager)
-        self._dependencies.register_singleton("memory_manager", MemoryManager)
+        self._dependencies.register_singleton("memory_manager", lambda: MemoryManager(store=build_memory_store()))
         self._dependencies.register_singleton(
             "artifact_manager",
             lambda: ArtifactManager(workspace_manager=self._dependencies.resolve("workspace_manager")),
         )
         # Low-level storage coordinator — kept for any future use, not wired into pipeline.
-        self._dependencies.register_singleton("memory_storage_orchestrator", MemoryOrchestrator)
+        self._dependencies.register_singleton("memory_storage_orchestrator", lambda: MemoryOrchestrator(store=build_memory_store()))
         # High-level context assembler — assembles all four memory layers for WorkflowEngine.
         # Wired into workflow_engine below via memory_orchestrator parameter.
         # Registered AFTER memory_manager, artifact_manager, and workspace_manager.
@@ -363,7 +364,7 @@ class Container:
             "execution_manager",
             lambda: ExecutionManager(self._dependencies.resolve("artifact_manager")),
         )
-        self._dependencies.register_singleton("execution_state", ExecutionStateRegistry)
+        self._dependencies.register_singleton("execution_state", build_execution_state_registry)
         self._dependencies.register_singleton(
             "retry_engine",
             lambda: IntelligentRetryEngine(

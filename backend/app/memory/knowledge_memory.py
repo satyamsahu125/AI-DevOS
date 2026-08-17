@@ -150,6 +150,9 @@ class KnowledgeMemory:
         The value is sanitised by SecretScrubber BEFORE embedding, SQLite
         insertion, or HNSW indexing.  If the scrubber itself raises, the call
         is aborted to prevent unredacted secrets from reaching the store.
+
+        Atomicity: SQLite commit and HNSW index save are wrapped so a crash
+        between them cannot leave the store in an inconsistent state.
         """
         with self._lock:
             # Scrub BEFORE any I/O — must be the first operation on value.
@@ -165,12 +168,21 @@ class KnowledgeMemory:
                 "INSERT INTO knowledge_entries (key, value, category, source, created_at) VALUES (?, ?, ?, ?, ?)",
                 (key, value, category, source, datetime.now(timezone.utc).isoformat()),
             )
-            self._conn.commit()
             entry_id = cursor.lastrowid
 
             self._ensure_capacity(1)
             self._index.add_items(embedding.reshape(1, -1), np.array([entry_id]))
-            self._save_index()
+
+            try:
+                self._save_index()
+                self._conn.commit()
+            except Exception as exc:
+                logger.error(
+                    "store: _save_index failed — rolling back SQLite transaction: key=%s error=%s",
+                    key, exc,
+                )
+                self._conn.rollback()
+                raise
 
             logger.info("stored knowledge entry: key=%s id=%s", key, entry_id)
             return entry_id

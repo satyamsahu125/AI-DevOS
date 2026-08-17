@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
 import { useAuth } from "../lib/auth"
@@ -29,13 +29,12 @@ export default function LoginPage({ initialTab = "signin" }: { initialTab?: Tab 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [shakeKey, setShakeKey] = useState(0)
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
 
     if (tab === "register" && password !== confirm) {
-      setError("Passwords do not match.")
+      setError("Passwords don't match")
       setShakeKey(k => k + 1)
       return
     }
@@ -43,18 +42,24 @@ export default function LoginPage({ initialTab = "signin" }: { initialTab?: Tab 
     setLoading(true)
     try {
       if (tab === "signin") {
-        await login(email, password)
+        await login(email.trim(), password)
       } else {
-        await register(email, password)
+        await register(email.trim(), password)
       }
-      navigate("/projects")
+      navigate("/projects", { replace: true })
     } catch (err: any) {
-      setError(err.message ?? "Authentication failed")
+      setError(err?.message ?? "Authentication failed")
       setShakeKey(k => k + 1)
     } finally {
       setLoading(false)
     }
   }
+
+  // Track previous tab to trigger form animation on tab change
+  const [prevTab, setPrevTab] = useState<Tab>(initialTab)
+  useEffect(() => {
+    setPrevTab(tab)
+  }, [tab])
 
   return (
     <div style={{
@@ -211,104 +216,98 @@ export default function LoginPage({ initialTab = "signin" }: { initialTab?: Tab 
 
           {/* Form */}
           <div className="surface" style={{ padding: "28px 28px 24px" }}>
-            <AnimatePresence mode="wait">
-              <motion.form
-                key={tab}
-                variants={formVariant}
-                initial="hidden"
-                animate="visible"
-                exit="exit"
-                onSubmit={handleSubmit}
-                style={{ display: "flex", flexDirection: "column", gap: 14 }}
-              >
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 500, color: "var(--text-muted)", display: "block", marginBottom: 5 }}>
-                    Email
-                  </label>
-                  <input
-                    id="login-email"
-                    className="input"
-                    type="email"
-                    autoComplete="email"
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    required
-                    placeholder="you@example.com"
-                  />
-                </div>
+            <motion.form
+              variants={formVariant}
+              initial={false}
+              animate={tab}
+              onSubmit={handleSubmit}
+              style={{ display: "flex", flexDirection: "column", gap: 14 }}
+            >
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 500, color: "var(--text-muted)", display: "block", marginBottom: 5 }}>
+                  Email
+                </label>
+                <input
+                  id="login-email"
+                  className="input"
+                  type="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  required
+                  placeholder="you@example.com"
+                />
+              </div>
 
-                <div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 500, color: "var(--text-muted)", display: "block", marginBottom: 5 }}>
+                  Password
+                </label>
+                <input
+                  id="login-password"
+                  className="input"
+                  type="password"
+                  autoComplete={tab === "signin" ? "current-password" : "new-password"}
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  required
+                  placeholder="••••••••"
+                />
+              </div>
+
+              {tab === "register" && (
+                <motion.div
+                  key="confirm"
+                  variants={formVariant}
+                  initial="hidden"
+                  animate="visible"
+                  exit="exit"
+                >
                   <label style={{ fontSize: 12, fontWeight: 500, color: "var(--text-muted)", display: "block", marginBottom: 5 }}>
-                    Password
+                    Confirm Password
                   </label>
                   <input
-                    id="login-password"
+                    id="login-confirm"
                     className="input"
                     type="password"
-                    autoComplete={tab === "signin" ? "current-password" : "new-password"}
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
+                    autoComplete="new-password"
+                    value={confirm}
+                    onChange={e => setConfirm(e.target.value)}
                     required
                     placeholder="••••••••"
                   />
-                </div>
+                </motion.div>
+              )}
 
-                <AnimatePresence>
-                  {tab === "register" && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.22 }}
-                      style={{ overflow: "hidden" }}
-                    >
-                      <label style={{ fontSize: 12, fontWeight: 500, color: "var(--text-muted)", display: "block", marginBottom: 5 }}>
-                        Confirm Password
-                      </label>
-                      <input
-                        id="login-confirm"
-                        className="input"
-                        type="password"
-                        autoComplete="new-password"
-                        value={confirm}
-                        onChange={e => setConfirm(e.target.value)}
-                        required
-                        placeholder="••••••••"
-                      />
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+              <AnimatePresence>
+                {error && (
+                  <motion.div
+                    key={shakeKey}
+                    className="error-banner"
+                    initial={{ opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0, ...shakeVariant.shake }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: 0.25 }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="8" cy="8" r="7"/><path d="M8 5v3M8 11v0"/></svg>
+                    {error}
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
-                <AnimatePresence>
-                  {error && (
-                    <motion.div
-                      key={shakeKey}
-                      className="error-banner"
-                      initial={{ opacity: 0, y: -6 }}
-                      animate={{ opacity: 1, y: 0, ...shakeVariant.shake }}
-                      exit={{ opacity: 0, y: -4 }}
-                      transition={{ duration: 0.25 }}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="8" cy="8" r="7"/><path d="M8 5v3M8 11v0"/></svg>
-                      {error}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                <motion.button
-                  id="login-submit"
-                  className="btn btn-primary btn-lg"
-                  type="submit"
-                  disabled={loading}
-                  whileHover={{ scale: loading ? 1 : 1.02 }}
-                  whileTap={{ scale: loading ? 1 : 0.98 }}
-                  style={{ justifyContent: "center", marginTop: 4 }}
-                >
-                  {loading && <div className="spinner spinner-sm" style={{ borderTopColor: "#fff" }} />}
-                  {tab === "signin" ? "Sign In" : "Create Account"}
-                </motion.button>
-              </motion.form>
-            </AnimatePresence>
+              <motion.button
+                id="login-submit"
+                className="btn btn-primary btn-lg"
+                type="submit"
+                disabled={loading || !email.trim() || !password}
+                whileHover={{ scale: loading ? 1 : 1.02 }}
+                whileTap={{ scale: loading ? 1 : 0.98 }}
+                style={{ justifyContent: "center", marginTop: 4 }}
+              >
+                {loading && <div className="spinner spinner-sm" style={{ borderTopColor: "#fff" }} />}
+                {tab === "signin" ? "Sign In" : "Create Account"}
+              </motion.button>
+            </motion.form>
           </div>
 
           {/* Hints */}

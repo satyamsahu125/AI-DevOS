@@ -221,6 +221,125 @@ class BackendDeveloperAgent(BaseAgent):
 
         return {}
 
+    def _extract_project_type(self, context: object) -> str | None:
+        """Extract project_type from context.
+
+        Handles the same context shapes as _extract_tech_stack.
+        Returns the project_type string or None if not found.
+        """
+        try:
+            # ---- StageArtifact / any object with .content -------------------
+            content_attr = getattr(context, "content", None)
+            if content_attr is not None:
+                return self._extract_project_type(content_attr)
+
+            # ---- Plain dict -------------------------------------------------
+            if isinstance(context, dict):
+                # Direct project_type at top level
+                pt = context.get("project_type")
+                if isinstance(pt, str):
+                    return pt
+                # In non_functional_requirements (from Architect output)
+                nfr = context.get("non_functional_requirements")
+                if isinstance(nfr, dict):
+                    pt = nfr.get("project_type")
+                    if isinstance(pt, str):
+                        return pt
+                # Nested under architect/architecture
+                for nesting_key in ("architect", "architecture"):
+                    nested = context.get(nesting_key)
+                    if isinstance(nested, dict):
+                        pt = nested.get("project_type")
+                        if isinstance(pt, str):
+                            return pt
+                        nfr = nested.get("non_functional_requirements")
+                        if isinstance(nfr, dict):
+                            pt = nfr.get("project_type")
+                            if isinstance(pt, str):
+                                return pt
+                    elif isinstance(nested, str):
+                        try:
+                            parsed_nested = json.loads(nested)
+                            if isinstance(parsed_nested, dict):
+                                pt = parsed_nested.get("project_type")
+                                if isinstance(pt, str):
+                                    return pt
+                                nfr = parsed_nested.get("non_functional_requirements")
+                                if isinstance(nfr, dict):
+                                    pt = nfr.get("project_type")
+                                    if isinstance(pt, str):
+                                        return pt
+                        except (ValueError, TypeError):
+                            pass
+
+            # ---- JSON string ------------------------------------------------
+            if isinstance(context, str):
+                try:
+                    parsed = json.loads(context)
+                    if isinstance(parsed, dict):
+                        return self._extract_project_type(parsed)
+                except (ValueError, TypeError):
+                    pass
+
+        except Exception:  # noqa: BLE001
+            pass
+
+        return None
+
+    def _get_backend_prefixes_for_project_type(self, project_type: str | None) -> tuple[str, ...] | None:
+        """Map project_type to backend path prefixes.
+
+        Returns a tuple of path prefixes (e.g., ("backend/", "shared/")) or
+        None if project_type is unknown (meaning: allow all paths).
+        """
+        if project_type is None:
+            return None
+
+        pt = project_type.lower().strip()
+
+        # Python/FastAPI/Django/Flask → backend/
+        if pt in ("python", "fastapi", "django", "flask", "web_fullstack", "api_service", "web_backend"):
+            return ("backend/",)
+
+        # Mobile/React Native/Expo → app/ (no backend/ prefix in RN)
+        if pt in ("mobile_app", "mobile", "react_native", "expo", "android", "ios"):
+            return ("app/", "src/")
+
+        # Go → cmd/, internal/, pkg/
+        if pt in ("go", "golang"):
+            return ("cmd/", "internal/", "pkg/")
+
+        # Rust → src/
+        if pt in ("rust", "cargo"):
+            return ("src/",)
+
+        # Kotlin/Android → app/src/
+        if pt in ("kotlin", "android"):
+            return ("app/src/",)
+
+        # Java/Spring → src/main/java/
+        if pt in ("java", "spring", "spring_boot"):
+            return ("src/main/java/",)
+
+        # ML Pipeline → src/, pipelines/
+        if pt in ("ml_pipeline", "ml", "machine_learning"):
+            return ("src/", "pipelines/")
+
+        # CLI Tool → src/, cmd/
+        if pt in ("cli_tool", "cli"):
+            return ("src/", "cmd/")
+
+        # Data Pipeline → src/, pipelines/
+        if pt in ("data_pipeline", "etl"):
+            return ("src/", "pipelines/")
+
+        # Library → src/, lib/
+        if pt in ("library", "lib"):
+            return ("src/", "lib/")
+
+        # Unknown project type → allow all (return None)
+        return None
+
     # ------------------------------------------------------------------
     # Sprint execution
     # ------------------------------------------------------------------
@@ -292,13 +411,29 @@ class BackendDeveloperAgent(BaseAgent):
                 _backend_paths, len(backend_files), project_id,
             )
         else:
-            logger.warning(
-                "[BackendAgent] no blueprint found — using legacy 'backend/' prefix filter: project=%s",
-                project_id,
-            )
-            backend_files = [fp for fp in gen_order if fp.startswith("backend/")]
-            if not backend_files and files_map:
-                backend_files = [fp for fp in files_map if fp.startswith("backend/")]
+            project_type = self._extract_project_type(context)
+            _backend_prefixes = self._get_backend_prefixes_for_project_type(project_type)
+
+            if _backend_prefixes is None:
+                logger.warning(
+                    "[BackendAgent] no blueprint found and unknown project_type=%s — allowing all paths: project=%s",
+                    project_type, project_id,
+                )
+                backend_files = list(gen_order) or list(files_map.keys())
+            else:
+                logger.info(
+                    "[BackendAgent] no blueprint found — using project_type=%s prefixes=%s: project=%s",
+                    project_type, _backend_prefixes, project_id,
+                )
+                backend_files = [
+                    fp for fp in gen_order
+                    if any(fp.startswith(p) for p in _backend_prefixes)
+                ]
+                if not backend_files and files_map:
+                    backend_files = [
+                        fp for fp in files_map
+                        if any(fp.startswith(p) for p in _backend_prefixes)
+                    ]
 
         max_workers = int(os.getenv("SPRINT_PARALLEL_FILES", "1"))
 
@@ -578,6 +713,7 @@ class BackendDeveloperAgent(BaseAgent):
                 project_id=project_id,
                 previous_error=last_error,
                 attempt=attempt,
+                context=context,
             )
 
             response = self.llm_manager.generate_text(
@@ -622,12 +758,14 @@ class BackendDeveloperAgent(BaseAgent):
 
     def _build_file_prompt(
         self, file_spec: FileSpec, file_plan: FilePlan, project_id: str, previous_error: str, attempt: int,
-        sprint_brief: str = "",
+        sprint_brief: str = "", context: object | None = None,
     ) -> str:
         """Build prompt for ONE file generation.
 
         FIX 5: Uses FileIndexer summaries for large dependency files instead of
         sending full file content, preventing context window overflow on large projects.
+
+        Now also injects context sections: architect summary, API contracts, predecessor message.
         """
         _FULL_CONTENT_THRESHOLD = 1500
         dependency_context = ""
@@ -651,6 +789,53 @@ class BackendDeveloperAgent(BaseAgent):
             error_context = f"\nPREVIOUS ATTEMPT FAILED WITH THESE ERRORS:\n{previous_error}\nFix these errors in your response.\n"
 
         req_imports = "\n".join(f"  - {imp}" for imp in (getattr(file_spec, "required_imports", []) or []))
+
+        # Extract context sections
+        context_sections = ""
+        if context is not None:
+            try:
+                import json as _json
+                ctx_dict = {}
+                if isinstance(context, str):
+                    ctx_dict = _json.loads(context)
+                elif isinstance(context, dict):
+                    ctx_dict = context
+                elif hasattr(context, "content"):
+                    ctx_dict = _json.loads(context.content) if isinstance(context.content, str) else {}
+
+                if ctx_dict:
+                    parts = []
+                    # Architect summary
+                    arch_summary = ctx_dict.get("architect") or ctx_dict.get("architecture")
+                    if arch_summary:
+                        if isinstance(arch_summary, str):
+                            try:
+                                arch_summary = _json.loads(arch_summary)
+                            except Exception:
+                                pass
+                        if isinstance(arch_summary, dict):
+                            summary_text = arch_summary.get("summary") or arch_summary.get("approach") or str(arch_summary)[:2000]
+                            parts.append(f"### ARCHITECT SUMMARY\n{summary_text}")
+
+                    # API contracts
+                    api_contracts = ctx_dict.get("api_endpoints") or ctx_dict.get("api_design")
+                    if api_contracts:
+                        if isinstance(api_contracts, str):
+                            try:
+                                api_contracts = _json.loads(api_contracts)
+                            except Exception:
+                                pass
+                        parts.append(f"### API CONTRACTS\n{_json.dumps(api_contracts, indent=2)[:3000]}")
+
+                    # Predecessor message (from workflow message key)
+                    pred_msg = ctx_dict.get("predecessor_message") or ctx_dict.get("previous_stage_output")
+                    if pred_msg:
+                        parts.append(f"### PREDECESSOR MESSAGE\n{pred_msg[:2000]}")
+
+                    if parts:
+                        context_sections = "\n\n" + "\n\n".join(parts) + "\n"
+            except Exception:
+                pass
 
         sprint_context = f"{sprint_brief}\n\n" if sprint_brief else ""
         return f"""{sprint_context}Generate the file: {file_spec.file_path}
@@ -679,19 +864,13 @@ No explanation. No markdown. No code fences. Just the code.
 """
 
     def _file_system_prompt(self, profile: LanguageProfile) -> str:
-        """Return the LLM system prompt for code generation using the resolved language profile.
+        """Return the LLM system prompt for code generation using BackendPromptBuilder.
 
-        The prompt comes from :attr:`LanguageProfile.system_prompt`, which was authored
-        for the exact language/framework detected from the architect's tech_stack.
-        This replaces the previously hardcoded ``"Python/FastAPI developer"`` string.
-
-        Parameters
-        ----------
-        profile:
-            The language profile resolved at sprint start by
-            :meth:`_resolve_language_profile`.
+        Uses the generic system prompt from BackendPromptBuilder; the resolved
+        technology profile (language, framework, etc.) is injected into the
+        user prompt via _build_file_prompt() so the LLM receives it in context.
         """
-        return profile.system_prompt
+        return BackendPromptBuilder.SYSTEM_PROMPT
 
     def _extract_code(self, response: str) -> str:
         """Strip any accidental markdown fences."""

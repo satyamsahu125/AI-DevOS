@@ -7,29 +7,27 @@ from typing import Any
 from .base_action import ActionOutput, BaseAction
 from ..execution.file_validator import FileValidator
 from ..execution.project_reader import ProjectReader
-from ..execution.project_writer import ProjectWriter
 from ..prompt.devops_builder import DevOpsPromptBuilder
 
 logger = logging.getLogger(__name__)
 
 
 class WriteDeploymentAction(BaseAction):
-    """Generates and writes real DevOps configuration files on disk.
+    """Generates DevOps configuration files as structured output.
 
-    Validates YAML files after writing.
+    Does NOT write files directly. Returns structured output with file contents
+    for the ExecutionEngine to write via FileCommand (single write path).
     """
 
     name = "WriteDeployment"
-    description = "Produce real Dockerfile, docker-compose.yml, .env.example, and CI configuration files."
+    description = "Produce Dockerfile, docker-compose.yml, .env.example, and CI configuration files."
 
     def __init__(
         self,
         prompt_builder: DevOpsPromptBuilder | None = None,
-        project_writer: ProjectWriter | None = None,
         project_reader: ProjectReader | None = None,
         file_validator: FileValidator | None = None,
     ) -> None:
-        self.project_writer = project_writer or ProjectWriter()
         self.project_reader = project_reader or ProjectReader()
         self.file_validator = file_validator or FileValidator()
         self.prompt_builder = prompt_builder or DevOpsPromptBuilder(self.project_reader)
@@ -51,7 +49,6 @@ class WriteDeploymentAction(BaseAction):
 
         config_files = self._parse_file_blocks(response)
 
-        written_files = []
         validation_errors = []
 
         for file_path, content in config_files.items():
@@ -67,24 +64,16 @@ class WriteDeploymentAction(BaseAction):
                     validation_errors.extend(validation.errors)
                     logger.warning("YAML validation error for %s: %s", file_path, validation.errors)
 
-            written = self.project_writer.write_file(
-                project_id=project_id,
-                file_path=file_path,
-                content=content,
-            )
-            written_files.append(written)
-            logger.info("Written DevOps file: %s", file_path)
-
         structured = {
-            "files_written": [f.file_path for f in written_files],
+            "files": config_files,
             "validation_errors": validation_errors,
-            "has_dockerfile": any("Dockerfile" in f.file_path for f in written_files),
-            "has_compose": any("docker-compose" in f.file_path for f in written_files),
-            "has_ci": any("ci.yml" in f.file_path for f in written_files),
+            "has_dockerfile": any("Dockerfile" in p for p in config_files),
+            "has_compose": any("docker-compose" in p for p in config_files),
+            "has_ci": any("ci.yml" in p or ".github" in p for p in config_files),
         }
 
         summary = (
-            f"DevOps Complete: {len(written_files)} files written. "
+            f"DevOps Complete: {len(config_files)} files generated. "
             f"Dockerfile: {structured['has_dockerfile']}, "
             f"Compose: {structured['has_compose']}, "
             f"CI: {structured['has_ci']}"

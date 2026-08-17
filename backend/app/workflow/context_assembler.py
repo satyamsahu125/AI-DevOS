@@ -161,9 +161,24 @@ class ContextAssembler:
 
         # Post-enrichments applied regardless of path ---
         base = self._inject_gate_feedback(project_id, stage_name, base)
+        base = self._inject_sandbox_results(project_id, stage_name, base)
         base, template_injected, injected_template_id, template_similarity_score = self._inject_template(
             stage_name, project_id, base, context_hint=context_hint,
         )
+
+        # Enforce per-stage token budget from ContextBudgetRegistry
+        budget = ContextBudgetRegistry.get(stage_name)
+        if budget.max_total_tokens > 0:
+            max_chars = budget.max_total_tokens * 4
+            if len(base) > max_chars:
+                trimmed = base[:max_chars]
+                logger.warning(
+                    "ContextAssembler: assembled context exceeds stage budget — "
+                    "trimmed from %d to %d chars (stage=%s max_tokens=%d)",
+                    len(base), max_chars, stage_name, budget.max_total_tokens,
+                )
+                base = trimmed
+
         return AssembleResult(
             context=base,
             template_injected=template_injected,
@@ -629,7 +644,7 @@ class ContextAssembler:
         project_id: str,
         content: str,
         context_hint: dict | None = None,
-    ) -> tuple[str, bool]:
+    ) -> tuple[str, bool, str | None, float | None]:
         """Attempt to inject a structural template hint into content.
 
         Parameters

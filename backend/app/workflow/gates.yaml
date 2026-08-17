@@ -1,0 +1,37 @@
+stages:
+  ProductOwner:
+    review_type: human
+    timeout_hours: 24
+    escalation: tech_lead
+  Architect:
+    review_type: human
+    timeout_hours: 48
+    escalation: tech_lead
+  Designer:
+    review_type: both
+    ai_reviewer: TechLead
+    ai_threshold: 0.85
+    timeout_hours: 24
+  BackendDeveloper:
+    review_type: ai
+    ai_reviewer: TechLead
+    ai_threshold: 0.90
+  FrontendDeveloper:
+    review_type: ai
+    ai_reviewer: TechLead
+    ai_threshold: 0.90
+  QA:
+    review_type: both
+    ai_reviewer: TechLead
+    ai_threshold: 0.80
+    human_escalation_threshold: 0.70
+  DevOps:
+    review_type: human
+    timeout_hours: 12
+    escalation: tech_lead
+
+defaults:
+  review_type: ai
+  ai_reviewer: TechLead
+  ai_threshold: 0.85
+  timeout_hours: 24

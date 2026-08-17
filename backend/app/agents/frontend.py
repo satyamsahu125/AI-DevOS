@@ -236,6 +236,103 @@ class FrontendDeveloperAgent(BaseAgent):
 
         return {}
 
+    def _extract_project_type(self, context: object) -> str | None:
+        """Extract project_type from context.
+
+        Handles the same context shapes as _extract_raw_tech_stack.
+        Returns the project_type string or None if not found.
+        """
+        try:
+            # StageArtifact / object with .content
+            content_attr = getattr(context, "content", None)
+            if content_attr is not None:
+                return self._extract_project_type(content_attr)
+
+            if isinstance(context, dict):
+                # Direct project_type at top level
+                pt = context.get("project_type")
+                if isinstance(pt, str):
+                    return pt
+                # In non_functional_requirements (from Architect output)
+                nfr = context.get("non_functional_requirements")
+                if isinstance(nfr, dict):
+                    pt = nfr.get("project_type")
+                    if isinstance(pt, str):
+                        return pt
+                # Nested under architect/architecture
+                for nesting_key in ("architect", "architecture"):
+                    nested = context.get(nesting_key)
+                    if isinstance(nested, dict):
+                        pt = nested.get("project_type")
+                        if isinstance(pt, str):
+                            return pt
+                        nfr = nested.get("non_functional_requirements")
+                        if isinstance(nfr, dict):
+                            pt = nfr.get("project_type")
+                            if isinstance(pt, str):
+                                return pt
+                    elif isinstance(nested, str):
+                        try:
+                            parsed_nested = json.loads(nested)
+                            if isinstance(parsed_nested, dict):
+                                pt = parsed_nested.get("project_type")
+                                if isinstance(pt, str):
+                                    return pt
+                                nfr = parsed_nested.get("non_functional_requirements")
+                                if isinstance(nfr, dict):
+                                    pt = nfr.get("project_type")
+                                    if isinstance(pt, str):
+                                        return pt
+                        except (ValueError, TypeError):
+                            pass
+
+            if isinstance(context, str):
+                try:
+                    parsed = json.loads(context)
+                    if isinstance(parsed, dict):
+                        return self._extract_project_type(parsed)
+                except (ValueError, TypeError):
+                    pass
+
+        except Exception:  # noqa: BLE001
+            pass
+
+        return None
+
+    def _get_frontend_prefixes_for_project_type(self, project_type: str | None) -> tuple[str, ...] | None:
+        """Map project_type to frontend path prefixes.
+
+        Returns a tuple of path prefixes (e.g., ("frontend/", "shared/")) or
+        None if project_type is unknown (meaning: allow all paths).
+        """
+        if project_type is None:
+            return None
+
+        pt = project_type.lower().strip()
+
+        # Web (React/Vue/Svelte) → frontend/, src/
+        if pt in ("web_fullstack", "web_frontend", "web", "react", "vue", "svelte", "nextjs", "nuxt"):
+            return ("frontend/", "src/")
+
+        # Mobile/React Native/Expo → app/, screens/, components/ (no frontend/ prefix)
+        if pt in ("mobile_app", "mobile", "react_native", "expo", "android", "ios"):
+            return ("app/", "screens/", "components/", "src/")
+
+        # Desktop (Electron/Tauri) → src/, app/
+        if pt in ("desktop", "electron", "tauri"):
+            return ("src/", "app/")
+
+        # CLI Tool with TUI → src/
+        if pt in ("cli_tool", "cli", "tui"):
+            return ("src/",)
+
+        # Library → src/, lib/
+        if pt in ("library", "lib"):
+            return ("src/", "lib/")
+
+        # Unknown project type → allow all (return None)
+        return None
+
     # ------------------------------------------------------------------
     # Sprint execution
     # ------------------------------------------------------------------
@@ -312,13 +409,29 @@ class FrontendDeveloperAgent(BaseAgent):
                 _frontend_paths, len(frontend_files), project_id,
             )
         else:
-            logger.warning(
-                "[FrontendAgent] no blueprint found — using legacy 'frontend/' prefix filter: project=%s",
-                project_id,
-            )
-            frontend_files = [fp for fp in gen_order if fp.startswith("frontend/")]
-            if not frontend_files and files_map:
-                frontend_files = [fp for fp in files_map if fp.startswith("frontend/")]
+            project_type = self._extract_project_type(context)
+            _frontend_prefixes = self._get_frontend_prefixes_for_project_type(project_type)
+
+            if _frontend_prefixes is None:
+                logger.warning(
+                    "[FrontendAgent] no blueprint found and unknown project_type=%s — allowing all paths: project=%s",
+                    project_type, project_id,
+                )
+                frontend_files = list(gen_order) or list(files_map.keys())
+            else:
+                logger.info(
+                    "[FrontendAgent] no blueprint found — using project_type=%s prefixes=%s: project=%s",
+                    project_type, _frontend_prefixes, project_id,
+                )
+                frontend_files = [
+                    fp for fp in gen_order
+                    if any(fp.startswith(p) for p in _frontend_prefixes)
+                ]
+                if not frontend_files and files_map:
+                    frontend_files = [
+                        fp for fp in files_map
+                        if any(fp.startswith(p) for p in _frontend_prefixes)
+                    ]
 
         max_workers = int(os.getenv("SPRINT_PARALLEL_FILES", "1"))
 
@@ -577,6 +690,7 @@ class FrontendDeveloperAgent(BaseAgent):
                 previous_error=last_error,
                 attempt=attempt,
                 design_artifact=design_artifact,
+                context=context,
             )
 
             response = self.llm_manager.generate_text(
@@ -628,10 +742,12 @@ class FrontendDeveloperAgent(BaseAgent):
         attempt: int,
         design_artifact: dict | str | None = None,
         sprint_brief: str = "",
+        context: object | None = None,
     ) -> str:
         """Build prompt for ONE file generation, including the approved design spec.
 
         FIX 5: Uses FileIndexer summaries for large dependency files.
+        Now also injects context sections: architect summary, API contracts (including backend), predecessor message.
         """
         _FULL_CONTENT_THRESHOLD = 1500
         design_context = self._build_design_context(design_artifact)
@@ -653,6 +769,53 @@ class FrontendDeveloperAgent(BaseAgent):
             error_context = f"\nPREVIOUS ATTEMPT FAILED WITH THESE ERRORS:\n{previous_error}\nFix these errors in your response.\n"
 
         req_imports = "\n".join(f"  - {imp}" for imp in (getattr(file_spec, "required_imports", []) or []))
+
+        # Extract context sections
+        context_sections = ""
+        if context is not None:
+            try:
+                import json as _json
+                ctx_dict = {}
+                if isinstance(context, str):
+                    ctx_dict = _json.loads(context)
+                elif isinstance(context, dict):
+                    ctx_dict = context
+                elif hasattr(context, "content"):
+                    ctx_dict = _json.loads(context.content) if isinstance(context.content, str) else {}
+
+                if ctx_dict:
+                    parts = []
+                    # Architect summary
+                    arch_summary = ctx_dict.get("architect") or ctx_dict.get("architecture")
+                    if arch_summary:
+                        if isinstance(arch_summary, str):
+                            try:
+                                arch_summary = _json.loads(arch_summary)
+                            except Exception:
+                                pass
+                        if isinstance(arch_summary, dict):
+                            summary_text = arch_summary.get("summary") or arch_summary.get("approach") or str(arch_summary)[:2000]
+                            parts.append(f"### ARCHITECT SUMMARY\n{summary_text}")
+
+                    # Backend API contracts (for frontend to call)
+                    backend_contracts = ctx_dict.get("backend_artifacts") or ctx_dict.get("api_endpoints") or ctx_dict.get("api_design")
+                    if backend_contracts:
+                        if isinstance(backend_contracts, str):
+                            try:
+                                backend_contracts = _json.loads(backend_contracts)
+                            except Exception:
+                                pass
+                        parts.append(f"### BACKEND API CONTRACTS\n{_json.dumps(backend_contracts, indent=2)[:3000]}")
+
+                    # Predecessor message
+                    pred_msg = ctx_dict.get("predecessor_message") or ctx_dict.get("previous_stage_output")
+                    if pred_msg:
+                        parts.append(f"### PREDECESSOR MESSAGE\n{pred_msg[:2000]}")
+
+                    if parts:
+                        context_sections = "\n\n" + "\n\n".join(parts) + "\n"
+            except Exception:
+                pass
 
         sprint_context = f"{sprint_brief}\n\n" if sprint_brief else ""
         return f"""{sprint_context}Generate the file: {file_spec.file_path}
@@ -677,6 +840,7 @@ These dependency files already exist (for context):
 {dependency_context}
 {design_context}
 {error_context}
+{context_sections}
 Write ONLY the complete {file_spec.file_path} file.
 No explanation. No markdown. No code fences. Just the code.
 """

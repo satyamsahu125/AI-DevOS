@@ -1,0 +1,25 @@
+{
+  "name": "ai-devos-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright E2E test suite for AI DevOS — covers 25 bugs from Aug 2026 fix session",
+  "scripts": {
+    "install:playwright": "npm install @playwright/test && npx playwright install chromium",
+    "test": "npx playwright test --config playwright.config.ts",
+    "test:smoke": "npx playwright test --config playwright.config.ts tests/07-ui-smoke.spec.ts",
+    "test:project-creation": "npx playwright test --config playwright.config.ts tests/01-project-creation.spec.ts",
+    "test:pipeline": "npx playwright test --config playwright.config.ts tests/02-pipeline-flow.spec.ts",
+    "test:context": "npx playwright test --config playwright.config.ts tests/03-context-injection.spec.ts",
+    "test:sandbox": "npx playwright test --config playwright.config.ts tests/04-sandbox-qa.spec.ts",
+    "test:memory": "npx playwright test --config playwright.config.ts tests/05-memory-api.spec.ts",
+    "test:qa-prompts": "npx playwright test --config playwright.config.ts tests/06-qa-prompts.spec.ts",
+    "test:report": "npx playwright show-report report",
+    "test:headed": "npx playwright test --config playwright.config.ts --headed tests/07-ui-smoke.spec.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

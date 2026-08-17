@@ -23,6 +23,7 @@ vi.mock("./pages/WorkspacePage",() => ({ default: () => <div>workspace-page</div
 vi.mock("./pages/SettingsPage", () => ({ default: () => <div>settings-page</div> }))
 vi.mock("./pages/AnalyticsPage",() => ({ default: () => <div>analytics-page</div>}))
 vi.mock("./pages/AdminPage",    () => ({ default: () => <div>admin-page</div>    }))
+vi.mock("./pages/LandingPage",  () => ({ LandingPage: () => <div>landing-page</div> }))
 
 // AppShell must render Outlet so nested protected routes appear
 vi.mock("./components/layout/AppShell", async () => {

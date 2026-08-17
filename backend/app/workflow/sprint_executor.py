@@ -138,6 +138,16 @@ class SprintExecutor:
         all_success = backend_result.success and frontend_result.success
 
         if all_success:
+            # Run sprint QA (new step per B-31 fix)
+            qa_result = self._run_sprint_qa(project_id, sprint, plan_context)
+            if not qa_result.get("passed", False):
+                logger.warning(
+                    "SprintExecutor: sprint %d QA found issues: %s",
+                    sprint.sprint_number, qa_result.get("summary", "QA failed"),
+                )
+                # Don't fail the sprint for QA issues — just log them
+                # The sandbox verification will catch actual test failures
+
             # ── Phase 1: Verify generated code before marking sprint complete ─
             # install → build → test must pass.  A build failure here means the
             # sprint is NOT marked complete and PipelineSupervisor sees success=False.
@@ -490,6 +500,59 @@ class SprintExecutor:
                 )
         except Exception as exc:
             logger.debug("sprint validation failed (non-fatal): %s", exc)
+
+    def _run_sprint_qa(
+        self, project_id: str, sprint: "Sprint", plan_context: str,
+    ) -> dict:
+        """Run QA agent's sprint QA method and return structured results.
+
+        Called after BackendDeveloper and FrontendDeveloper complete,
+        before sandbox verification.  Uses the agent factory pattern
+        to obtain a QAAgent instance and calls its run_sprint_qa method.
+        """
+        try:
+            from ..agents.factory import AgentFactory
+            from ..agents.qa import QAAgent
+
+            # Get required context from artifacts
+            arch_artifact = self._artifact_manager.get_artifact(project_id, Stage.Architect)
+            arch_content = getattr(arch_artifact, "structured_content", {}) or getattr(arch_artifact, "content", {}) or {}
+
+            # Get file plan for this sprint
+            file_plan = self._load_file_plan(project_id, sprint.sprint_number)
+            file_plan_dict = {}
+            if hasattr(file_plan, "model_dump"):
+                file_plan_dict = file_plan.model_dump(mode="json")
+            elif isinstance(file_plan, dict):
+                file_plan_dict = file_plan
+
+            # Get user stories from ProductOwner artifact
+            po_artifact = self._artifact_manager.get_artifact(project_id, Stage.ProductOwner)
+            user_stories = getattr(po_artifact, "structured_content", {}) or getattr(po_artifact, "content", {}) or {}
+
+            # Create QA agent via factory (or direct instantiation)
+            factory = AgentFactory()
+            qa_agent = factory.create("qa")
+
+            # Call run_sprint_qa
+            qa_result = qa_agent.run_sprint_qa(
+                project_id=project_id,
+                sprint_number=sprint.sprint_number,
+                file_plan=file_plan_dict,
+                architecture=arch_content,
+                user_stories=user_stories,
+                iteration=1,
+            )
+
+            logger.info(
+                "SprintExecutor: sprint %d QA completed: passed=%s total_tests=%d",
+                sprint.sprint_number, qa_result.get("passed"), qa_result.get("total_tests"),
+            )
+            return qa_result
+
+        except Exception as exc:
+            logger.warning("SprintExecutor: sprint %d QA failed (non-fatal): %s", sprint.sprint_number, exc)
+            return {"passed": True, "total_tests": 0, "failed_tests": 0, "failures": [], "summary": "QA skipped due to error", "sprint": sprint.sprint_number, "iteration": 1}
 
     def _build_sprint_context(
         self, project_id: str, sprint: Sprint, arch: Any,

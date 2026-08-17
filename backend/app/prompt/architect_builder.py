@@ -159,7 +159,34 @@ under_100 OR static_frontend_only:
   → Extensive caching
   → Rate limiting + DDoS protection
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+mobile_app (any scale):
+  → App Store / Play Store distribution
+  → Push notification infrastructure (FCM/APNs)
+  → Local SQLite / AsyncStorage / Realm for offline-first
+  → OTA updates (Expo Updates / CodePush)
+  → Deep linking / Universal links
+  → Certificate / provisioning profile management
+  → Crash reporting (Sentry / Firebase Crashlytics)
+  → Analytics (Amplitude / Mixpanel / Firebase)
+
+ml_pipeline (any scale):
+  → GPU compute (CUDA / ROCm / MPS)
+  → Dataset storage (S3 / GCS / local NVMe)
+  → Model registry (MLflow / Weights & Biases / custom)
+  → Feature store (Feast / custom)
+  → Training orchestration (Airflow / Prefect / Kubeflow)
+  → Inference serving (Triton / TorchServe / TensorRT-LLM)
+  → Experiment tracking
+  → Data versioning (DVC / LakeFS)
+
+cli_tool (any scale):
+  → Binary packaging (PyInstaller / cx_Freeze / Go build / cargo build)
+  → Platform distribution (GitHub Releases / Homebrew / Scoop / AUR / deb/rpm)
+  → Auto-update mechanism
+  → Shell completions (bash / zsh / fish / PowerShell)
+  → Man page / help text generation
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 TECHNOLOGY SELECTION (with rationale)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 For EACH major technology decision, document inline rationale:

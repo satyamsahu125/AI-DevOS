@@ -39,12 +39,13 @@ class AgentFactory:
     implementation and constructs exactly one instance of it per call.
     """
 
-    def __init__(self, registry: AgentRegistry | None = None, resolver: AgentResolver | None = None, validator: AgentValidation | None = None, llm_manager=None) -> None:
+    def __init__(self, registry: AgentRegistry | None = None, resolver: AgentResolver | None = None, validator: AgentValidation | None = None, llm_manager=None, workspace_manager=None) -> None:
         """Wire the registry, resolver, and validator used to construct agents, then register the default agent set."""
         self.registry = registry or AgentRegistry()
         self.resolver = resolver or AgentResolver()
         self.validator = validator or AgentValidation()
         self._llm_manager = llm_manager
+        self._workspace_manager = workspace_manager
         self._register_defaults()
 
     def _register_defaults(self) -> None:
@@ -93,6 +94,9 @@ class AgentFactory:
         implementation = self.registry.resolve(agent_name)
         logger.info("agent factory creating agent: stage=%s agent=%s", stage_name, agent_name)
         if isinstance(implementation, type):
+            # TechLeadAgent requires workspace_manager as first positional arg
+            if agent_name == "tech_lead":
+                return implementation(self._workspace_manager, llm_manager=self._llm_manager)
             if self._llm_manager is not None:
                 return implementation(llm_manager=self._llm_manager)
             return implementation()
